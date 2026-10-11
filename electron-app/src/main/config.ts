@@ -3,10 +3,19 @@ import path from "node:path";
 import { configPath } from "./paths";
 
 export interface AppConfig {
+  // 翻译引擎：local = 内置 llama.cpp + HY-MT 模型；remote = OpenAI 兼容 API
+  translate_mode: "local" | "remote";
   service: string;
-  openai_base_url: string;
-  openai_api_key: string;
-  openai_model: string;
+  translate_base_url: string;
+  translate_api_key: string;
+  translate_model: string;
+  local_model: string;
+  local_gpu_layers: number;
+  local_extra_args: string;
+  // AI 助手（会话）：始终走独立的接口，避免与翻译互抢额度
+  chat_base_url: string;
+  chat_api_key: string;
+  chat_model: string;
   source_lang: string;
   target_lang: string;
   output_variant: string;
@@ -19,10 +28,17 @@ export interface AppConfig {
 }
 
 const DEFAULT_CONFIG: AppConfig = {
+  translate_mode: "local",
   service: "openai",
-  openai_base_url: "https://api.deepseek.com",
-  openai_api_key: "",
-  openai_model: "deepseek-flash",
+  translate_base_url: "https://api.deepseek.com",
+  translate_api_key: "",
+  translate_model: "deepseek-chat",
+  local_model: "",
+  local_gpu_layers: 99,
+  local_extra_args: "",
+  chat_base_url: "https://api.deepseek.com",
+  chat_api_key: "",
+  chat_model: "deepseek-chat",
   source_lang: "en",
   target_lang: "zh-CN",
   output_variant: "dual",

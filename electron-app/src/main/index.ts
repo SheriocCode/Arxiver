@@ -7,12 +7,21 @@ import * as storage from "./storage";
 import * as library from "./library";
 import * as paths from "./paths";
 import { EngineManager, clearTmpJobs, type PublicJob, type TransParams } from "./engine";
+import * as localModel from "./localmodel";
 import { AgentService, type AgentChatRequest } from "./agent/agent";
 import * as conversations from "./agent/conversations";
 import { Updater } from "./updater";
 
-// 开发运行使用独立数据目录，避免与安装版争用 %APPDATA%\Arxiver
-if (!app.isPackaged) {
+// 数据目录优先级：
+//   1. 显式覆盖 --user-data-dir=<path> 或环境变量 ARXIVER_USER_DATA（便于同时试跑多份构建）
+//   2. 开发运行（未打包）→ %APPDATA%\Arxiver-dev（避免与安装版争用）
+//   3. 安装版 → 默认 %APPDATA%\Arxiver
+const userDataArg = process.argv.find((a) => a.startsWith("--user-data-dir="));
+const userDataOverride =
+  (userDataArg ? userDataArg.slice("--user-data-dir=".length) : "") || process.env.ARXIVER_USER_DATA || "";
+if (userDataOverride) {
+  app.setPath("userData", path.resolve(userDataOverride));
+} else if (!app.isPackaged) {
   app.setPath("userData", path.join(app.getPath("appData"), "Arxiver-dev"));
 }
 
@@ -153,10 +162,12 @@ async function fetchPdf(url: string): Promise<{ bytes: Buffer; name: string; sou
 function resolveParams(overrides?: Partial<TransParams>): TransParams {
   const base = config.get() as unknown as Record<string, unknown>;
   const merged = { ...base, ...(overrides || {}) } as Record<string, unknown>;
+  const isLocal = merged.translate_mode === "local";
   return {
     source_lang: (merged.source_lang as string) || "en",
     target_lang: (merged.target_lang as string) || "zh-CN",
-    service: (merged.service as string) || "openai",
+    service: isLocal ? "openai" : (merged.service as string) || "openai",
+    model: isLocal ? "hy-mt" : (merged.translate_model as string) || "",
     output_variant: (merged.output_variant as string) || "dual",
     pages: (merged.pages as string) || "",
     threads: (merged.threads as number) || 4,
@@ -193,6 +204,7 @@ async function loadSourceBytes(payload?: SourcePayload): Promise<{ bytes: Buffer
 function registerIpc(): void {
   ipcMain.handle("config:get", () => config.get());
   ipcMain.handle("config:set", (_event, patch) => config.update(patch));
+  ipcMain.handle("local:status", () => localModel.localModelStatus());
 
   ipcMain.handle("app:info", () => ({
     version: app.getVersion(),
@@ -360,6 +372,7 @@ if (!gotLock) {
 
   app.on("before-quit", () => {
     quitting = true;
+    localModel.stopServer();
   });
 
   app.on("window-all-closed", () => {

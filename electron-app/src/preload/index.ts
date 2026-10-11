@@ -10,6 +10,7 @@ const api = {
   getConfig: () => ipcRenderer.invoke("config:get"),
   setConfig: (patch: unknown) => ipcRenderer.invoke("config:set", patch),
   appInfo: () => ipcRenderer.invoke("app:info"),
+  localStatus: () => ipcRenderer.invoke("local:status"),
 
   pickFile: () => ipcRenderer.invoke("source:pick"),
   loadSource: (payload: unknown) => ipcRenderer.invoke("source:load", payload),

@@ -1,8 +1,15 @@
 export interface AppConfig {
+  translate_mode: "local" | "remote";
   service: string;
-  openai_base_url: string;
-  openai_api_key: string;
-  openai_model: string;
+  translate_base_url: string;
+  translate_api_key: string;
+  translate_model: string;
+  local_model: string;
+  local_gpu_layers: number;
+  local_extra_args: string;
+  chat_base_url: string;
+  chat_api_key: string;
+  chat_model: string;
   source_lang: string;
   target_lang: string;
   output_variant: string;
@@ -18,6 +25,7 @@ export interface TransParams {
   source_lang: string;
   target_lang: string;
   service: string;
+  model: string;
   output_variant: string;
   pages: string;
   threads: number;
@@ -220,10 +228,16 @@ export interface AppInfo {
   engineDir: string;
 }
 
+export interface LocalModelStatus {
+  available: boolean;
+  reason: string;
+}
+
 export interface Api {
   getConfig(): Promise<AppConfig>;
   setConfig(patch: Partial<AppConfig>): Promise<AppConfig>;
   appInfo(): Promise<AppInfo>;
+  localStatus(): Promise<LocalModelStatus>;
   pickFile(): Promise<{ filePath: string; name: string } | null>;
   loadSource(payload: SourcePayload): Promise<LoadedSource>;
   startJob(payload: SourcePayload): Promise<JobSummary>;

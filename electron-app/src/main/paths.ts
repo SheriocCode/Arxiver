@@ -25,6 +25,39 @@ export function engineVersion(): string {
   }
 }
 
+// 内置的本地翻译运行时：engine/llama（llama.cpp）与 engine/models（GGUF 翻译模型）。
+// 二者随安装包分发（engine/ 已整体作为 extraResources 打包）。
+export function localLlamaDir(): string {
+  return path.join(engineDir(), "llama");
+}
+
+export function localModelDir(): string {
+  return path.join(engineDir(), "models");
+}
+
+export function llamaServerExe(): string {
+  return path.join(localLlamaDir(), process.platform === "win32" ? "llama-server.exe" : "llama-server");
+}
+
+export function bundledModelPath(): string {
+  const dir = localModelDir();
+  let files: string[] = [];
+  try {
+    files = fs.readdirSync(dir).filter((name) => name.toLowerCase().endsWith(".gguf"));
+  } catch {
+    // 目录不存在
+  }
+  // 优先使用 Q4_K_M；否则取任意一个 GGUF。
+  const preferred = files.find((name) => name.toLowerCase().includes("q4_k_m"));
+  if (preferred) {
+    return path.join(dir, preferred);
+  }
+  if (files.length) {
+    return path.join(dir, files.sort()[0]);
+  }
+  return path.join(dir, "hy-mt2-1.8b-q4_k_m.gguf");
+}
+
 export function userDataDir(): string {
   return app.getPath("userData");
 }

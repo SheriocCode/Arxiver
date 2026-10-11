@@ -28,11 +28,11 @@ export interface StepResult {
 
 export function modelConfigured(): boolean {
   const c = getConfig();
-  return !!(c.openai_base_url && c.openai_api_key && c.openai_model);
+  return !!(c.chat_base_url && c.chat_api_key && c.chat_model);
 }
 
 function endpoint(): string {
-  const base = String(getConfig().openai_base_url || "").replace(/\/+$/, "");
+  const base = String(getConfig().chat_base_url || "").replace(/\/+$/, "");
   return base + "/chat/completions";
 }
 
@@ -44,11 +44,11 @@ export async function runChat(opts: {
   onReasoning?: (text: string) => void;
 }): Promise<StepResult> {
   const config = getConfig();
-  if (!config.openai_base_url || !config.openai_api_key || !config.openai_model) {
-    throw new Error("未配置模型：请在设置中填写 OpenAI 兼容的基础地址 / 密钥 / 模型");
+  if (!config.chat_base_url || !config.chat_api_key || !config.chat_model) {
+    throw new Error("未配置对话模型：请在设置中填写 AI 助手的基础地址 / 密钥 / 模型");
   }
   const body: Record<string, unknown> = {
-    model: config.openai_model,
+    model: config.chat_model,
     messages: opts.messages,
     stream: true,
     stream_options: { include_usage: true }
@@ -60,7 +60,7 @@ export async function runChat(opts: {
 
   const res = await fetch(endpoint(), {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + String(config.openai_api_key) },
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + String(config.chat_api_key) },
     body: JSON.stringify(body),
     signal: opts.signal
   });

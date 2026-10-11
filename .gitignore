@@ -1,4 +1,13 @@
-engine/
+# 引擎源码（electron-app/engine/{run.py,extract_text.py,VERSION,translate_engine/,requirements.txt}）
+# 进 git；运行时与模型等二进制大件不进 git，由脚本装配：
+#   - llama.cpp 与 HY-MT 模型：tools/fetch-llm.ps1
+#   - python 运行时 / site-packages / assets：见 engine/README.md
+electron-app/engine/runtime/
+electron-app/engine/site-packages/
+electron-app/engine/assets/
+electron-app/engine/llama/
+electron-app/engine/models/
+
 dist/
 __pycache__/
 *.pyc

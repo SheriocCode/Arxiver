@@ -171,8 +171,8 @@ export default function App(): JSX.Element {
     void window.api.libraryAddTranslation(activeDocId, {
       cacheKey: key,
       target_lang: status.targetLang || config?.target_lang || "zh-CN",
-      service: config?.service || "openai",
-      model: config?.openai_model || "",
+      service: config?.translate_mode === "local" ? "local" : config?.service || "openai",
+      model: config?.translate_mode === "local" ? "hy-mt" : config?.translate_model || "",
       output_variant: config?.output_variant || "dual",
       pages: status.pages || "",
       created_at: Date.now() / 1000,

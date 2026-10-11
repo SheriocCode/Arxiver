@@ -33,6 +33,18 @@
 
 <p>全部版本见 <a href="https://github.com/SheriocCode/Arxiver/releases">GitHub Releases</a>。</p>
 
+<h2 id="v0702026-10-11">v0.7.0（2026-10-11）</h2>
+
+<ul>
+  <li><strong>本地离线翻译</strong>：翻译改由随包分发的 HY-MT 翻译模型（llama.cpp）在本机完成，安装即用、无需 API Key；
+有 NVIDIA 显卡走 GPU，无独显 / 驱动不匹配时自动回退 CPU。</li>
+  <li><strong>翻译与会话分离</strong>：AI 助手使用独立配置的在线接口，与翻译互不影响，也更省 API 费用。</li>
+  <li><strong>版面识别提速</strong>：改用 DirectML 显卡加速（约 6–10 倍），无 DX12 显卡自动回退 CPU。</li>
+  <li><strong>预览更流畅</strong>：修复翻译过程中预览 PDF 的重复重建，长文档整体更快。</li>
+  <li>⚠️ <strong>升级须知</strong>：配置项已重命名（<code class="language-plaintext highlighter-rouge">openai_*</code> → <code class="language-plaintext highlighter-rouge">translate_*</code> / <code class="language-plaintext highlighter-rouge">chat_*</code>），升级后请在「设置 → AI 助手」
+重新填写接口；文库、笔记与已有译文保留。</li>
+</ul>
+
 <h2 id="electron">桌面版（Electron）</h2>
 
 <p>以 Electron 桌面应用取代原「浏览器扩展 + 本机服务 + 托盘启动器」组合。</p>
@@ -40,7 +52,7 @@
 <ul>
   <li><strong>桌面文献库</strong>：导入、分类、标签、回收站、阅读历史与检索。</li>
   <li><strong>双语对照阅读器</strong>：原文 / 对照 / 译文三视图，单页 / 双页、缩放、目录大纲、缩略图、页面主题。</li>
-  <li><strong>内嵌引擎</strong>：随应用分发的本地翻译引擎，仅调用用户配置的模型接口。</li>
+  <li><strong>内嵌引擎（本地离线翻译）</strong>：随应用分发 HY-MT 翻译模型（llama.cpp），默认在本机离线翻译；有 N 卡走 GPU，无独显自动回退 CPU。AI 助手使用独立配置的在线接口。</li>
   <li><strong>段落块框与引用</strong>：悬停显示「原文 → 译文」；引用预览目标页、点击跳转。</li>
   <li><strong>Arxiver 助手</strong>：基于当前文章与整库的对话式检索、可点击引用、<code class="language-plaintext highlighter-rouge">@</code> 引用已打开文献、选中文本提问；
 标签 / 元数据等写操作经人机协作确认；会话持久化与历史。</li>

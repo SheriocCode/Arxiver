@@ -1,11 +1,11 @@
 import { useEffect, useState, type JSX } from "react";
-import type { AppConfig, AppInfo, UpdateStatus } from "../../../shared/types";
+import type { AppConfig, AppInfo, LocalModelStatus, UpdateStatus } from "../../../shared/types";
 import { Icon } from "./Icons";
 import { LANGS } from "../lib/langs";
 import { ACCENTS, type AppSettings } from "../state/settings";
 
 const SECTIONS = [
-  { id: "model", name: "模型接口", icon: "settings" },
+  { id: "model", name: "翻译引擎", icon: "settings" },
   { id: "general", name: "通用", icon: "settings" },
   { id: "appearance", name: "外观", icon: "sparkle" },
   { id: "citation", name: "引用", icon: "copy" },
@@ -34,11 +34,18 @@ export default function SettingsView({
   const [form, setForm] = useState<Partial<AppConfig>>({});
   const [hint, setHint] = useState("");
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
+  const [localStatus, setLocalStatus] = useState<LocalModelStatus | null>(null);
 
   useEffect(() => {
     void window.api.getUpdateStatus().then(setUpdate);
     return window.api.onUpdateStatus((s) => setUpdate(s));
   }, []);
+
+  useEffect(() => {
+    if (section === "model") {
+      void window.api.localStatus().then(setLocalStatus);
+    }
+  }, [section]);
 
   function updateText(u: UpdateStatus | null): string {
     if (!u) { return ""; }
@@ -57,9 +64,12 @@ export default function SettingsView({
   useEffect(() => {
     if (config) {
       setForm({
-        openai_base_url: config.openai_base_url, openai_api_key: config.openai_api_key,
-        openai_model: config.openai_model, service: config.service, threads: config.threads,
-        timeout: config.timeout, source_lang: config.source_lang, target_lang: config.target_lang
+        translate_mode: config.translate_mode, service: config.service,
+        translate_base_url: config.translate_base_url, translate_api_key: config.translate_api_key,
+        translate_model: config.translate_model, local_model: config.local_model, local_gpu_layers: config.local_gpu_layers,
+        local_extra_args: config.local_extra_args,
+        chat_base_url: config.chat_base_url, chat_api_key: config.chat_api_key, chat_model: config.chat_model,
+        threads: config.threads, timeout: config.timeout, source_lang: config.source_lang, target_lang: config.target_lang
       });
     }
   }, [config]);
@@ -96,12 +106,38 @@ export default function SettingsView({
           <div className="settings-body">
             {section === "model" && (
               <>
-                <div className="set-group">
-                  <div className="set-group-title">模型接口</div>
-                  <Row label="接口地址"><input style={inputStyle} value={form.openai_base_url || ""} onChange={(e) => set("openai_base_url", e.target.value)} /></Row>
-                  <Row label="API 密钥"><input type="password" style={inputStyle} value={form.openai_api_key || ""} onChange={(e) => set("openai_api_key", e.target.value)} /></Row>
-                  <Row label="模型"><input style={inputStyle} value={form.openai_model || ""} onChange={(e) => set("openai_model", e.target.value)} /></Row>
-                  <Row label="默认服务"><input style={inputStyle} value={form.service || ""} onChange={(e) => set("service", e.target.value)} /></Row>
+                <Group title="翻译方式">
+                  <Row label="翻译引擎" desc="本地模型离线运行、不产生费用；在线接口需要 API 密钥">
+                    <select value={form.translate_mode || "local"} onChange={(e) => set("translate_mode", e.target.value as AppConfig["translate_mode"])}>
+                      <option value="local">本地模型（内置 HY-MT）</option>
+                      <option value="remote">在线接口</option>
+                    </select>
+                  </Row>
+                  {(form.translate_mode || "local") === "local" && (
+                    <Row label="本地模型" desc={localStatus ? (localStatus.available ? "已就绪：内置 HY-MT（llama.cpp 运行）" : localStatus.reason) : "正在检测…"}>
+                      <input style={inputStyle} placeholder="留空使用内置模型，或填写 .gguf 路径" value={form.local_model || ""} onChange={(e) => set("local_model", e.target.value)} />
+                    </Row>
+                  )}
+                  {(form.translate_mode || "local") === "local" && (
+                    <Row label="GPU 层数" desc="默认 99（自动上 GPU；无显卡或显存不足会自动退回 CPU）。填 0 可强制纯 CPU">
+                      <input type="number" min={0} max={999} style={{ ...inputStyle, minWidth: 100 }} value={form.local_gpu_layers ?? 99} onChange={(e) => set("local_gpu_layers", parseInt(e.target.value, 10) || 0)} />
+                    </Row>
+                  )}
+                  {(form.translate_mode || "local") === "local" && (
+                    <Row label="额外参数" desc="透传给 llama-server 的参数（换用其它 GGUF 时可用）">
+                      <input style={inputStyle} placeholder="例如 --override-kv tokenizer.ggml.eos_token_id=int:120020" value={form.local_extra_args || ""} onChange={(e) => set("local_extra_args", e.target.value)} />
+                    </Row>
+                  )}
+                </Group>
+                {(form.translate_mode || "local") === "remote" && (
+                  <Group title="在线接口">
+                    <Row label="接口地址"><input style={inputStyle} value={form.translate_base_url || ""} onChange={(e) => set("translate_base_url", e.target.value)} /></Row>
+                    <Row label="API 密钥"><input type="password" style={inputStyle} value={form.translate_api_key || ""} onChange={(e) => set("translate_api_key", e.target.value)} /></Row>
+                    <Row label="模型"><input style={inputStyle} value={form.translate_model || ""} onChange={(e) => set("translate_model", e.target.value)} /></Row>
+                    <Row label="默认服务"><input style={inputStyle} value={form.service || ""} onChange={(e) => set("service", e.target.value)} /></Row>
+                  </Group>
+                )}
+                <Group title="翻译参数">
                   <Row label="线程"><input type="number" min={1} max={32} style={{ ...inputStyle, minWidth: 90 }} value={form.threads || 4} onChange={(e) => set("threads", parseInt(e.target.value, 10) || 4)} /></Row>
                   <Row label="超时（秒）"><input type="number" min={60} style={{ ...inputStyle, minWidth: 100 }} value={form.timeout || 3600} onChange={(e) => set("timeout", parseInt(e.target.value, 10) || 3600)} /></Row>
                   <Row label="默认源语言">
@@ -110,7 +146,7 @@ export default function SettingsView({
                   <Row label="默认目标语言">
                     <select value={form.target_lang || "zh-CN"} onChange={(e) => set("target_lang", e.target.value)}>{LANGS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select>
                   </Row>
-                </div>
+                </Group>
                 <div className="modal-foot" style={{ border: 0, padding: "4px 0" }}>
                   <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>
                   <button className="btn btn-primary" onClick={save}>保存设置</button>
@@ -176,16 +212,27 @@ export default function SettingsView({
             )}
 
             {section === "ai" && (
-              <Group title="AI 助手">
-                <Row label="启用 AI 助手" desc="在详情栏显示 AI 标签页"><Switch on={settings.aiEnabled} onToggle={() => updateSettings({ aiEnabled: !settings.aiEnabled })} /></Row>
-                <Row label="模型" desc="选择回答问题时使用的模型">
-                  <select value={settings.aiModel} onChange={(e) => updateSettings({ aiModel: e.target.value })}>
-                    <option value="文献助手">文献助手</option><option value="文献助手 Pro">文献助手 Pro</option>
-                  </select>
-                </Row>
-                <Row label="附带引用来源" desc="回答中标注所依据的文献位置"><Switch on={settings.aiSources} onToggle={() => updateSettings({ aiSources: !settings.aiSources })} /></Row>
-                <Row label="自动总结新条目" desc="添加文献后自动生成一段摘要"><Switch on={settings.autoSummary} onToggle={() => updateSettings({ autoSummary: !settings.autoSummary })} /></Row>
-              </Group>
+              <>
+                <Group title="对话接口">
+                  <Row label="接口地址" desc="AI 助手使用的 OpenAI 兼容接口，与翻译引擎相互独立"><input style={inputStyle} value={form.chat_base_url || ""} onChange={(e) => set("chat_base_url", e.target.value)} /></Row>
+                  <Row label="API 密钥"><input type="password" style={inputStyle} value={form.chat_api_key || ""} onChange={(e) => set("chat_api_key", e.target.value)} /></Row>
+                  <Row label="模型"><input style={inputStyle} value={form.chat_model || ""} onChange={(e) => set("chat_model", e.target.value)} /></Row>
+                  <div className="modal-foot" style={{ border: 0, padding: "4px 0" }}>
+                    <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>
+                    <button className="btn btn-primary" onClick={save}>保存设置</button>
+                  </div>
+                </Group>
+                <Group title="AI 助手">
+                  <Row label="启用 AI 助手" desc="在详情栏显示 AI 标签页"><Switch on={settings.aiEnabled} onToggle={() => updateSettings({ aiEnabled: !settings.aiEnabled })} /></Row>
+                  <Row label="模型" desc="选择回答问题时使用的模型">
+                    <select value={settings.aiModel} onChange={(e) => updateSettings({ aiModel: e.target.value })}>
+                      <option value="文献助手">文献助手</option><option value="文献助手 Pro">文献助手 Pro</option>
+                    </select>
+                  </Row>
+                  <Row label="附带引用来源" desc="回答中标注所依据的文献位置"><Switch on={settings.aiSources} onToggle={() => updateSettings({ aiSources: !settings.aiSources })} /></Row>
+                  <Row label="自动总结新条目" desc="添加文献后自动生成一段摘要"><Switch on={settings.autoSummary} onToggle={() => updateSettings({ autoSummary: !settings.autoSummary })} /></Row>
+                </Group>
+              </>
             )}
 
             {section === "sync" && (

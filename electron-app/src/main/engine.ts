@@ -6,12 +6,15 @@ import crypto from "node:crypto";
 
 import { pythonExe, runScript, engineDir, tmpJobsDir } from "./paths";
 import * as storage from "./storage";
+import * as localModel from "./localmodel";
+import { LOCAL_MODEL_ALIAS } from "./localmodel";
 import { get as getConfig } from "./config";
 
 export interface TransParams {
   source_lang: string;
   target_lang: string;
   service: string;
+  model: string;
   output_variant: string;
   pages: string;
   threads: number;
@@ -59,10 +62,36 @@ export interface BlockEvent {
 }
 
 const CACHE_KEY_FIELDS = [
-  "source_lang", "target_lang", "service", "output_variant", "pages",
+  "source_lang", "target_lang", "service", "model", "output_variant", "pages",
   "threads", "use_babeldoc", "skip_subset_fonts", "formula_font_regex",
   "prompt", "extra_args"
 ];
+
+// HY-MT 推荐的翻译提示词模板（按目标语言选中文/英文版本），并明确要求保留
+// babeldoc 注入的 {{vN}} 占位符（公式 / 富文本），否则译文公式会错乱。
+const HYMT_ZH_NAMES: Record<string, string> = {
+  en: "英语", "zh-CN": "中文", "zh-TW": "繁体中文", ja: "日语", ko: "韩语",
+  fr: "法语", de: "德语", es: "西班牙语", ru: "俄语", pt: "葡萄牙语",
+  it: "意大利语", ar: "阿拉伯语"
+};
+const HYMT_EN_NAMES: Record<string, string> = {
+  en: "English", "zh-CN": "Chinese", "zh-TW": "Traditional Chinese", ja: "Japanese",
+  ko: "Korean", fr: "French", de: "German", es: "Spanish", ru: "Russian",
+  pt: "Portuguese", it: "Italian", ar: "Arabic"
+};
+
+function hyMtPrompt(langIn: string, langOut: string): string {
+  const isZh = (code: string): boolean => /^zh/i.test(code) || code === "yue";
+  const useZh = isZh(langOut) || isZh(langIn);
+  const guardZh = "原文中的 {{v0}}、{{v1}} 这类双花括号占位符表示公式或格式信息，必须原样保留，不要翻译或改动。";
+  const guardEn = "Keep placeholders such as {{v0}} and {{v1}} (they mark formulas/formatting) exactly as-is — do not translate or alter them.";
+  if (useZh) {
+    const name = HYMT_ZH_NAMES[langOut] || "中文";
+    return `将以下文本翻译为${name}，注意只需要输出翻译后的结果，不要额外解释。${guardZh}\n\n$text`;
+  }
+  const name = HYMT_EN_NAMES[langOut] || langOut;
+  return `Translate the following segment into ${name}, without additional explanation. ${guardEn}\n\n$text`;
+}
 
 const ANSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const PROGRESS_RE = /(\d{1,3})%\|/;
@@ -413,6 +442,15 @@ export class EngineManager extends EventEmitter {
   }
 
   private async run(job: Job): Promise<void> {
+    const config = getConfig();
+    const isLocal = config.translate_mode === "local";
+    // 先解析有效的服务端信息（本地模式不在此启动服务，仅确定端名以便计算缓存键）。
+    job.params.service = isLocal ? "openai" : (config.service || "openai");
+    job.params.model = isLocal ? LOCAL_MODEL_ALIAS : config.translate_model;
+    if (isLocal && !job.params.prompt) {
+      job.params.prompt = hyMtPrompt(job.params.source_lang, job.params.target_lang);
+    }
+
     const sourceBytes = job.sourceBytes || Buffer.alloc(0);
     job.cacheKey = cacheKey(sourceBytes, job.params);
     job.resultName = this.buildResultName(job);
@@ -432,16 +470,30 @@ export class EngineManager extends EventEmitter {
 
       fs.writeFileSync(path.join(job.workdir, "source.pdf"), sourceBytes);
 
-      const config = getConfig();
+      let baseUrl = String(config.translate_base_url || "");
+      let apiKey = String(config.translate_api_key || "");
+      let model = String(config.translate_model || "");
+      if (isLocal) {
+        try {
+          const server = await localModel.ensureServer();
+          baseUrl = server.baseUrl;
+          apiKey = "local";
+          model = server.model;
+        } catch (err) {
+          this.fail(job, (err as Error).message);
+          return;
+        }
+      }
+
       const env: NodeJS.ProcessEnv = {
         ...process.env,
         PYTHONUTF8: "1",
         PYTHONUNBUFFERED: "1",
         PYTHONIOENCODING: "utf-8"
       };
-      if (config.openai_base_url) env.OPENAI_BASE_URL = String(config.openai_base_url);
-      if (config.openai_api_key) env.OPENAI_API_KEY = String(config.openai_api_key);
-      if (config.openai_model) env.OPENAI_MODEL = String(config.openai_model);
+      if (baseUrl) env.OPENAI_BASE_URL = baseUrl;
+      if (apiKey) env.OPENAI_API_KEY = apiKey;
+      if (model) env.OPENAI_MODEL = model;
 
       const args = this.buildArgs(job);
       job.status = "running";
