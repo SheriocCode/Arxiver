@@ -29,6 +29,7 @@
   "build": {
     "appId": "com.sherioccode.arxiver",
     "productName": "Arxiver",
+    "artifactName": "${productName}-Setup-${version}.${ext}",
     "files": [
       "out/**/*",
       "package.json"

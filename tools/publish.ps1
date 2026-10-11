@@ -48,6 +48,10 @@ $assets = @(Get-ChildItem $out -File -ErrorAction SilentlyContinue | Where-Objec
     ($_.Name -match '\.(exe|blockmap)$' -and $_.Name -like "*$Version*") -or $_.Name -eq "latest.yml"
 } | ForEach-Object { $_.FullName })
 if ($assets.Count -eq 0) { Fail "dist/ 里没有 $Version 的产物；请先跑 tools/build.ps1 -Version $Version" }
+foreach ($asset in $assets) {
+    $leaf = Split-Path $asset -Leaf
+    if ($leaf -match ' ') { Fail "产物名含空格：$leaf。GitHub 会把空格改成点，导致与 latest.yml 里的文件名不一致、更新下载 404。请确认 electron-builder 的 artifactName 不含空格后重新打包。" }
+}
 Write-Host "publishing $tag ($($assets.Count) assets)" -ForegroundColor Cyan
 
 # ---- 3. 提交版本号改动 ------------------------------------------------------
@@ -82,6 +86,9 @@ if ($LASTEXITCODE -eq 0) {
 } else {
     & gh release create $tag @assets --title $tag --notes $Notes; Assert-Ok "gh release create"
 }
+
+# 若存在同名草稿发布，确保转为正式发布（草稿对 electron-updater 不可见）。
+& gh release edit $tag --draft=false; Assert-Ok "gh release edit --draft=false"
 
 Write-Host "published $tag" -ForegroundColor Green
 

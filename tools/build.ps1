@@ -54,6 +54,13 @@ Get-ChildItem $out -File | Where-Object { $_.Name -like "*$version*.exe" } | For
     "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
 } | Set-Content -Path (Join-Path $out "SHA256SUMS") -Encoding ascii
 
+# GitHub Release 单个资产上限 2 GiB，超出将无法上传。
+foreach ($installer in (Get-ChildItem $out -File | Where-Object { $_.Name -like "*$version*.exe" })) {
+    if ($installer.Length -ge 2GB) {
+        Write-Host "警告：$($installer.Name) 为 $([math]::Round($installer.Length / 1GB, 2)) GiB，超过 GitHub Release 单资产上限 2 GiB，发布会失败。" -ForegroundColor Yellow
+    }
+}
+
 Write-Host ""
 Write-Host "打包完成：$version" -ForegroundColor Green
 Get-ChildItem $out -File | Where-Object { $_.Name -match '\.(exe|blockmap)$' -or $_.Name -eq "latest.yml" } |
