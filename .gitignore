@@ -1,16 +1,7 @@
-pdf2zh/
 engine/
-
 dist/
-server/config.json
-server/__pycache__/
 __pycache__/
 *.pyc
-storage/
-server/server.log
-server/server.err.log
-launcher/ArxivPdfTranslate.exe
 *.local.md
-
 site/_site/
 site/.jekyll-cache/

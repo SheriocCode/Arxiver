@@ -159,7 +159,7 @@ export function addDocument(input: {
     notes: [],
     sourceUrl: input.sourceUrl || "",
     sourceName: input.name || "paper.pdf",
-    files: { source: input.bytes ? sourceFile : null },
+    files: { source: input.bytes ? "paper.pdf" : null },
     translations: [],
     added_at: now,
     modified_at: now,
@@ -294,19 +294,13 @@ export function removeTranslation(id: string, cacheKey: string): LibraryDoc | nu
 }
 
 export function sourcePath(id: string): string | null {
-  const doc = getDocument(id);
-  if (!doc?.files?.source || !fs.existsSync(doc.files.source)) {
-    return null;
-  }
-  return doc.files.source;
+  const file = storage.sourceFile(id);
+  return fs.existsSync(file) ? file : null;
 }
 
 export function readSource(id: string): Buffer | null {
-  const doc = getDocument(id);
-  if (!doc?.files?.source || !fs.existsSync(doc.files.source)) {
-    return null;
-  }
-  return fs.readFileSync(doc.files.source);
+  const file = storage.sourceFile(id);
+  return fs.existsSync(file) ? fs.readFileSync(file) : null;
 }
 
 export function list(): LibraryState {

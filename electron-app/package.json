@@ -1,6 +1,6 @@
 {
-  "name": "arxiv-pdf-translate",
-  "productName": "Arxiv PDF Translate",
+  "name": "arxiver",
+  "productName": "Arxiver",
   "version": "0.5.1",
   "description": "Translate arXiv and local PDFs on your machine with the bundled engine and read the bilingual PDF in a built-in viewer.",
   "main": "./out/main/index.js",
@@ -27,8 +27,8 @@
     "vite": "^7.3.7"
   },
   "build": {
-    "appId": "com.sherioccode.arxiv-pdf-translate",
-    "productName": "Arxiv PDF Translate",
+    "appId": "com.sherioccode.arxiver",
+    "productName": "Arxiver",
     "files": [
       "out/**/*",
       "package.json"
@@ -46,9 +46,23 @@
     "win": {
       "target": "nsis",
       "icon": "resources/icon.ico"
-    }
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "SheriocCode",
+        "repo": "Arxiver"
+      }
+    ]
   },
   "dependencies": {
+    "electron-updater": "^6.6.2",
     "katex": "^0.19.0",
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",

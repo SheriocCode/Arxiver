@@ -111,6 +111,14 @@ export interface ConvMessage {
   error?: string;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
+export type UpdateState = "unsupported" | "idle" | "checking" | "available" | "none" | "downloading" | "ready" | "error";
+export interface UpdateStatus {
+  state: UpdateState;
+  version?: string;
+  percent?: number;
+  error?: string;
+}
+
 export interface Conversation {
   id: string;
   scope: "paper" | "library";
@@ -266,4 +274,9 @@ export interface Api {
   agentConversation(id: string): Promise<Conversation | null>;
   agentSaveConversation(conv: Conversation): Promise<void>;
   agentDeleteConversation(id: string): Promise<void>;
+  getUpdateStatus(): Promise<UpdateStatus>;
+  checkUpdate(): Promise<void>;
+  downloadUpdate(): Promise<void>;
+  installUpdate(): Promise<void>;
+  onUpdateStatus(cb: (status: UpdateStatus) => void): () => void;
 }

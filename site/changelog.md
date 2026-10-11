@@ -1,26 +1,21 @@
 ---
 layout: page
 nav: changelog
-title: 更新日志 — Arxiv PDF Translate
-description: Arxiv PDF Translate 版本更新历史。
+title: 更新日志 — Arxiver
+description: Arxiver 版本更新历史。
 ---
 # 更新日志
 
-全部版本见 [GitHub Releases](https://github.com/SheriocCode/arxiv-pdf-translate/releases)。
+全部版本见 [GitHub Releases](https://github.com/SheriocCode/Arxiver/releases)。
 
-## v0.5.1
+## 桌面版（Electron）
 
-2026-10-08 · patch
+以 Electron 桌面应用取代原「浏览器扩展 + 本机服务 + 托盘启动器」组合。
 
-- 首次使用时加入引导教程（driver.js），帮助新用户快速上手。
-- 更新清单改为无 BOM 的 UTF-8，并容忍读取带 BOM 的清单。
-
-## v0.5.0
-
-2026-10-08 · feature
-
-- 首个正式发布：Chrome / Edge 扩展 + 本机伴生服务 。
-- 本地一键发布流程（`tools/publish.ps1`）与 Inno Setup 安装包。
-- 原生 Win32 托盘启动器与统一网页控制台，移除 .NET/WPF 依赖。
-- 左右对照实时预览、逐页进度、块框段落级溯源与缩放按视口重绘。
-- 翻译缓存、记录分组、结构化运行日志与在线更新。
+- **桌面文献库**：导入、分类、标签、回收站、阅读历史与检索。
+- **双语对照阅读器**：原文 / 对照 / 译文三视图，单页 / 双页、缩放、目录大纲、缩略图、页面主题。
+- **内嵌引擎**：随应用分发的本地翻译引擎，仅调用用户配置的模型接口。
+- **段落块框与引用**：悬停显示「原文 → 译文」；引用预览目标页、点击跳转。
+- **Arxiver 助手**：基于当前文章与整库的对话式检索、可点击引用、`@` 引用已打开文献、选中文本提问；
+  标签 / 元数据等写操作经人机协作确认；会话持久化与历史。
+- **自动更新**：`electron-builder`（NSIS）+ `electron-updater` 差量更新，未变的大文件不重复下载。

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>文档 — Arxiv PDF Translate</title>
-<meta name="description" content="Arxiv PDF Translate 安装、启动、配置与使用文档。">
+<title>文档 — Arxiver</title>
+<meta name="description" content="Arxiver 桌面应用的安装、配置与使用文档。">
 <link rel="icon" href="assets/img/icon128.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,14 +15,14 @@
 
 <header class="site-header">
   <div class="container">
-    <a class="brand" href="index.html"><img class="mark" src="assets/img/logo.svg" alt=""><img class="word" src="assets/img/arxiv_pdf_translate_black.svg" alt="Arxiv PDF Translate"></a>
+    <a class="brand" href="index.html"><img class="mark" src="assets/img/logo.svg" alt=""><img class="word" src="assets/img/arxiver_black.svg" alt="Arxiver"></a>
     <nav class="site-nav">
       <a href="index.html">首页</a>
       <a href="guide.html" class="active">文档</a>
       <a href="reference.html">参考</a>
       <a href="changelog.html">更新日志</a>
-      <a href="https://github.com/SheriocCode/arxiv-pdf-translate" target="_blank" rel="noopener">GitHub</a>
-      <a class="btn primary" href="https://github.com/SheriocCode/arxiv-pdf-translate/releases/latest" target="_blank" rel="noopener">Download</a>
+      <a href="https://github.com/SheriocCode/Arxiver" target="_blank" rel="noopener">GitHub</a>
+      <a class="btn primary" href="https://github.com/SheriocCode/Arxiver/releases/latest" target="_blank" rel="noopener">Download</a>
     </nav>
   </div>
 </header>
@@ -32,233 +32,92 @@
   <aside class="toc">
     <h4>目录</h4>
     <a href="#install">安装与启动</a>
-    <a href="#engine">准备引擎</a>
-    <a href="#service">启动本机服务</a>
-    <a href="#console">本机控制台</a>
-    <a href="#extension">安装扩展</a>
-    <a href="#usage">使用</a>
-    <a href="#config">配置项</a>
-    <a href="#storage">翻译记录与缓存</a>
+    <a href="#model">配置模型</a>
+    <a href="#read">导入与阅读</a>
+    <a href="#translate">翻译</a>
+    <a href="#arxiver">Arxiver 助手</a>
+    <a href="#settings">设置</a>
+    <a href="#storage">数据与存储</a>
+    <a href="#update">更新</a>
     <a href="#troubleshoot">故障排查</a>
   </aside>
   <article class="doc-body">
 <h2 id="install">安装与启动</h2>
 
-<p>最快的方式是使用 Windows 安装包（内置精简翻译引擎）：</p>
-
 <ol>
-  <li>在<a href="https://github.com/SheriocCode/arxiv-pdf-translate/releases/latest">下载页</a>获取 <code class="language-plaintext highlighter-rouge">ArxivPdfTranslate-Setup-vX.exe</code>，双击按向导安装到可写目录。</li>
-  <li>运行托盘程序 <code class="language-plaintext highlighter-rouge">ArxivPdfTranslate.exe</code>：托盘出现图标、自动启动本机服务，并在浏览器打开本机控制台。</li>
-  <li>加载浏览器扩展（见 <a href="#extension">安装扩展</a>）。</li>
+  <li>在<a href="https://github.com/SheriocCode/Arxiver/releases/latest">下载页</a>获取 <code class="language-plaintext highlighter-rouge">Arxiver Setup vX.exe</code>，双击按向导安装（可选择安装目录）。</li>
+  <li>启动后即为桌面应用，无需浏览器扩展、无需单独启动任何服务。</li>
 </ol>
 
+<h2 id="model">配置模型</h2>
+
+<p>打开「设置 → 模型接口」，填入 <strong>OpenAI 兼容</strong> 的服务地址、密钥与模型名（例如 DeepSeek：地址 <code class="language-plaintext highlighter-rouge">https://api.deepseek.com</code>、模型 <code class="language-plaintext highlighter-rouge">deepseek-chat</code>），保存。</p>
+
 <blockquote>
-  <p>扩展是<strong>可选</strong>的翻译前端；本机服务才是核心。只装服务也能通过控制台或 API 使用。</p>
+  <p>翻译与 Arxiver 助手共用这份模型配置。仅调用你配置的接口，其余数据不出本机。</p>
 </blockquote>
 
-<h2 id="engine">准备引擎</h2>
-
-<p>安装包已内置<strong>精简引擎</strong> <code class="language-plaintext highlighter-rouge">engine/ArxivTranslateEngine.exe</code>（随附裁剪后的运行时、<code class="language-plaintext highlighter-rouge">site-packages/</code> 与离线资源）。服务默认优先探测它，无需配置。首次运行会把字体、版面模型、tiktoken 缓存复制到用户目录 <code class="language-plaintext highlighter-rouge">~/.cache/babeldoc</code>，稍慢一点。</p>
-
-<p>精简引擎只保留本项目实际用到的部分：</p>
+<h2 id="read">导入与阅读</h2>
 
 <ul>
-  <li>只支持 <strong>OpenAI 兼容接口</strong>（<code class="language-plaintext highlighter-rouge">-s openai</code>，含 deepseek 等）；</li>
-  <li>移除了 GUI（gradio）、MCP/Web 服务、OCR 表格识别、扫描件检测；</li>
-  <li>离线资源只保留简体中文/通用拉丁字体与版面模型，如需繁体或日/韩目标，首次使用会自动联网下载对应字体。</li>
+  <li>「新建文献」可导入本地 PDF，或粘贴 arXiv 链接/编号自动下载。</li>
+  <li>文库支持分类、标签、星标、回收站、阅读历史与全文检索（标签页 / 年份 / 状态等）。</li>
+  <li>双击条目打开阅读器：<strong>原文 / 对照 / 译文</strong> 三视图，支持单页 / 双页、缩放、目录大纲、缩略图与页面主题（护眼 / 米黄 / 暗色）。</li>
 </ul>
 
-<p>如果引擎不在默认位置，在 <code class="language-plaintext highlighter-rouge">config.json</code> 里设置 <code class="language-plaintext highlighter-rouge">engine_path</code>：</p>
+<h2 id="translate">翻译</h2>
 
 <ul>
-  <li><code class="language-plaintext highlighter-rouge">""</code>（默认）：自动探测项目内 <code class="language-plaintext highlighter-rouge">engine/</code>；</li>
-  <li>相对或绝对路径：相对路径会依次相对 <code class="language-plaintext highlighter-rouge">server/</code>、项目根、当前目录解析。</li>
+  <li>在阅读器工具栏点「翻译」（有译文时为「已翻译」）→ 右侧下拉可设 源语言 / 目标语言 / 导出格式 / 页数，也可「重新翻译」。</li>
+  <li>「已翻译」的下拉会列出该文献的多个译文版本，可切换。</li>
+  <li>翻译过程中顶部显示进度（已完成页数 / 当前页块进度）；可取消。完成后可「保存」导出 PDF。</li>
+  <li>相同 PDF 与参数再次翻译会命中本地缓存。</li>
 </ul>
 
-<h2 id="service">启动本机服务</h2>
+<h2 id="arxiver">Arxiver 助手</h2>
 
-<p>从源码运行时（服务本身只用 Python 标准库，零第三方依赖）：</p>
+<p>右侧「Arxiver」标签是基于文库的对话式助手：</p>
 
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>cd server
-copy config.example.json config.json   # 然后编辑 config.json
-python server.py
+<ul>
+  <li><strong>自动路由</strong>：默认针对当前文章；涉及其它文献或整库问题时自动检索，必要时会向你追问。</li>
+  <li><strong>引用跳转</strong>：回答带 <code class="language-plaintext highlighter-rouge">第 N 页</code> 胶囊，点击跳转到原文。</li>
+  <li><strong><code class="language-plaintext highlighter-rouge">@</code> 引用</strong>：在输入框输入 <code class="language-plaintext highlighter-rouge">@</code> 选择其它已打开文献作为额外上下文（跨文献对比）。</li>
+  <li><strong>选中文本提问</strong>：在 PDF 里选中文字 → 点「问 Arxiver」。</li>
+  <li><strong>写操作需确认</strong>：改标签 / 元数据 / 星标 / 回收站 / 分类等，会先弹出确认卡片（批准 / 修改 / 拒绝）。</li>
+  <li>会话自动保存，右上角可查看历史（含关联论文，可搜索）。</li>
+</ul>
+
+<h2 id="settings">设置</h2>
+
+<p>「设置」包含：模型接口、通用、外观（主题 / 字号）、引用、AI 助手、同步与存储、快捷键、关于（版本与检查更新）。</p>
+
+<h2 id="storage">数据与存储</h2>
+
+<p>本机数据位于 <code class="language-plaintext highlighter-rouge">%APPDATA%\Arxiver\</code>：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>storage/
+  index.json                 # 文库元数据（条目 / 分类 / 标签 / 历史）
+  &lt;docId&gt;/                   # 每个条目一个文件夹
+    paper.pdf                # 原始 PDF
+    &lt;cacheKey&gt;.dual.pdf      # 双语译文
+    &lt;cacheKey&gt;.mono.pdf      # 仅译文
+    &lt;cacheKey&gt;.blocks.jsonl  # 块框数据
+    text.json                # 全文检索用文本
+  conversations/             # Arxiver 会话
+config.json                  # 设置
 </code></pre></div></div>
 
-<p>Linux / macOS 同理，把 <code class="language-plaintext highlighter-rouge">copy</code> 换成 <code class="language-plaintext highlighter-rouge">cp</code>、<code class="language-plaintext highlighter-rouge">python</code> 换成 <code class="language-plaintext highlighter-rouge">python3</code>。也支持从任意工作目录运行：</p>
+<h2 id="update">更新</h2>
 
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>python E:\path\to\arxiv-pdf-translate\server\server.py
-</code></pre></div></div>
-
-<p>默认端口 <code class="language-plaintext highlighter-rouge">18760</code>。启动日志会打印解析到的 <code class="language-plaintext highlighter-rouge">project root</code> 与引擎路径，看到 <code class="language-plaintext highlighter-rouge">listening on http://127.0.0.1:18760</code> 即成功。自检：</p>
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>curl http://127.0.0.1:18760/health
-</code></pre></div></div>
-
-<p>也可用环境变量覆盖：<code class="language-plaintext highlighter-rouge">ENGINE_PATH</code>、<code class="language-plaintext highlighter-rouge">OPENAI_BASE_URL</code>、<code class="language-plaintext highlighter-rouge">OPENAI_API_KEY</code>、<code class="language-plaintext highlighter-rouge">OPENAI_MODEL</code>、<code class="language-plaintext highlighter-rouge">ENGINE_PORT</code>。</p>
-
-<h3 id="section">一键启动（托盘程序）</h3>
-
-<p><code class="language-plaintext highlighter-rouge">launcher/ArxivPdfTranslate.exe</code> 是<strong>原生 Win32 单文件</strong>，不依赖 .NET 或任何第三方运行时（只用 Windows 自带系统 DLL）。双击即启动托盘控制程序。</p>
-
-<ul>
-  <li>悬停图标：显示 <strong>在线 / 未启动</strong>；</li>
-  <li><strong>左键单击</strong>：打开控制台；<strong>右键单击</strong>：弹出菜单；</li>
-  <li>菜单项：打开控制台、启动 / 停止服务（停止走 <code class="language-plaintext highlighter-rouge">/server/shutdown</code> 优雅退出）、开机自启（勾选开关，可取消；以 <code class="language-plaintext highlighter-rouge">--tray</code> 静默启动）、创建桌面快捷方式、退出（退出即停止服务）。</li>
-</ul>
-
-<p>命令行参数：</p>
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ArxivPdfTranslate.exe            启动托盘并打开控制台
-ArxivPdfTranslate.exe --tray     仅托盘（用于开机自启，不打开浏览器）
-ArxivPdfTranslate.exe --server   仅启动本机服务
-</code></pre></div></div>
-
-<p>单实例：重复双击不会重复启动，而是唤起已有实例打开控制台。</p>
-
-<blockquote>
-  <p>从源码重建该 exe <strong>仅构建时</strong>需要 MinGW-w64 的 <code class="language-plaintext highlighter-rouge">gcc</code>，产物本身无依赖：<code class="language-plaintext highlighter-rouge">launcher\build-native-launcher.bat</code>。</p>
-</blockquote>
-
-<h2 id="console">本机控制台</h2>
-
-<p>服务启动后访问 <code class="language-plaintext highlighter-rouge">http://127.0.0.1:18760/</code>（也可用托盘或扩展入口打开），把配置、记录与系统控制集中到一处：</p>
-
-<ul>
-  <li><strong>概览</strong>：服务、引擎、版本、端口状态。</li>
-  <li><strong>翻译设置</strong>：模型接口（地址 / 模型 / 密钥）、源/目标语言、导出格式、线程数、引擎路径、超时等，写入 <code class="language-plaintext highlighter-rouge">server/config.json</code>；扩展会自动采纳这里改动的默认值。</li>
-  <li><strong>翻译记录</strong>：本地缓存 PDF 的搜索、分组、打开 / 下载 / 删除。</li>
-  <li><strong>运行日志（trace）</strong>：服务端按 <code class="language-plaintext highlighter-rouge">[时间] [级别] [类别] 消息</code> 结构化输出，前端渲染成时间线——级别着色（错误/警告/成功/信息/调试）、类别标签（任务/引擎/缓存/存储/配置/系统…）、任务 ID 关联，支持按级别/类别筛选、搜索、跟随最新、一键清空。覆盖启动/关闭、配置读写、每次任务的上传/缓存命中或未命中、引擎启动(pid)、逐页进度、块识别、退出码、耗时、结果落盘、存储与分组、标题补全、网络失败等。</li>
-  <li><strong>系统</strong>：开机自启、创建桌面快捷方式、停止服务。</li>
-  <li><strong>软件更新</strong>：显示当前版本，「检查更新」后如有新版本可「下载并更新」——服务端下载补丁/整包并做 sha256 校验，随后写重启脚本、退出、覆盖文件并重启，页面显示进度并在重连后提示「更新完成」。更新只替换代码文件（<code class="language-plaintext highlighter-rouge">server/</code>、<code class="language-plaintext highlighter-rouge">server/web/</code>、<code class="language-plaintext highlighter-rouge">src/</code> 等），<strong>不覆盖 <code class="language-plaintext highlighter-rouge">config.json</code> 与 <code class="language-plaintext highlighter-rouge">storage/</code></strong>；若含扩展文件会提示到 <code class="language-plaintext highlighter-rouge">chrome://extensions</code> 重新加载。</li>
-  <li><strong>扩展检测</strong>：控制台会探测浏览器是否已安装本插件（通过固定扩展 ID）。页面顶部常驻一条极简状态行（小圆点 + 「已安装 / 未安装」，未安装时给出安装路径与「复制扩展目录」）。</li>
-</ul>
-
-<blockquote>
-  <p>网页无法自行重新启动服务：停止后请用托盘图标「启动服务」重新拉起。</p>
-</blockquote>
-
-<blockquote>
-  <p>扩展弹窗底部的 <strong>设置</strong> 直接打开该控制台；服务未启动时，弹窗内会显示「连接本机服务」面板（可改服务地址、重试或打开控制台）。模型接口等均写入 <code class="language-plaintext highlighter-rouge">server/config.json</code>（密钥只显示为掩码，清除密钥有单独按钮）。</p>
-</blockquote>
-
-<h2 id="extension">安装扩展</h2>
-
-<ol>
-  <li>打开 <code class="language-plaintext highlighter-rouge">chrome://extensions</code>（Edge 为 <code class="language-plaintext highlighter-rouge">edge://extensions</code>）。</li>
-  <li>打开右上角「开发者模式」。</li>
-  <li>点击「加载已解压的扩展程序」，选择项目目录 <code class="language-plaintext highlighter-rouge">arxiv-pdf-translate/</code>（或先运行 <code class="language-plaintext highlighter-rouge">.\build.ps1</code> 打包再解压加载）。</li>
-</ol>
-
-<p>控制台会自动检测扩展是否已安装。扩展固定 ID 为 <code class="language-plaintext highlighter-rouge">ajabefplecofaoccaobofemmdcjdfala</code>（由 <code class="language-plaintext highlighter-rouge">manifest.json</code> 的 <code class="language-plaintext highlighter-rouge">key</code> 决定）。若是从旧版本「加载已解压」升级，固定 ID 后浏览器可能视为新扩展，需移除旧的再重新加载一次。</p>
-
-<blockquote>
-  <p>本地 PDF 需要在扩展详情页开启「允许访问文件网址」。</p>
-</blockquote>
-
-<h2 id="usage">使用</h2>
-
-<p>打开 arXiv PDF（如 <code class="language-plaintext highlighter-rouge">arxiv.org/pdf/...</code>）不会自动跳转，点击浏览器工具栏上的扩展图标即可：</p>
-
-<ol>
-  <li>弹出<strong>翻译选项</strong>面板：源 → 目标语言、翻译范围（导出格式在翻译视图里选、线程在控制台改）。</li>
-  <li>点击 <strong>开始翻译</strong> → 在新标签打开翻译视图，本机引擎生成译文，可 <strong>保存 PDF</strong> 或在新标签打开原文/译文。
-    <ul>
-      <li><strong>左右对照、实时追页</strong>：左侧立即显示原文全篇；右侧先按原文页数铺好等高「翻译中…」占位页，每页译完原地替换（标题栏显示「已翻译 k/N 页」），版面稳定不抖动、同一滚动区天然对齐。</li>
-      <li><strong>页码 / 缩放</strong>：工具栏 <code class="language-plaintext highlighter-rouge">‹ 页码/N ›</code> 跳页与 <code class="language-plaintext highlighter-rouge">− 100% +</code> 缩放（也可 <strong>Ctrl + 滚轮</strong>）；窗口尺寸变化自动适配宽度。</li>
-      <li><strong>逐页进度</strong>：未开始显示「排队中…」，翻译中的页显示「翻译中…」加进度条（按该页已译段落比例推进），译完即替换。</li>
-      <li><strong>视图切换</strong>：<strong>原文 / 译文 / 对比</strong>三种随时切换，不影响正在跑的翻译。</li>
-      <li><strong>块框（段落级）</strong>：工具栏 <strong>块框</strong> 开关在原文页叠加每个段落块的矩形，<strong>悬停</strong>显示该块「原文 → 译文」（数据来自 <code class="language-plaintext highlighter-rouge">/jobs/&lt;id&gt;/blocks</code>）。</li>
-      <li><strong>工具栏进度条</strong>：工具栏底边 2px 的页级进度条随已完成页数推进。</li>
-    </ul>
-  </li>
-  <li>面板底部的 <strong>设置</strong> 打开本机统一控制台。</li>
-</ol>
-
-<p>其它入口：</p>
-
-<ul>
-  <li><strong>任意 PDF 链接</strong>：右键 → 「Translate link with the local engine」（立即翻译）。</li>
-  <li><strong>本地 PDF</strong>：先在扩展详情页开启「允许访问文件网址」，再用右键菜单或工具栏图标。</li>
-</ul>
-
-<blockquote>
-  <p>Chrome 自带的 PDF 阅读器是浏览器内部页面，扩展无法往里注入页面内按钮；因此采用「工具栏图标 + 弹出翻译选项」的方式，而不是改写 PDF 页面。</p>
-</blockquote>
-
-<p>译文由本机翻译引擎生成，不上传任何云端服务（除你配置的翻译模型 API）。</p>
-
-<h2 id="config">配置项</h2>
-
-<p>以下设置统一在本机控制台 <code class="language-plaintext highlighter-rouge">http://127.0.0.1:18760/</code> 中修改。关键字段（<code class="language-plaintext highlighter-rouge">server/config.json</code>）：</p>
-
-<div class="language-json highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
-  </span><span class="nl">"port"</span><span class="p">:</span><span class="w"> </span><span class="mi">18760</span><span class="p">,</span><span class="w">
-  </span><span class="nl">"engine_path"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span><span class="w">
-  </span><span class="nl">"service"</span><span class="p">:</span><span class="w"> </span><span class="s2">"openai"</span><span class="p">,</span><span class="w">
-  </span><span class="nl">"openai_base_url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://api.deepseek.com"</span><span class="p">,</span><span class="w">
-  </span><span class="nl">"openai_api_key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"sk-你的密钥"</span><span class="p">,</span><span class="w">
-  </span><span class="nl">"openai_model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"deepseek-flash"</span><span class="p">,</span><span class="w">
-  </span><span class="nl">"source_lang"</span><span class="p">:</span><span class="w"> </span><span class="s2">"en"</span><span class="p">,</span><span class="w">
-  </span><span class="nl">"target_lang"</span><span class="p">:</span><span class="w"> </span><span class="s2">"zh-CN"</span><span class="p">,</span><span class="w">
-  </span><span class="nl">"output_variant"</span><span class="p">:</span><span class="w"> </span><span class="s2">"dual"</span><span class="p">,</span><span class="w">
-  </span><span class="nl">"threads"</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="w">
-</span><span class="p">}</span><span class="w">
-</span></code></pre></div></div>
-
-<table>
-  <thead>
-    <tr>
-      <th>项</th>
-      <th>默认</th>
-      <th>说明</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>服务地址</td>
-      <td><code class="language-plaintext highlighter-rouge">http://127.0.0.1:18760</code></td>
-      <td>与 <code class="language-plaintext highlighter-rouge">config.json</code> 端口一致</td>
-    </tr>
-    <tr>
-      <td>源 / 目标语言</td>
-      <td><code class="language-plaintext highlighter-rouge">en</code> → <code class="language-plaintext highlighter-rouge">zh-CN</code></td>
-      <td>写入配置，扩展采纳为默认值</td>
-    </tr>
-    <tr>
-      <td>导出格式</td>
-      <td>双语</td>
-      <td>保存/打开时导出双语或仅译文</td>
-    </tr>
-    <tr>
-      <td>线程数</td>
-      <td>4</td>
-      <td>引擎的 <code class="language-plaintext highlighter-rouge">-t</code></td>
-    </tr>
-  </tbody>
-</table>
-
-<p>环境变量可覆盖：<code class="language-plaintext highlighter-rouge">ENGINE_PATH</code>、<code class="language-plaintext highlighter-rouge">OPENAI_BASE_URL</code>、<code class="language-plaintext highlighter-rouge">OPENAI_API_KEY</code>、<code class="language-plaintext highlighter-rouge">OPENAI_MODEL</code>、<code class="language-plaintext highlighter-rouge">ENGINE_PORT</code>。</p>
-
-<h2 id="storage">翻译记录与缓存</h2>
-
-<p>翻译成功的 PDF 写入项目 <code class="language-plaintext highlighter-rouge">storage/</code>（内容+参数寻址），并在 <code class="language-plaintext highlighter-rouge">storage/index.json</code> 记录来源、语言、输出类型、大小、时间等。</p>
-
-<ul>
-  <li>对<strong>同一份 PDF + 相同参数</strong>再次翻译时，服务直接返回缓存，不再调用引擎/模型；在翻译选项里勾选「忽略缓存，强制重新翻译」可绕过。</li>
-  <li>控制台「翻译记录」每条含<strong>首页缩略图</strong>、自动识别的<strong>论文标题</strong>、文件名、语言/输出/大小/时间、来源链接，可<strong>打开 / 下载 / 删除</strong>。</li>
-  <li><strong>搜索与分组</strong>：顶部搜索框按标题 / 文件名 / 链接过滤；下拉按分组筛选（全部 / 未分组 / 自定义）；「新建分组」创建分类，每条右侧下拉归类；选中分组可「删除分组」（组内记录变为未分组）。</li>
-  <li><strong>标题</strong>：对 arXiv 链接通过 <code class="language-plaintext highlighter-rouge">export.arxiv.org</code> API 获取；其它链接尝试读取网页的 <code class="language-plaintext highlighter-rouge">citation_title</code>；老记录会在服务启动时后台补全。</li>
-  <li><strong>缩略图</strong>：由 <code class="language-plaintext highlighter-rouge">server/make_thumb.py</code> 用 PyMuPDF 渲染首页（<code class="language-plaintext highlighter-rouge">storage/&lt;id&gt;.thumb.png</code>），失败则该项不显示缩略图。</li>
-  <li>直接删除 <code class="language-plaintext highlighter-rouge">storage/</code> 目录即可清空全部缓存。</li>
-</ul>
+<p>应用内置自动更新（<code class="language-plaintext highlighter-rouge">electron-updater</code>）：启动时自动检查，也可在「设置 → 关于 → 检查更新」。更新只下载变化的块，未变的大文件（如引擎）不会重复下载；下载完成后点「重启并安装」。</p>
 
 <h2 id="troubleshoot">故障排查</h2>
 
 <ul>
-  <li><strong>无法连接本地服务</strong>：确认 <code class="language-plaintext highlighter-rouge">server</code> 已启动；端口与扩展内配置一致；浏览器与模型 API 网络可用。</li>
-  <li><strong>未找到翻译引擎</strong>：确认 <code class="language-plaintext highlighter-rouge">engine/ArxivTranslateEngine.exe</code> 存在，或把 <code class="language-plaintext highlighter-rouge">engine_path</code> 指向实际位置；启动日志会打印解析结果。</li>
-  <li><strong>本地 PDF 打不开</strong>：在 <code class="language-plaintext highlighter-rouge">chrome://extensions</code> 详情页开启「允许访问文件网址」。</li>
-  <li><strong>翻译报错</strong>：查看翻译视图里的日志尾部，或 <code class="language-plaintext highlighter-rouge">server</code> 控制台输出。</li>
+  <li><strong>翻译失败</strong>：先确认「设置 → 模型接口」地址 / 密钥 / 模型正确、网络可达；阅读器顶部会显示错误。</li>
+  <li><strong>首次翻译较慢</strong>：引擎首次运行会把字体 / 版面模型等缓存拷到用户目录，稍后变快。</li>
+  <li><strong>源文件缺失</strong>：条目对应的 <code class="language-plaintext highlighter-rouge">storage/&lt;docId&gt;/paper.pdf</code> 丢失时无法打开，需重新导入。</li>
+  <li><strong>助手无响应</strong>：确认模型接口可用；「设置 → AI 助手」中启用。</li>
 </ul>
 
   </article>
@@ -268,9 +127,9 @@ ArxivPdfTranslate.exe --server   仅启动本机服务
 
 <footer class="site-footer">
   <div class="container">
-    <div>©2026 Arxiv PDF Translate · 本机翻译，用你自己的模型</div>
+    <div>©2026 Arxiver · 本机翻译，用你自己的模型</div>
     <div>
-      <a href="https://github.com/SheriocCode/arxiv-pdf-translate" target="_blank" rel="noopener">GitHub</a> ·
+      <a href="https://github.com/SheriocCode/Arxiver" target="_blank" rel="noopener">GitHub</a> ·
       <a href="guide.html">文档</a> ·
       <a href="changelog.html">更新日志</a>
     </div>

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>更新日志 — Arxiv PDF Translate</title>
-<meta name="description" content="Arxiv PDF Translate 版本更新历史。">
+<title>更新日志 — Arxiver</title>
+<meta name="description" content="Arxiver 版本更新历史。">
 <link rel="icon" href="assets/img/icon128.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,14 +15,14 @@
 
 <header class="site-header">
   <div class="container">
-    <a class="brand" href="index.html"><img class="mark" src="assets/img/logo.svg" alt=""><img class="word" src="assets/img/arxiv_pdf_translate_black.svg" alt="Arxiv PDF Translate"></a>
+    <a class="brand" href="index.html"><img class="mark" src="assets/img/logo.svg" alt=""><img class="word" src="assets/img/arxiver_black.svg" alt="Arxiver"></a>
     <nav class="site-nav">
       <a href="index.html">首页</a>
       <a href="guide.html">文档</a>
       <a href="reference.html">参考</a>
       <a href="changelog.html" class="active">更新日志</a>
-      <a href="https://github.com/SheriocCode/arxiv-pdf-translate" target="_blank" rel="noopener">GitHub</a>
-      <a class="btn primary" href="https://github.com/SheriocCode/arxiv-pdf-translate/releases/latest" target="_blank" rel="noopener">Download</a>
+      <a href="https://github.com/SheriocCode/Arxiver" target="_blank" rel="noopener">GitHub</a>
+      <a class="btn primary" href="https://github.com/SheriocCode/Arxiver/releases/latest" target="_blank" rel="noopener">Download</a>
     </nav>
   </div>
 </header>
@@ -31,27 +31,20 @@
 <div class="container page-body">
 <h1 id="section">更新日志</h1>
 
-<p>全部版本见 <a href="https://github.com/SheriocCode/arxiv-pdf-translate/releases">GitHub Releases</a>。</p>
+<p>全部版本见 <a href="https://github.com/SheriocCode/Arxiver/releases">GitHub Releases</a>。</p>
 
-<h2 id="v051">v0.5.1</h2>
+<h2 id="electron">桌面版（Electron）</h2>
 
-<p>2026-10-08 · patch</p>
-
-<ul>
-  <li>首次使用时加入引导教程（driver.js），帮助新用户快速上手。</li>
-  <li>更新清单改为无 BOM 的 UTF-8，并容忍读取带 BOM 的清单。</li>
-</ul>
-
-<h2 id="v050">v0.5.0</h2>
-
-<p>2026-10-08 · feature</p>
+<p>以 Electron 桌面应用取代原「浏览器扩展 + 本机服务 + 托盘启动器」组合。</p>
 
 <ul>
-  <li>首个正式发布：Chrome / Edge 扩展 + 本机伴生服务 。</li>
-  <li>本地一键发布流程（<code class="language-plaintext highlighter-rouge">tools/publish.ps1</code>）与 Inno Setup 安装包。</li>
-  <li>原生 Win32 托盘启动器与统一网页控制台，移除 .NET/WPF 依赖。</li>
-  <li>左右对照实时预览、逐页进度、块框段落级溯源与缩放按视口重绘。</li>
-  <li>翻译缓存、记录分组、结构化运行日志与在线更新。</li>
+  <li><strong>桌面文献库</strong>：导入、分类、标签、回收站、阅读历史与检索。</li>
+  <li><strong>双语对照阅读器</strong>：原文 / 对照 / 译文三视图，单页 / 双页、缩放、目录大纲、缩略图、页面主题。</li>
+  <li><strong>内嵌引擎</strong>：随应用分发的本地翻译引擎，仅调用用户配置的模型接口。</li>
+  <li><strong>段落块框与引用</strong>：悬停显示「原文 → 译文」；引用预览目标页、点击跳转。</li>
+  <li><strong>Arxiver 助手</strong>：基于当前文章与整库的对话式检索、可点击引用、<code class="language-plaintext highlighter-rouge">@</code> 引用已打开文献、选中文本提问；
+标签 / 元数据等写操作经人机协作确认；会话持久化与历史。</li>
+  <li><strong>自动更新</strong>：<code class="language-plaintext highlighter-rouge">electron-builder</code>（NSIS）+ <code class="language-plaintext highlighter-rouge">electron-updater</code> 差量更新，未变的大文件不重复下载。</li>
 </ul>
 
 </div>
@@ -60,9 +53,9 @@
 
 <footer class="site-footer">
   <div class="container">
-    <div>©2026 Arxiv PDF Translate · 本机翻译，用你自己的模型</div>
+    <div>©2026 Arxiver · 本机翻译，用你自己的模型</div>
     <div>
-      <a href="https://github.com/SheriocCode/arxiv-pdf-translate" target="_blank" rel="noopener">GitHub</a> ·
+      <a href="https://github.com/SheriocCode/Arxiver" target="_blank" rel="noopener">GitHub</a> ·
       <a href="guide.html">文档</a> ·
       <a href="changelog.html">更新日志</a>
     </div>

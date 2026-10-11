@@ -6,7 +6,7 @@ layout: default
   <h1>{{ page.hero }}</h1>
   <p class="lead">{{ page.lead }}</p>
   <div class="btn-row">
-    <a class="btn primary" href="https://github.com/SheriocCode/arxiv-pdf-translate/releases/latest" target="_blank" rel="noopener">
+    <a class="btn primary" href="https://github.com/SheriocCode/Arxiver/releases/latest" target="_blank" rel="noopener">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       下载安装包
     </a>
@@ -17,16 +17,15 @@ layout: default
 <section class="tui">
   <div class="tui-grid">
     <div class="tui-text">
-      <img class="wordmark" src="assets/img/arxiv_pdf_translate.svg" alt="Arxiv PDF Translate">
+      <img class="wordmark" src="assets/img/arxiver.svg" alt="Arxiver">
       <div class="prompt">
-        <span class="dim">$</span> ArxivPdfTranslate.exe --server<br>
-        <span class="dim">[INFO] project root</span>  E:\arxiv-pdf-translate<br>
-        <span class="dim">[INFO] engine</span>        engine/ArxivTranslateEngine.exe<br>
-        <span class="dim">[INFO] listening on</span>  http://127.0.0.1:18760<br>
-        <span class="dim">[INFO] translate</span>     arxiv.org/pdf/2501.00001  en → zh-CN<br>
-        <span style="color:var(--success)">[DONE]</span> 68/68 pages  ▸  bilingual PDF ready
+        <span class="dim">$</span> Arxiver<br>
+        <span class="dim">[engine]</span>  bundled · PyMuPDF + translate engine<br>
+        <span class="dim">[model ]</span>  DeepSeek (OpenAI-compatible)<br>
+        <span class="dim">[open  ]</span>  2211.15658v2.pdf  en → zh-CN<br>
+        <span style="color:var(--success)">[DONE]</span> 15/15 pages  ▸  bilingual ready
       </div>
-      <div class="hints"><b>原文 / 译文 / 对比</b> 切换视图 &nbsp;·&nbsp; <b>块框</b> 段落级溯源 &nbsp;·&nbsp; <b>Ctrl + 滚轮</b> 缩放</div>
+      <div class="hints"><b>原文 / 对照 / 译文</b> 三视图 &nbsp;·&nbsp; <b>块框</b> 段落级溯源 &nbsp;·&nbsp; <b>Arxiver</b> 助手（引用跳转 / 跨文献）</div>
     </div>
     {% if page.shots %}
     <div class="carousel">

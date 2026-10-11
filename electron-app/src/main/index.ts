@@ -9,9 +9,11 @@ import * as paths from "./paths";
 import { EngineManager, clearTmpJobs, type PublicJob, type TransParams } from "./engine";
 import { AgentService, type AgentChatRequest } from "./agent/agent";
 import * as conversations from "./agent/conversations";
+import { Updater } from "./updater";
 
 const engine = new EngineManager();
 const agent = new AgentService();
+const updater = new Updater();
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -51,7 +53,7 @@ function createWindow(): void {
     height: 820,
     minWidth: 900,
     minHeight: 640,
-    title: "Arxiv PDF Translate",
+    title: "Arxiver",
     icon: paths.iconPath(),
     titleBarStyle: "hidden",
     titleBarOverlay: { color: "#0d0d0d", symbolColor: "#e6e6e9", height: 36 },
@@ -88,7 +90,7 @@ function createWindow(): void {
 function createTray(): void {
   try {
     tray = new Tray(trayImage());
-    tray.setToolTip("Arxiv PDF Translate");
+    tray.setToolTip("Arxiver");
     tray.setContextMenu(Menu.buildFromTemplate([
       { label: "显示控制台", click: showWindow },
       { type: "separator" },
@@ -110,6 +112,7 @@ engine.on("update", (job: PublicJob) => send("job:update", job));
 engine.on("partial", (id: string, info: unknown) => send("job:partial", { id, ...(info as object) }));
 engine.on("blocks", (id: string, blocks: unknown) => send("job:blocks", { id, blocks }));
 agent.on("event", (event: unknown) => send("agent:event", event));
+updater.on("status", (status: unknown) => send("update:status", status));
 
 function arxivToPdf(url: string): string {
   const match = /^https?:\/\/(?:www\.|export\.)?arxiv\.org\/abs\/([^?#\s]+)/i.exec(url);
@@ -123,7 +126,7 @@ async function fetchPdf(url: string): Promise<{ bytes: Buffer; name: string; sou
   const target = arxivToPdf(url);
   const response = await fetch(target, {
     redirect: "follow",
-    headers: { "User-Agent": "Mozilla/5.0 ArxivPdfTranslate" }
+    headers: { "User-Agent": "Mozilla/5.0 Arxiver" }
   });
   if (!response.ok) {
     throw new Error(`下载失败：HTTP ${response.status}`);
@@ -247,6 +250,11 @@ function registerIpc(): void {
   ipcMain.handle("agent:chat", (_event, payload: AgentChatRequest) => agent.run(payload));
   ipcMain.handle("agent:cancel", (_event, turnId: string) => agent.cancel(turnId));
   ipcMain.handle("agent:confirm", (_event, confirmId: string, decision: { approved: boolean; args?: string }) => agent.confirm(confirmId, decision));
+
+  ipcMain.handle("update:status", () => updater.getStatus());
+  ipcMain.handle("update:check", () => updater.check());
+  ipcMain.handle("update:download", () => updater.download());
+  ipcMain.handle("update:install", () => updater.install());
   ipcMain.handle("agent:conversations", (_event, filter: { scope: "paper" | "library"; docId?: string }) => conversations.list(filter));
   ipcMain.handle("agent:conversation", (_event, id: string) => conversations.get(id));
   ipcMain.handle("agent:conversationSave", (_event, conv) => conversations.save(conv));
@@ -328,12 +336,13 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     if (process.platform === "win32") {
-      app.setAppUserModelId("com.sherioccode.arxiv-pdf-translate");
+      app.setAppUserModelId("com.sherioccode.arxiver");
     }
     registerIpc();
     clearTmpJobs();
     createWindow();
     createTray();
+    updater.init();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {

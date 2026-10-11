@@ -1,5 +1,5 @@
 import { useEffect, useState, type JSX } from "react";
-import type { AppConfig, AppInfo } from "../../../shared/types";
+import type { AppConfig, AppInfo, UpdateStatus } from "../../../shared/types";
 import { Icon } from "./Icons";
 import { LANGS } from "../lib/langs";
 import { ACCENTS, type AppSettings } from "../state/settings";
@@ -33,6 +33,26 @@ export default function SettingsView({
   const [section, setSection] = useState("model");
   const [form, setForm] = useState<Partial<AppConfig>>({});
   const [hint, setHint] = useState("");
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
+
+  useEffect(() => {
+    void window.api.getUpdateStatus().then(setUpdate);
+    return window.api.onUpdateStatus((s) => setUpdate(s));
+  }, []);
+
+  function updateText(u: UpdateStatus | null): string {
+    if (!u) { return ""; }
+    switch (u.state) {
+      case "unsupported": return "开发模式不支持自动更新";
+      case "checking": return "正在检查更新…";
+      case "available": return `发现新版本 ${u.version}，可下载`;
+      case "none": return "已是最新版本";
+      case "downloading": return `正在下载… ${u.percent || 0}%`;
+      case "ready": return `新版本 ${u.version} 已就绪，重启安装`;
+      case "error": return `更新失败：${u.error || ""}`;
+      default: return "";
+    }
+  }
 
   useEffect(() => {
     if (config) {
@@ -59,7 +79,7 @@ export default function SettingsView({
     <div className="modal-root" onMouseDown={(e) => { if (e.target === e.currentTarget) { onClose(); } }}>
       <div className="settings-modal" role="dialog" aria-label="设置">
         <div className="settings-side">
-          <img className="settings-logo" src="icons/wordmark.svg" alt="Arxiv PDF Translate" />
+          <img className="settings-logo" src="icons/wordmark.svg" alt="Arxiver" />
           <div className="settings-nav">
             {SECTIONS.map((s) => (
               <button key={s.id} className={section === s.id ? "is-active" : ""} onClick={() => setSection(s.id)}>
@@ -194,10 +214,18 @@ export default function SettingsView({
                 <div className="about-card">
                   <img className="about-logo" src="icons/logo.svg" alt="" />
                   <div className="od-fill">
-                    <img className="about-word" src="icons/wordmark.svg" alt="Arxiv PDF Translate" />
+                    <img className="about-word" src="icons/wordmark.svg" alt="Arxiver" />
                     <p>应用 v{info?.version || "—"} · 引擎 {info?.engineVersion || "?"}</p>
                     <p>{info?.userData || ""}</p>
                   </div>
+                </div>
+                <div className="about-update">
+                  <span className="about-update-text">{updateText(update)}</span>
+                  {update?.state === "available" && <button className="btn btn-primary" onClick={() => { void window.api.downloadUpdate(); }}>下载更新</button>}
+                  {update?.state === "ready" && <button className="btn btn-primary" onClick={() => { void window.api.installUpdate(); }}>重启并安装</button>}
+                  {(update?.state !== "downloading" && update?.state !== "ready") && (
+                    <button className="btn" onClick={() => { void window.api.checkUpdate(); }}>检查更新</button>
+                  )}
                 </div>
               </Group>
             )}

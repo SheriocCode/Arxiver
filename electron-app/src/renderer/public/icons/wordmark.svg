@@ -2,39 +2,25 @@
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
 
 <svg
-   width="149.78703mm"
+   width="57.736965mm"
    height="17.078028mm"
-   viewBox="0 0 149.78703 17.078028"
+   viewBox="0 0 57.736964 17.078028"
    version="1.1"
    id="svg1"
+   xml:space="preserve"
    xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg">
-  <defs
-     id="defs1" />
-  <g
+   xmlns:svg="http://www.w3.org/2000/svg"><defs
+     id="defs1" /><g
      id="layer1"
-     transform="translate(-283.49272,-164.84644)">
-    <text
+     transform="translate(-316.87972,-186.86161)"><text
        xml:space="preserve"
-       style="font-size:25.4px;font-family:'Baskerville Old Face';-inkscape-font-specification:'Baskerville Old Face';writing-mode:lr-tb;direction:ltr;fill:#338000;stroke-width:0.264583"
-       x="283.62915"
-       y="181.67642"
-       id="text1"><tspan
-         id="tspan1"
-         style="font-style:italic;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:25.4px;font-family:'High Tower Text';-inkscape-font-specification:'High Tower Text Italic';fill:#ffffff;stroke-width:0.264583"
-         x="283.62915"
-         y="181.67642"><tspan
-           style="font-style:italic;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:25.4px;font-family:'High Tower Text';-inkscape-font-specification:'High Tower Text Italic';fill:#3771c8"
-           id="tspan2">A</tspan><tspan
-           style="font-size:16.9333px"
-           id="tspan8">rxiv</tspan><tspan
-           style="font-style:italic;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:25.4px;font-family:'High Tower Text';-inkscape-font-specification:'High Tower Text Italic';fill:#2ca02c"
-           id="tspan3">P</tspan><tspan
-           style="font-size:16.9333px;fill:#ffffff"
-           id="tspan6">DF</tspan><tspan
-           style="font-style:italic;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:25.4px;font-family:'High Tower Text';-inkscape-font-specification:'High Tower Text Italic';fill:#c87137"
-           id="tspan4">T</tspan><tspan
-           style="font-size:16.9333px;fill:#ffffff"
-           id="tspan7">ranslate</tspan></tspan></text>
-  </g>
-</svg>
+       style="font-size:25.4px;font-family:'Baskerville Old Face';-inkscape-font-specification:'Baskerville Old Face';writing-mode:lr-tb;direction:ltr;fill:#2ca02c;fill-opacity:1;stroke-width:0.264583"
+       x="317.01614"
+       y="203.69159"
+       id="text1-8"><tspan
+         id="tspan1-2"
+         style="font-style:italic;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:25.4px;font-family:'High Tower Text';-inkscape-font-specification:'High Tower Text Italic';fill:#ffffff;fill-opacity:1;stroke-width:0.264583"
+         x="317.01614"
+         y="203.69159">A<tspan
+   style="font-size:16.9333px;fill:#ffffff;fill-opacity:1"
+   id="tspan8-5">rxiver</tspan></tspan></text></g></svg>

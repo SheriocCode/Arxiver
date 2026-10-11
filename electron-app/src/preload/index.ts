@@ -59,6 +59,12 @@ const api = {
   agentSaveConversation: (conv: unknown) => ipcRenderer.invoke("agent:conversationSave", conv),
   agentDeleteConversation: (id: string) => ipcRenderer.invoke("agent:conversationDelete", id),
 
+  getUpdateStatus: () => ipcRenderer.invoke("update:status"),
+  checkUpdate: () => ipcRenderer.invoke("update:check"),
+  downloadUpdate: () => ipcRenderer.invoke("update:download"),
+  installUpdate: () => ipcRenderer.invoke("update:install"),
+  onUpdateStatus: (cb: (payload: unknown) => void) => subscribe("update:status", cb),
+
   onJobUpdate: (cb: (payload: unknown) => void) => subscribe("job:update", cb),
   onJobPartial: (cb: (payload: unknown) => void) => subscribe("job:partial", cb),
   onJobBlocks: (cb: (payload: unknown) => void) => subscribe("job:blocks", cb),

@@ -1,5 +1,5 @@
-title: Arxiv PDF Translate
-description: 在浏览器里翻译 arXiv 论文 PDF 与本地 PDF，全程在本机完成。
+title: Arxiver
+description: 在桌面端翻译 arXiv 论文与本地 PDF，全程在本机完成。
 markdown: kramdown
 kramdown:
   input: kramdown

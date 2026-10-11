@@ -1,4 +1,4 @@
-# Arxiv PDF Translate — Electron 桌面端
+# Arxiver — Electron 桌面端
 
 独立的 Electron 桌面版：把原来的原生托盘启动器、本机 HTTP 服务、网页控制台与浏览器扩展
 合并成**一个桌面应用**。翻译仍然用随附的本机 Python 引擎（`engine/`），全程本机完成。

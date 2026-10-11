@@ -1,3 +1,0 @@
-# The bridge server itself only needs the Python standard library.
-# The translation engine ships with the project under ../engine/
-# (no pip packages required).
