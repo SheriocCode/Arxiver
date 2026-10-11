@@ -32,7 +32,7 @@
   <aside class="toc">
     <h4>目录</h4>
     <a href="#install">安装与启动</a>
-    <a href="#model">配置模型</a>
+    <a href="#model">翻译引擎</a>
     <a href="#read">导入与阅读</a>
     <a href="#translate">翻译</a>
     <a href="#arxiver">Arxiver 助手</a>
@@ -49,12 +49,17 @@
   <li>启动后即为桌面应用，无需浏览器扩展、无需单独启动任何服务。</li>
 </ol>
 
-<h2 id="model">配置模型</h2>
+<h2 id="model">翻译引擎</h2>
 
-<p>打开「设置 → 模型接口」，填入 <strong>OpenAI 兼容</strong> 的服务地址、密钥与模型名（例如 DeepSeek：地址 <code class="language-plaintext highlighter-rouge">https://api.deepseek.com</code>、模型 <code class="language-plaintext highlighter-rouge">deepseek-chat</code>），保存。</p>
+<p>翻译<strong>开箱即用</strong>：内置本地翻译模型（HY-MT + llama.cpp）在本机离线运行，无需 API Key；有 NVIDIA 显卡走 GPU，无独显自动回退 CPU。</p>
+
+<ul>
+  <li>「设置 → 翻译引擎」可切换为<strong>在线接口</strong>（OpenAI 兼容），或调整本地模型的 GPU 层数 / 额外参数。</li>
+  <li>Arxiver 助手使用<strong>独立</strong>的在线接口，在「设置 → AI 助手」配置（与翻译互不影响）。</li>
+</ul>
 
 <blockquote>
-  <p>翻译与 Arxiver 助手共用这份模型配置。仅调用你配置的接口，其余数据不出本机。</p>
+  <p>本地翻译与版面识别均在本机完成，数据不出本机；仅在线接口与 Arxiver 助手会访问你配置的服务。</p>
 </blockquote>
 
 <h2 id="read">导入与阅读</h2>
@@ -89,7 +94,7 @@
 
 <h2 id="settings">设置</h2>
 
-<p>「设置」包含：模型接口、通用、外观（主题 / 字号）、引用、AI 助手、同步与存储、快捷键、关于（版本与检查更新）。</p>
+<p>「设置」包含：翻译引擎（本地 / 在线）、通用、外观（主题 / 字号）、引用、AI 助手、同步与存储、快捷键、关于（版本与检查更新）。</p>
 
 <h2 id="storage">数据与存储</h2>
 
@@ -114,10 +119,10 @@ config.json                  # 设置
 <h2 id="troubleshoot">故障排查</h2>
 
 <ul>
-  <li><strong>翻译失败</strong>：先确认「设置 → 模型接口」地址 / 密钥 / 模型正确、网络可达；阅读器顶部会显示错误。</li>
-  <li><strong>首次翻译较慢</strong>：引擎首次运行会把字体 / 版面模型等缓存拷到用户目录，稍后变快。</li>
+  <li><strong>翻译失败</strong>：本地模式下确认 <code class="language-plaintext highlighter-rouge">engine/llama</code> 运行时与 <code class="language-plaintext highlighter-rouge">engine/models</code> 模型齐备（安装包已内置）；也可在「设置 → 翻译引擎」切换为在线接口并填写地址 / 密钥 / 模型。阅读器顶部会显示错误。</li>
+  <li><strong>首次翻译较慢</strong>：首次会自动加载本地模型并缓存字体 / 版面模型（约数秒），之后变快。</li>
   <li><strong>源文件缺失</strong>：条目对应的 <code class="language-plaintext highlighter-rouge">storage/&lt;docId&gt;/paper.pdf</code> 丢失时无法打开，需重新导入。</li>
-  <li><strong>助手无响应</strong>：确认模型接口可用；「设置 → AI 助手」中启用。</li>
+  <li><strong>助手无响应</strong>：确认「设置 → AI 助手」的接口地址 / 密钥 / 模型正确、网络可达，且已在「AI 助手」中启用。</li>
 </ul>
 
   </article>
