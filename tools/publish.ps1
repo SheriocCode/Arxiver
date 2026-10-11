@@ -58,7 +58,7 @@ Write-Host "publishing $tag ($($assets.Count) assets)" -ForegroundColor Cyan
 git add "electron-app/package.json"
 $null = git diff --cached --quiet 2>&1
 if ($LASTEXITCODE -eq 0) { Write-Host "no version change to commit" }
-else { git commit -m "chore(release): $tag"; Assert-Ok "git commit version"; git push origin $Branch; Assert-Ok "git push $Branch" }
+else { git commit -m "chore(release): $tag" -- electron-app/package.json; Assert-Ok "git commit version"; git push origin $Branch; Assert-Ok "git push $Branch" }
 
 # ---- 4. tag + push ----------------------------------------------------------
 if (-not (git tag --list $tag)) { git tag $tag; Assert-Ok "git tag" }
@@ -96,13 +96,30 @@ $token = (& gh auth token).Trim()
 foreach ($asset in $assets) {
     $name = Split-Path $asset -Leaf
     & gh release delete-asset $tag $name --repo $Repo --yes 2>$null | Out-Null
-    Write-Host "上传 $name ..." -ForegroundColor Cyan
-    & curl.exe --progress-bar -X POST -H "Expect:" `
-        -H "Authorization: Bearer $token" `
-        -H "Content-Type: application/octet-stream" `
-        --upload-file "$asset" `
-        "https://uploads.github.com/repos/$Repo/releases/$releaseId/assets?name=$name"
-    if ($LASTEXITCODE -ne 0) { Fail "上传失败：$name" }
+    $total = (Get-Item $asset).Length
+    Write-Host ("上传 {0}（{1:N0} MB）..." -f $name, ($total / 1MB)) -ForegroundColor Cyan
+
+    # curl 的 --progress-bar 依赖终端检测，很多终端看不到；这里改为轮询 curl 进程已读字节数，
+    # 自己打印进度（不依赖 tty）。
+    $argLine = '--silent --show-error -o NUL -X POST -H "Expect:" -H "Authorization: Bearer ' + $token +
+        '" -H "Content-Type: application/octet-stream" --upload-file "' + $asset +
+        '" "https://uploads.github.com/repos/' + $Repo + '/releases/' + $releaseId + '/assets?name=' + $name + '"'
+    $proc = Start-Process -FilePath "curl.exe" -ArgumentList $argLine -NoNewWindow -PassThru
+    while (-not $proc.HasExited) {
+        Start-Sleep -Seconds 1
+        $read = 0
+        $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.Id)" -ErrorAction SilentlyContinue
+        if ($ci -and $ci.ReadTransferCount) { $read = $ci.ReadTransferCount }
+        if ($read -gt 0) {
+            $pct = [math]::Min(100, [math]::Round($read * 100 / $total, 1))
+            Write-Host ("`r  {0,6:N1}%   {1:N1} / {2:N1} MB  " -f $pct, ($read / 1MB), ($total / 1MB)) -NoNewline
+        }
+    }
+    $proc.WaitForExit()
+    Write-Host ""
+    # ExitCode 在部分环境取不到，直接用「资产是否已出现在 release 中」判定成功与否。
+    $names = @(& gh api "repos/$Repo/releases/$releaseId/assets" --jq '.[].name' 2>$null)
+    if ($names -notcontains $name) { Fail "上传失败：$name（release 中未出现该资产）" }
 }
 
 Write-Host "published $tag" -ForegroundColor Green

@@ -7,9 +7,9 @@ badge: 本机·桌面
 hero: 在桌面端翻译 arXiv 论文
 lead: 导入本地或 arXiv PDF，在原文 / 对照 / 译文三视图中逐页阅读译文。内置本地翻译模型，离线完成、无需 API Key。
 shots:
-  - { src: assets/index/1791694144413.png, caption: 主界面 }
-  - { src: assets/index/1791694236791.png, caption: 翻译与对照 }
-  - { src: assets/index/1791694183469.png, caption: 系统日志 }
+  - { src: assets/index/1791721859644.png, caption: 主界面 }
+  - { src: assets/index/1791721904463.png, caption: 翻译与对照 }
+  - { src: assets/index/1791721925086.png, caption: 设置界面 }
 ---
 
 # 核心特点
