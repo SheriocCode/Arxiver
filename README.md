@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="icons/logo.svg" height="56" alt="">
+  <img src="icons/logo.svg" height="50" alt="">
   &#160;&#160;
-  <img src="icons/arxiver_black.svg#gh-light-mode-only" height="56" alt="Arxiver">
-  <img src="icons/arxiver.svg#gh-dark-mode-only" height="56" alt="Arxiver">
+  <img src="icons/arxiver_black.svg#gh-light-mode-only" height="50" alt="Arxiver">
+  <img src="icons/arxiver.svg#gh-dark-mode-only" height="50" alt="Arxiver">
 </p>
 
 <p align="center">在桌面端翻译 arXiv 论文与本地 PDF，并阅读双语对照 —— 全程在本机完成。</p>

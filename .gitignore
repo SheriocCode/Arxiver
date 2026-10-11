@@ -3,5 +3,6 @@ dist/
 __pycache__/
 *.pyc
 *.local.md
+RELEASE_NOTES.md
 site/_site/
 site/.jekyll-cache/
