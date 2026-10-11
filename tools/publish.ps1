@@ -75,24 +75,39 @@ if ($NotesFile) {
     $Notes = "Release $tag"
 }
 
-# ---- 6. 上传 ----------------------------------------------------------------
+# ---- 6. 创建 / 更新 Release（先不带资产；见第 7 步逐个上传）------------------
 $null = & gh release view $tag 2>&1
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "release $tag exists; uploading assets"
-    & gh release upload $tag @assets --clobber; Assert-Ok "gh release upload"
-    if ($notesPath) { & gh release edit $tag --notes-file $notesPath; Assert-Ok "gh release edit notes" }
+if ($LASTEXITCODE -ne 0) {
+    if ($notesPath) { & gh release create $tag --title $tag --notes-file $notesPath } else { & gh release create $tag --title $tag --notes $Notes }
+    Assert-Ok "gh release create"
 } elseif ($notesPath) {
-    & gh release create $tag @assets --title $tag --notes-file $notesPath; Assert-Ok "gh release create"
-} else {
-    & gh release create $tag @assets --title $tag --notes $Notes; Assert-Ok "gh release create"
+    & gh release edit $tag --notes-file $notesPath; Assert-Ok "gh release edit notes"
 }
 
-# 若存在同名草稿发布，确保转为正式发布（草稿对 electron-updater 不可见）。
+# 草稿对 electron-updater 不可见，确保是正式发布。
 & gh release edit $tag --draft=false; Assert-Ok "gh release edit --draft=false"
+
+# ---- 7. 逐个上传资产（curl，有进度条；先删同名避免 HTTP 422）----------------
+# gh 自带上传没有进度显示，大文件（~2GB）容易以为卡死；这里用 curl 直接 POST 到
+# uploads.github.com，进程内能看到进度。资产名必须与 latest.yml 里的 url 完全一致。
+$releaseId = (& gh api "repos/$Repo/releases/tags/$tag" --jq .id).Trim()
+if (-not $releaseId) { Fail "无法获取 release id（$Repo $tag）" }
+$token = (& gh auth token).Trim()
+foreach ($asset in $assets) {
+    $name = Split-Path $asset -Leaf
+    & gh release delete-asset $tag $name --repo $Repo --yes 2>$null | Out-Null
+    Write-Host "上传 $name ..." -ForegroundColor Cyan
+    & curl.exe --progress-bar -X POST -H "Expect:" `
+        -H "Authorization: Bearer $token" `
+        -H "Content-Type: application/octet-stream" `
+        --upload-file "$asset" `
+        "https://uploads.github.com/repos/$Repo/releases/$releaseId/assets?name=$name"
+    if ($LASTEXITCODE -ne 0) { Fail "上传失败：$name" }
+}
 
 Write-Host "published $tag" -ForegroundColor Green
 
-# ---- 7. 文档站提醒 ----------------------------------------------------------
+# ---- 8. 文档站提醒 ----------------------------------------------------------
 $siteDir = Join-Path $root "site"
 if (Test-Path $siteDir) {
     Write-Host ""
