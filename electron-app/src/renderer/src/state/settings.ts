@@ -19,6 +19,8 @@ export interface AppSettings {
   aiSources: boolean;
   autoSummary: boolean;
   autoSync: boolean;
+  showBlocksTranslating: boolean;
+  showBlocksTranslation: boolean;
 }
 
 const DEFAULTS: AppSettings = {
@@ -37,7 +39,9 @@ const DEFAULTS: AppSettings = {
   aiModel: "文献助手",
   aiSources: true,
   autoSummary: false,
-  autoSync: true
+  autoSync: true,
+  showBlocksTranslating: true,
+  showBlocksTranslation: true
 };
 
 export const ACCENTS: Record<Accent, { a: string; strong: string; strongHover: string; soft: string; soft2: string }> = {

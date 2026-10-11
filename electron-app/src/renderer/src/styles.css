@@ -834,10 +834,6 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 .reader-overlay .menu-row { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 .reader-overlay .menu-row select, .reader-overlay .menu-row input { width: 100%; }
 .reader-overlay .menu-action { width: 100%; justify-content: center; }
-.reader-overlay .menu-check { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2); cursor: pointer; }
-.reader-overlay .menu-check input { accent-color: var(--accent); cursor: pointer; }
-.reader-overlay .menu-check input[disabled] { cursor: default; }
-.reader-overlay .menu-check input[disabled] + span { color: var(--faint); }
 .reader-overlay .theme-menu { position: relative; display: inline-flex; }
 .reader-overlay .theme-btn .swatch { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--border-strong); display: inline-block; }
 .reader-overlay .theme-pop { min-width: 150px; }
@@ -1042,14 +1038,24 @@ body.maximized .window { border-radius: 12px; }
 
 /* ===== main area with tab bar (browser-like) so the reader isn't a full-window overlay ===== */
 .main-area { grid-column: 3 / -1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.tabbar { height: 40px; flex: none; display: flex; align-items: flex-end; gap: 4px; padding: 0 10px; overflow-x: auto; }
-.tabbar::-webkit-scrollbar { height: 0; }
-.tb-tab { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 8px 8px 0 0; color: var(--muted); font-size: 12.5px; background: transparent; border: 0; cursor: pointer; white-space: nowrap; }
+.tabbar { height: 40px; flex: none; display: flex; align-items: flex-end; gap: 4px; padding: 0 10px; }
+.tb-strip { display: flex; align-items: flex-end; gap: 4px; flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.tb-tab { flex: 0 1 auto; min-width: 96px; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 8px 8px 0 0; color: var(--muted); font-size: 12.5px; background: transparent; border: 0; cursor: pointer; white-space: nowrap; }
 .tb-tab:hover { color: var(--text); }
 .tb-tab.active { background: var(--bg); color: var(--text); }
-.tb-tab-name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
-.tb-tab-close { color: var(--muted); display: grid; place-items: center; margin-left: 2px; }
+.tb-tab-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tb-tab-close { flex: none; color: var(--muted); display: grid; place-items: center; margin-left: 2px; }
 .tb-tab-close:hover { color: var(--text); }
+.tb-tab-lib { flex: none; }
+.tb-more-wrap { position: relative; flex: none; align-self: flex-end; }
+.tb-more-wrap.is-hidden { visibility: hidden; pointer-events: none; }
+.tb-more { display: grid; place-items: center; width: 28px; height: 30px; border-radius: 8px 8px 0 0; color: var(--muted); background: transparent; border: 0; cursor: pointer; }
+.tb-more:hover, .tb-more.active { color: var(--text); background: var(--surface-3); }
+.tb-list { position: absolute; right: 0; top: 34px; z-index: 200; min-width: 260px; max-width: 380px; max-height: 60vh; overflow: auto; display: grid; gap: 2px; padding: 6px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
+.tb-list-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--radius-sm); color: var(--text-2); font-size: 12.5px; cursor: pointer; }
+.tb-list-item:hover { background: var(--hover); color: var(--text); }
+.tb-list-item.active { background: var(--surface-2); color: var(--text); }
+.tb-list-item .tb-tab-close { margin-left: 0; }
 .main-body { flex: 1; position: relative; display: flex; min-height: 0; min-width: 0; }
 .main-body > .list-pane { flex: 1; min-width: 0; }
 .main-body > .detail { width: var(--detail-w, 372px); flex: none; }
@@ -1065,7 +1071,7 @@ html, body { background: var(--bg-panel) !important; }
 .tb-left { -webkit-app-region: no-drag; }
 
 /* detail tabs live in the tab bar (right side); reader covers only the list column */
-.tb-tabs-right { margin-left: auto; display: flex; align-items: center; gap: 2px; padding-left: 12px; }
+.tb-tabs-right { flex: none; display: flex; align-items: center; gap: 2px; padding-left: 12px; }
 .tb-viewtab { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 12px; border-radius: 8px; color: var(--muted); font-size: 12.5px; background: transparent; border: 0; cursor: pointer; white-space: nowrap; }
 .tb-viewtab:hover { color: var(--text); }
 .tb-viewtab.active { color: var(--text); background: var(--surface); }

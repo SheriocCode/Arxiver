@@ -12,7 +12,7 @@ import NewItemModal from "./components/NewItemModal";
 import LogsView from "./components/LogsView";
 import { useLibrary, type Section } from "./state/useLibrary";
 import { useSettings } from "./state/settings";
-import type { ViewerStatus } from "./viewer/engine";
+import type { TranslationDoneInfo } from "./viewer/engine";
 
 interface OpenDoc {
   id: string;
@@ -23,7 +23,6 @@ interface OpenDoc {
 export default function App(): JSX.Element {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
-  const [status, setStatus] = useState<ViewerStatus | null>(null);
   const [activeTab, setActiveTab] = useState<"library" | "doc">("library");
   const [docs, setDocs] = useState<OpenDoc[]>([]);
   const [activeDocId, setActiveDocId] = useState("");
@@ -34,7 +33,11 @@ export default function App(): JSX.Element {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [logCat, setLogCat] = useState("tlog");
   const [logStatus, setLogStatus] = useState("all");
-  const viewerRef = useRef<ViewerHandle>(null);
+  const [tabsOverflow, setTabsOverflow] = useState(false);
+  const [tabListOpen, setTabListOpen] = useState(false);
+  const stripRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const viewerRefs = useRef<Map<string, ViewerHandle>>(new Map());
   const lib = useLibrary();
   const { settings, update: updateSettings } = useSettings();
   const libRef = useRef(lib);
@@ -84,63 +87,81 @@ export default function App(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.defaultTab]);
 
-  const loadDoc = useCallback(async (entry: OpenDoc) => {
-    const data = await window.api.libraryOpen(entry.id);
-    if (!data.bytes) { alert("源文件缺失"); return; }
-    const sourceBytes = new Uint8Array(data.bytes);
-    const doc = lib.documents.find((d) => d.id === entry.id);
-    const key = entry.activeKey || (doc?.translations && doc.translations[0]?.cacheKey) || "";
-    await lib.recordOpen(entry.id);
-    setTimeout(async () => {
-      await viewerRef.current?.openSource({ bytes: sourceBytes, name: data.name, sourceUrl: data.sourceUrl, docId: entry.id }, false);
-      if (key) {
-        const tb = await window.api.readTranslation(entry.id, key, "mono");
-        if (tb && tb.length) { await viewerRef.current?.loadTranslation(new Uint8Array(tb), entry.id, key); }
-      }
-    }, 30);
-  }, [lib]);
+  // Tabs shrink to a minimum width, then the strip clips and an "all tabs" button appears.
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) { return; }
+    const update = (): void => {
+      const overflow = el.scrollWidth > el.clientWidth + 1;
+      setTabsOverflow(overflow);
+      if (!overflow) { setTabListOpen(false); }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [docs]);
 
+  // Keep the active tab in view within the clipped strip.
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) { return; }
+    const tab = el.querySelector<HTMLElement>(".tb-tab.active");
+    if (!tab) { return; }
+    const left = tab.offsetLeft;
+    const right = left + tab.offsetWidth;
+    if (left < el.scrollLeft) { el.scrollLeft = left; }
+    else if (right > el.scrollLeft + el.clientWidth) { el.scrollLeft = right - el.clientWidth; }
+  }, [activeDocId, activeTab, docs]);
+
+  // Close the tab list when clicking outside it.
+  useEffect(() => {
+    if (!tabListOpen) { return; }
+    const onDown = (e: MouseEvent): void => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) { setTabListOpen(false); }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [tabListOpen]);
+
+  // Each open document owns its own mounted viewer (see the render below), so opening
+  // a tab just adds it; the viewer loads its own source and translation.
   const openDoc = useCallback((doc: { id: string; title: string; read: boolean; translations?: { cacheKey: string }[] }) => {
     if (!doc) { return; }
     if (!doc.read) { void lib.update(doc.id, { read: true }); }
     lib.select(doc.id);
     const key = (doc.translations && doc.translations[0]?.cacheKey) || "";
-    const existing = docs.find((d) => d.id === doc.id);
-    const entry: OpenDoc = existing ? { ...existing } : { id: doc.id, name: doc.title || "文档", activeKey: key };
-    if (!existing) { setDocs((prev) => [...prev, entry]); }
+    setDocs((prev) => (prev.find((d) => d.id === doc.id) ? prev : [...prev, { id: doc.id, name: doc.title || "文档", activeKey: key }]));
     setActiveDocId(doc.id);
     setActiveTab("doc");
-    void loadDoc(entry);
-  }, [lib, docs, loadDoc]);
+    void lib.recordOpen(doc.id);
+  }, [lib]);
 
   const activateDoc = useCallback((id: string) => {
-    const entry = docs.find((d) => d.id === id);
-    if (!entry) { return; }
     lib.select(id);
     setActiveDocId(id);
     setActiveTab("doc");
-    void loadDoc(entry);
-  }, [docs, loadDoc, lib]);
+    void lib.recordOpen(id);
+  }, [lib]);
 
   const closeDoc = useCallback((id: string) => {
-    if (id !== activeDocId) { setDocs((prev) => prev.filter((d) => d.id !== id)); return; }
+    viewerRefs.current.delete(id);
+    const remaining = docs.filter((d) => d.id !== id);
+    setDocs(remaining);
+    if (id !== activeDocId) { return; }
     const idx = docs.findIndex((d) => d.id === id);
-    const next = docs.filter((d) => d.id !== id);
-    setDocs(next);
-    const neighbor = next[Math.min(idx, next.length - 1)] || null;
-    if (neighbor) { lib.select(neighbor.id); setActiveDocId(neighbor.id); void loadDoc(neighbor); }
-    else { setActiveDocId(""); setActiveTab("library"); viewerRef.current?.reset(); }
-  }, [docs, activeDocId, loadDoc, lib]);
+    const neighbor = remaining[Math.min(idx, remaining.length - 1)] || null;
+    if (neighbor) { lib.select(neighbor.id); setActiveDocId(neighbor.id); void lib.recordOpen(neighbor.id); }
+    else { setActiveDocId(""); setActiveTab("library"); }
+  }, [docs, activeDocId, lib]);
 
   const openDocById = useCallback((id: string) => {
     const doc = lib.documents.find((d) => d.id === id);
     if (doc) { openDoc(doc); }
   }, [lib, openDoc]);
 
-  const selectTranslation = useCallback(async (key: string) => {
+  const selectTranslation = useCallback((key: string) => {
     setDocs((prev) => prev.map((d) => (d.id === activeDocId ? { ...d, activeKey: key } : d)));
-    const tb = await window.api.readTranslation(activeDocId, key, "mono");
-    if (tb && tb.length) { await viewerRef.current?.loadTranslation(new Uint8Array(tb), activeDocId, key); }
   }, [activeDocId]);
 
   const askSelection = useCallback((text: string, page: number) => {
@@ -154,31 +175,35 @@ export default function App(): JSX.Element {
   const citeJump = useCallback((docId: string, page: number) => {
     const target = docId || activeDocId;
     if (!target) { return; }
-    if (target === activeDocId) { viewerRef.current?.goToPage(page); return; }
+    if (target === activeDocId) { viewerRefs.current.get(target)?.goToPage(page); return; }
     const doc = lib.documents.find((d) => d.id === target);
     if (!doc) { return; }
     openDoc(doc);
-    setTimeout(() => viewerRef.current?.goToPage(page), 800);
+    let tries = 0;
+    const tryJump = (): void => {
+      const v = viewerRefs.current.get(target);
+      if (v) { v.goToPage(page); return; }
+      if (tries++ < 12) { window.setTimeout(tryJump, 150); }
+    };
+    window.setTimeout(tryJump, 150);
   }, [activeDocId, lib, openDoc]);
 
-  const registeredKeys = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (!status || status.phase !== "done" || status.running || !status.cacheKey || !activeDocId) { return; }
-    const key = status.cacheKey;
-    if (registeredKeys.current.has(key)) { return; }
-    registeredKeys.current.add(key);
-    setDocs((prev) => prev.map((d) => (d.id === activeDocId ? { ...d, activeKey: key } : d)));
-    void window.api.libraryAddTranslation(activeDocId, {
-      cacheKey: key,
-      target_lang: status.targetLang || config?.target_lang || "zh-CN",
-      service: config?.translate_mode === "local" ? "local" : config?.service || "openai",
-      model: config?.translate_mode === "local" ? "hy-mt" : config?.translate_model || "",
-      output_variant: config?.output_variant || "dual",
-      pages: status.pages || "",
+  // Fires when any document's translation finishes, even one that is not currently
+  // displayed, so its result still gets registered in the library.
+  const onTranslationDone = useCallback((info: TranslationDoneInfo) => {
+    const p = info.params;
+    setDocs((prev) => prev.map((d) => (d.id === info.docId ? { ...d, activeKey: info.cacheKey } : d)));
+    void window.api.libraryAddTranslation(info.docId, {
+      cacheKey: info.cacheKey,
+      target_lang: p.target_lang || "zh-CN",
+      service: p.service || "openai",
+      model: p.model || "",
+      output_variant: p.output_variant || "dual",
+      pages: p.pages || "",
       created_at: Date.now() / 1000,
-      name: status.resultName
+      name: info.resultName
     }).then(() => lib.refresh());
-  }, [status, activeDocId, config, lib]);
+  }, [lib]);
 
   const importFile = useCallback(async () => {
     const picked = await window.api.pickFile();
@@ -218,11 +243,6 @@ export default function App(): JSX.Element {
     return () => document.removeEventListener("keydown", onKey);
   }, [settingsOpen, newOpen, activeTab, lib, closeReader]);
 
-  const hasSource = !!status?.hasSource;
-  const activeKey = docs.find((d) => d.id === activeDocId)?.activeKey || "";
-  const currentDoc = lib.documents.find((d) => d.id === activeDocId);
-  const translations = currentDoc?.translations || [];
-
   return (
     <>
       <IconDefs />
@@ -251,16 +271,34 @@ export default function App(): JSX.Element {
 
           <div className="main-area">
             <div className="tabbar">
-              <button className={"tb-tab" + (activeTab === "library" ? " active" : "")} onClick={() => setActiveTab("library")}>
+              <button className={"tb-tab tb-tab-lib" + (activeTab === "library" ? " active" : "")} onClick={() => setActiveTab("library")}>
                 <Icon name="book" small /> 文库
               </button>
-              {docs.map((d) => (
-                <div key={d.id} className={"tb-tab" + (activeTab === "doc" && activeDocId === d.id ? " active" : "")} onClick={() => activateDoc(d.id)}>
-                  <Icon name="file" small />
-                  <span className="tb-tab-name">{d.name}</span>
-                  <button className="tb-tab-close" title="关闭" onClick={(e) => { e.stopPropagation(); closeDoc(d.id); }}><Icon name="x" small /></button>
-                </div>
-              ))}
+              <div className="tb-strip" ref={stripRef}>
+                {docs.map((d) => (
+                  <div key={d.id} className={"tb-tab" + (activeTab === "doc" && activeDocId === d.id ? " active" : "")} onClick={() => activateDoc(d.id)}>
+                    <Icon name="file" small />
+                    <span className="tb-tab-name">{d.name}</span>
+                    <button className="tb-tab-close" title="关闭" onClick={(e) => { e.stopPropagation(); closeDoc(d.id); }}><Icon name="x" small /></button>
+                  </div>
+                ))}
+              </div>
+              <div className={"tb-more-wrap" + (tabsOverflow ? "" : " is-hidden")} ref={moreRef}>
+                <button className={"tb-more" + (tabListOpen ? " active" : "")} title="所有标签页" onClick={() => setTabListOpen((o) => !o)}>
+                  <Icon name="chev-down" small />
+                </button>
+                {tabListOpen && (
+                  <div className="tb-list">
+                    {docs.map((d) => (
+                      <div key={d.id} className={"tb-list-item" + (activeTab === "doc" && activeDocId === d.id ? " active" : "")} onClick={() => { activateDoc(d.id); setTabListOpen(false); }}>
+                        <Icon name="file" small />
+                        <span className="tb-tab-name">{d.name}</span>
+                        <button className="tb-tab-close" title="关闭" onClick={(e) => { e.stopPropagation(); closeDoc(d.id); }}><Icon name="x" small /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="tb-tabs-right">
                 {detailOpen && lib.selected &&
                   ([["info", "file", "信息"], ["notes", "note", "笔记"], ["tags", "tag", "标签"], ["ai", "arxiver", "Arxiver"]] as const)
@@ -297,17 +335,23 @@ export default function App(): JSX.Element {
               />
               {lib.section === "logs" && <LogsView logKey={logCat} logStatus={logStatus} onClose={() => lib.setSection("collections")} />}
               <div className="reader-overlay" hidden={activeTab !== "doc"}>
-                <Viewer
-                  ref={viewerRef}
-                  config={config}
-                  onStatus={setStatus}
-                  onClose={closeReader}
-                  translations={translations}
-                  activeKey={activeKey}
-                  onSelectTranslation={selectTranslation}
-                  onAskSelection={askSelection}
-                />
-                {activeTab === "doc" && !hasSource && <div className="maybe-empty" />}
+                {docs.map((d) => (
+                  <Viewer
+                    key={d.id}
+                    ref={(h) => { if (h) { viewerRefs.current.set(d.id, h); } else { viewerRefs.current.delete(d.id); } }}
+                    docId={d.id}
+                    visible={activeDocId === d.id}
+                    config={config}
+                    onClose={closeReader}
+                    translations={lib.documents.find((x) => x.id === d.id)?.translations || []}
+                    activeKey={d.activeKey}
+                    showBlocksTranslating={settings.showBlocksTranslating}
+                    showBlocksTranslation={settings.showBlocksTranslation}
+                    onSelectTranslation={selectTranslation}
+                    onAskSelection={askSelection}
+                    onTranslationDone={onTranslationDone}
+                  />
+                ))}
               </div>
             </div>
           </div>

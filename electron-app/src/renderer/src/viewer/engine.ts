@@ -1,5 +1,5 @@
 import { getPdfjs } from "../lib/pdf";
-import type { BlockEvent, TransParams } from "../../../shared/types";
+import type { BlockEvent, JobSummary, TransParams } from "../../../shared/types";
 
 export type View = "source" | "target" | "compare";
 export type Layout = "single" | "double";
@@ -26,17 +26,45 @@ export interface ViewerStatus {
   logTail: string;
   view: View;
   layout: Layout;
-  blocksOn: boolean;
   numPages: number;
   displayPage: number;
   scrollFraction: number;
   zoom: number;
   sourceUrl: string;
+  docId: string;
   jobId: string | null;
   cacheKey: string | null;
   resultName: string;
   targetLang: string;
   pages: string;
+}
+
+export interface TranslationDoneInfo {
+  docId: string;
+  params: TransParams;
+  cacheKey: string;
+  resultName: string;
+}
+
+type SessionState = "running" | "done" | "error" | "cancelled";
+
+// A translation job lives here, keyed by docId, and keeps polling independently of
+// which document is currently displayed. The engine only mirrors the session of the
+// active document; switching documents no longer interrupts a running translation.
+interface DocSession {
+  docId: string;
+  jobId: string;
+  params: Partial<TransParams>;
+  state: SessionState;
+  job: JobSummary | null;
+  error: string | null;
+  cacheKey: string | null;
+  resultName: string;
+  blocksByPage: Record<number, BlockEvent[]>;
+  partial: Uint8Array | null;
+  result: Uint8Array | null;
+  lastPartialKey: string;
+  lastBlocksKey: string;
 }
 
 interface OpenPayload { bytes: Uint8Array; name: string; sourceUrl?: string; docId?: string }
@@ -54,8 +82,9 @@ export class ViewerEngine {
   private sourceName = "";
   private sourceUrl = "";
   private docId = "";
-  private jobId: string | null = null;
-  private lastParams: Partial<TransParams> = {};
+  private sessions = new Map<string, DocSession>();
+  private active: DocSession | null = null;
+  private onDone: ((info: TranslationDoneInfo) => void) | null = null;
 
   private leftDoc: any = null;
   private rightDoc: any = null;
@@ -80,13 +109,9 @@ export class ViewerEngine {
   private zoom = 1;
   private view: View = "source";
   private layout: Layout = "double";
-  private blockOverlay = true;
-  private lastPartialKey = "";
-  private lastBlocksKey = "";
-  private currentJobId = "";
-  private cancelled = false;
-  private running = false;
+  private blockPrefs = { translating: true, viewing: true };
   private totalPages = 0;
+  private buildGen = 0;
 
   private status: ViewerStatus;
   private blockTipEl: HTMLElement | null = null;
@@ -96,9 +121,10 @@ export class ViewerEngine {
 
 
 
-  constructor(host: HTMLElement, onStatus: (s: ViewerStatus) => void) {
+  constructor(host: HTMLElement, onStatus: (s: ViewerStatus) => void, onDone?: (info: TranslationDoneInfo) => void) {
     this.host = host;
     this.onStatus = onStatus;
+    this.onDone = onDone || null;
     this.root = document.createElement("div");
     this.root.className = "compare";
     this.root.hidden = true;
@@ -127,8 +153,8 @@ export class ViewerEngine {
       message: "", error: null, cached: false, progress: null,
       donePages: 0, totalPages: 0, currentPage: 0, pageDone: 0, pageTotal: 0,
       blockPage: 0, blockIndex: 0, blockTotal: 0, logTail: "",
-      view: this.view, layout: this.layout, blocksOn: this.blockOverlay,
-      numPages: 0, displayPage: 1, scrollFraction: 0, zoom: 1, sourceUrl: "", jobId: null, cacheKey: null, resultName: "",
+      view: this.view, layout: this.layout,
+      numPages: 0, displayPage: 1, scrollFraction: 0, zoom: 1, sourceUrl: "", docId: "", jobId: null, cacheKey: null, resultName: "",
       targetLang: "", pages: ""
     };
   }
@@ -230,6 +256,7 @@ export class ViewerEngine {
   }
 
   private async build(): Promise<void> {
+    const gen = ++this.buildGen;
     this.resetDom();
     if (!this.sourceBytes) { return; }
     this.root.hidden = false;
@@ -240,6 +267,7 @@ export class ViewerEngine {
     this.applyPageWidth();
     const pdfjs = await getPdfjs();
     const doc = await pdfjs.getDocument({ data: this.sourceBytes.slice() }).promise;
+    if (gen !== this.buildGen) { try { doc.destroy(); } catch { /* */ } return; }
     this.leftDoc = doc;
     const total = doc.numPages;
     this.totalPages = total;
@@ -267,7 +295,7 @@ export class ViewerEngine {
           canvas.width = Math.floor(base.width); canvas.height = Math.floor(base.height);
           wrap.appendChild(canvas);
           const layer = document.createElement("div");
-          layer.className = "block-layer" + (this.blockOverlay ? "" : " hidden");
+          layer.className = "block-layer" + (this.showBlocks() ? "" : " hidden");
           wrap.appendChild(layer);
           const linkLayer = document.createElement("div");
           linkLayer.className = "link-layer";
@@ -397,7 +425,16 @@ export class ViewerEngine {
   }
   setLayout(l: Layout): void { if (l === this.layout) { return; } this.layout = l; void this.build(); }
 
-  toggleBlocks(): void { this.blockOverlay = !this.blockOverlay; this.renderAllBlocks(); this.emit({ blocksOn: this.blockOverlay }); }
+  // Block overlays have two independent switches: one for the live translation
+  // preview, one for viewing a finished translation. The active session decides
+  // which applies.
+  setBlockPrefs(p: { translating: boolean; viewing: boolean }): void {
+    this.blockPrefs = p;
+    this.renderAllBlocks();
+  }
+  private showBlocks(): boolean {
+    return this.active?.state === "running" ? this.blockPrefs.translating : this.blockPrefs.viewing;
+  }
 
   // ---- block overlays ----
   private hideBlockTip(): void { if (this.blockTipEl) { this.blockTipEl.hidden = true; } }
@@ -446,7 +483,7 @@ export class ViewerEngine {
       rect.addEventListener("mouseleave", () => this.scheduleHideBlockTip());
       layerL.appendChild(rect);
     }
-    layerL.classList.toggle("hidden", !this.blockOverlay);
+    layerL.classList.toggle("hidden", !this.showBlocks());
   }
   private renderAllBlocks(): void {
     const keys = new Set<number>();
@@ -548,21 +585,66 @@ export class ViewerEngine {
   }
 
   // ---- public entry points ----
+  // Mirrors the active document's session into the viewer (status bar, blocks, preview).
+  private emitFromActive(): void {
+    const s = this.active;
+    if (!s) {
+      this.emit({ phase: "idle", running: false, message: "", error: null, progress: null, hasTranslation: !!this.rightBytes });
+      return;
+    }
+    const j = s.job;
+    const base: Partial<ViewerStatus> = {
+      view: this.view, layout: this.layout,
+      progress: s.state === "done" ? 100 : (j?.progress ?? null),
+      message: j?.message || (s.state === "running" ? "翻译中…" : ""),
+      donePages: j?.done_pages || 0, totalPages: j?.total_pages || 0,
+      currentPage: j?.current_page || 0, pageDone: j?.page_done || 0, pageTotal: j?.page_total || 0,
+      blockPage: j?.block_page || 0, blockIndex: j?.block_index || 0, blockTotal: j?.block_total || 0,
+      logTail: j?.log_tail || "", cached: j?.cached || false,
+      cacheKey: s.cacheKey, jobId: s.jobId, resultName: s.resultName,
+      hasTranslation: !!(s.result || s.partial),
+      targetLang: (s.params.target_lang as string) || "", pages: (s.params.pages as string) || ""
+    };
+    if (s.state === "running") { this.emit({ ...base, phase: "running", running: true, error: null }); return; }
+    if (s.state === "done") { this.emit({ ...base, phase: "done", running: false, error: null }); return; }
+    this.emit({ ...base, phase: "error", running: false, error: s.error || "翻译失败" });
+  }
+
+  // Points the engine at a document's session (if any) before rebuilding its DOM.
+  private prepareSessionView(docId: string): void {
+    const s = this.sessions.get(docId) || null;
+    this.active = s;
+    this.rightBytes = s ? (s.result || s.partial) : null;
+    this.blocksByPage = s ? s.blocksByPage : {};
+    if (s && (s.state === "running" || s.result || s.partial)) {
+      this.view = "compare";
+      this.layout = "single";
+    } else {
+      this.view = "source";
+    }
+  }
+
   async openSource(payload: OpenPayload, opts: { auto?: boolean; params?: Partial<TransParams> } = {}): Promise<void> {
     this.sourceBytes = toU8(payload.bytes);
     this.sourceName = payload.name || "paper.pdf";
     this.sourceUrl = payload.sourceUrl || "";
     this.docId = payload.docId || "";
-    this.rightBytes = null;
-    this.cancelled = false;
-    this.view = "source";
-    this.emit({ title: this.sourceName, hasSource: true, hasTranslation: false, sourceUrl: this.sourceUrl, phase: "loading", error: null, message: "", view: "source", jobId: null, cacheKey: null });
+    this.prepareSessionView(this.docId);
+    const s = this.active;
+    this.emit({
+      title: this.sourceName, hasSource: true, hasTranslation: !!(s && (s.result || s.partial)),
+      sourceUrl: this.sourceUrl, docId: this.docId, phase: "loading", running: false, error: null, message: "",
+      view: this.view, layout: this.layout, jobId: s?.jobId ?? null, cacheKey: s?.cacheKey ?? null,
+      progress: null, donePages: 0, totalPages: 0, currentPage: 0, pageDone: 0, pageTotal: 0,
+      blockPage: 0, blockIndex: 0, blockTotal: 0, logTail: "", cached: false, resultName: "", targetLang: "", pages: ""
+    });
     await this.build();
-    this.emit({ phase: "idle", message: "" });
+    this.emitFromActive();
     if (opts.auto) { void this.start(opts.params || {}); }
   }
 
   async loadTranslation(bytes: Uint8Array): Promise<void> {
+    if (this.active && this.active.state === "running") { return; }
     this.rightBytes = toU8(bytes);
     if (this.view !== "compare") { this.view = "compare"; this.layout = "single"; }
     await this.build();
@@ -614,6 +696,7 @@ export class ViewerEngine {
 
   async loadBlocks(docId: string, cacheKey: string): Promise<void> {
     if (!docId || !cacheKey) { return; }
+    if (this.active && this.active.state === "running") { return; }
     try {
       const blocks = await window.api.readBlocks(docId, cacheKey);
       const byPage: Record<number, BlockEvent[]> = {};
@@ -624,79 +707,100 @@ export class ViewerEngine {
   }
 
   async start(params: Partial<TransParams>): Promise<void> {
-    if (this.running || !this.sourceBytes) { return; }
-    this.cancelled = false;
-    this.lastPartialKey = "";
-    this.currentJobId = "";
-    this.running = true;
-    this.rightBytes = null;
-    this.lastParams = params;
-    this.view = "compare";
-    this.layout = "single";
-    this.emit({ phase: "running", running: true, error: null, progress: null, message: "正在准备…", hasTranslation: false, view: "compare", layout: "single" });
+    if (!this.sourceBytes) { return; }
+    const docId = this.docId;
+    const bytes = this.sourceBytes;
+    const name = this.sourceName;
+    const sourceUrl = this.sourceUrl;
+    const existing = this.sessions.get(docId);
+    if (existing && existing.state === "running") { return; }
+    const session: DocSession = {
+      docId, jobId: "", params, state: "running", job: null, error: null, cacheKey: null,
+      resultName: "", blocksByPage: {}, partial: null, result: null, lastPartialKey: "", lastBlocksKey: ""
+    };
+    this.sessions.set(docId, session);
+    if (this.docId === docId) {
+      this.active = session;
+      this.rightBytes = null;
+      this.blocksByPage = {};
+      this.view = "compare";
+      this.layout = "single";
+      this.emit({ phase: "running", running: true, error: null, progress: null, message: "正在准备…", hasTranslation: false, view: "compare", layout: "single" });
+    }
     try {
-      await this.build();
-      const job = await window.api.startJob({ docId: this.docId, sourceBytes: this.sourceBytes, name: this.sourceName, sourceUrl: this.sourceUrl, params });
-      this.jobId = job.id;
-      this.emit({ jobId: job.id, cacheKey: job.cache_key, phase: "running", message: "翻译中…" });
-      await this.pollJob(job.id);
+      if (this.docId === docId) { await this.build(); }
+      const job = await window.api.startJob({ docId, sourceBytes: bytes, name, sourceUrl, params });
+      session.jobId = job.id;
+      session.params = job.params || params;
+      session.job = job;
+      session.cacheKey = job.cache_key;
+      session.resultName = job.result_name || "";
+      if (this.active === session) { this.emitFromActive(); }
+      void this.runSession(session);
     } catch (err) {
-      this.running = false;
-      const message = err instanceof Error ? err.message : String(err);
-      this.emit({ phase: "error", running: false, error: message });
+      session.state = "error";
+      session.error = err instanceof Error ? err.message : String(err);
+      if (this.active === session) { this.emitFromActive(); }
     }
   }
 
-  private async pollJob(jobId: string): Promise<void> {
-    while (!this.cancelled) {
+  // Runs independently of the displayed document: it keeps polling, storing progress,
+  // blocks and preview bytes on the session, and only paints when the session is active.
+  private async runSession(s: DocSession): Promise<void> {
+    while (true) {
       await delay(700);
-      const job = await window.api.getJob(jobId);
-      if (!job) { throw new Error("任务不存在"); }
-      this.emit({
-        progress: job.progress, message: job.message,
-        donePages: job.done_pages || 0, totalPages: job.total_pages || 0,
-        currentPage: job.current_page || 0, pageDone: job.page_done || 0, pageTotal: job.page_total || 0,
-        blockPage: job.block_page || 0, blockIndex: job.block_index || 0, blockTotal: job.block_total || 0,
-        logTail: job.log_tail || "", cached: job.cached, cacheKey: job.cache_key, resultName: job.result_name
-      });
+      if (this.sessions.get(s.docId) !== s) { return; }
+      const job = await window.api.getJob(s.jobId);
+      if (!job) { s.state = "error"; s.error = "任务不存在"; break; }
+      s.job = job;
+      if (job.cache_key) { s.cacheKey = job.cache_key; }
+      if (job.result_name) { s.resultName = job.result_name; }
       if (job.block_total) {
         const bkey = job.block_page + ":" + job.block_index + ":" + job.block_total;
-        if (bkey !== this.lastBlocksKey) { this.lastBlocksKey = bkey; void this.refreshBlocks(jobId); }
+        if (bkey !== s.lastBlocksKey) { s.lastBlocksKey = bkey; void this.pullBlocks(s); }
       }
-      const previewing = typeof job.done_pages === "number" && job.done_pages > 0 && job.status === "running";
-      if (previewing) { await this.showPartial(jobId, job); }
-      if (job.status === "done") {
-        this.running = false;
-        await this.finishResult(job);
-        return;
-      }
-      if (job.status === "error") { this.running = false; throw new Error(job.error || "翻译失败"); }
-      if (job.status === "cancelled") { this.running = false; throw new Error("翻译已取消"); }
+      if ((job.done_pages || 0) > 0 && job.status === "running") { await this.pullPartial(s, job); }
+      if (job.status === "done") { await this.pullResult(s); s.state = "done"; break; }
+      if (job.status === "error") { s.state = "error"; s.error = job.error || "翻译失败"; break; }
+      if (job.status === "cancelled") { s.state = "cancelled"; s.error = "翻译已取消"; break; }
+      if (this.active === s) { this.emitFromActive(); }
     }
-    this.running = false;
-    throw new Error("翻译已取消");
+    if (this.active === s) { this.renderAllBlocks(); this.emitFromActive(); }
+    if (s.state === "done" && s.cacheKey) {
+      this.onDone?.({ docId: s.docId, params: s.job?.params || (s.params as TransParams), cacheKey: s.cacheKey, resultName: s.resultName || "translated.pdf" });
+    }
   }
 
-  private async refreshBlocks(jobId: string): Promise<void> {
+  private async pullBlocks(s: DocSession): Promise<void> {
     try {
-      const blocks = await window.api.getBlocks(jobId);
+      const blocks = await window.api.getBlocks(s.jobId);
       const byPage: Record<number, BlockEvent[]> = {};
       for (const item of blocks) { (byPage[item.page] ||= []).push(item); }
-      this.blocksByPage = byPage;
-      this.renderAllBlocks();
+      s.blocksByPage = byPage;
+      if (this.active === s) { this.blocksByPage = byPage; this.renderAllBlocks(); }
     } catch { /* ignore */ }
   }
 
-  private async showPartial(jobId: string, job: any): Promise<void> {
+  private async pullPartial(s: DocSession, job: JobSummary): Promise<void> {
     const key = job.done_pages + ":" + (job.total_pages || 0);
-    if (this.lastPartialKey === key) { return; }
-    this.lastPartialKey = key;
-    this.currentJobId = jobId;
+    if (s.lastPartialKey === key) { return; }
+    s.lastPartialKey = key;
     try {
-      const data = await window.api.getPartial(jobId, "mono");
+      const data = await window.api.getPartial(s.jobId, "mono");
       if (!data || data.length === 0) { return; }
-      this.rightBytes = new Uint8Array(data);
-      await this.reloadRight();
+      s.partial = new Uint8Array(data);
+      if (this.active === s) { this.rightBytes = s.partial; await this.reloadRight(); }
+    } catch { /* ignore */ }
+  }
+
+  private async pullResult(s: DocSession): Promise<void> {
+    try {
+      const data = await window.api.getResult(s.jobId, "mono");
+      if (data && data.length) {
+        s.result = new Uint8Array(data);
+        s.partial = null;
+        if (this.active === s) { this.rightBytes = s.result; await this.reloadRight(); }
+      }
     } catch { /* ignore */ }
   }
 
@@ -723,21 +827,23 @@ export class ViewerEngine {
     this.scheduleRender(0);
   }
 
-  private async finishResult(job: any): Promise<void> {
-    const data = await window.api.getResult(job.id, "mono");
-    if (data && data.length) { this.rightBytes = new Uint8Array(data); await this.reloadRight(); }
-    this.emit({ phase: "done", running: false, progress: 100, hasTranslation: true, cacheKey: job.cache_key, resultName: job.result_name || "translated.pdf", targetLang: this.lastParams.target_lang || "", pages: this.lastParams.pages || "" });
+  cancel(): void {
+    const s = this.active;
+    if (s && s.state === "running") { void window.api.cancelJob(s.jobId); }
   }
 
-  cancel(): void { this.cancelled = true; if (this.jobId) { void window.api.cancelJob(this.jobId); } }
-
   async save(variant: string): Promise<void> {
-    if (this.jobId) { await window.api.saveResult(this.jobId, variant); }
+    const id = this.active?.jobId;
+    if (id) { await window.api.saveResult(id, variant); }
   }
 
   reset(): void {
-    this.sourceBytes = null; this.rightBytes = null; this.sourceName = ""; this.sourceUrl = ""; this.jobId = null;
-    this.cancelled = true; this.running = false;
+    for (const s of this.sessions.values()) {
+      if (s.state === "running" && s.jobId) { void window.api.cancelJob(s.jobId); }
+    }
+    this.sessions.clear();
+    this.active = null;
+    this.sourceBytes = null; this.rightBytes = null; this.sourceName = ""; this.sourceUrl = ""; this.docId = "";
     this.resetDom();
     this.emit(this.blank());
   }

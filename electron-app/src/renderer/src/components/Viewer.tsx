@@ -1,14 +1,18 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type JSX } from "react";
 import type { AppConfig, TransParams, TranslationRef } from "../../../shared/types";
-import { ViewerEngine, type ViewerStatus } from "../viewer/engine";
+import { ViewerEngine, type ViewerStatus, type TranslationDoneInfo } from "../viewer/engine";
 import { Icon } from "./Icons";
 import { LANGS } from "../lib/langs";
 
 export interface ViewerHandle {
-  openSource(payload: { bytes: Uint8Array; name: string; sourceUrl?: string; docId?: string }, auto?: boolean): Promise<void>;
-  loadTranslation(bytes: Uint8Array, docId?: string, cacheKey?: string): Promise<void>;
   goToPage(page: number): void;
-  reset(): void;
+}
+
+async function loadKey(engine: ViewerEngine, docId: string, key: string): Promise<void> {
+  const tb = await window.api.readTranslation(docId, key, "mono");
+  if (!tb || !tb.length) { return; }
+  await engine.loadTranslation(new Uint8Array(tb));
+  await engine.loadBlocks(docId, key);
 }
 
 type PageTheme = "original" | "green" | "beige" | "dark";
@@ -21,19 +25,31 @@ const THEMES: [PageTheme, string, string][] = [
 ];
 
 interface Props {
+  docId: string;
+  visible: boolean;
   config: AppConfig | null;
-  onStatus: (status: ViewerStatus) => void;
   onClose: () => void;
   translations: TranslationRef[];
   activeKey: string;
+  showBlocksTranslating: boolean;
+  showBlocksTranslation: boolean;
   onSelectTranslation: (key: string) => void;
   onAskSelection?: (text: string, page: number) => void;
+  onTranslationDone?: (info: TranslationDoneInfo) => void;
 }
 
 const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
-  { config, onStatus, onClose, translations, activeKey, onSelectTranslation, onAskSelection }, ref
+  { docId, visible, config, onClose, translations, activeKey, showBlocksTranslating, showBlocksTranslation, onSelectTranslation, onAskSelection, onTranslationDone }, ref
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const doneRef = useRef(onTranslationDone);
+  doneRef.current = onTranslationDone;
+  const sourceLoadedRef = useRef(false);
+  const keyRef = useRef(activeKey);
+  keyRef.current = activeKey;
+  const pendingPageRef = useRef(0);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   const engineRef = useRef<ViewerEngine | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<ViewerStatus | null>(null);
@@ -74,14 +90,61 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
 
   useEffect(() => {
     if (!hostRef.current) { return; }
-    const engine = new ViewerEngine(hostRef.current, (s) => { statusRef.current = s; setStatus(s); onStatus(s); });
+    const engine = new ViewerEngine(
+      hostRef.current,
+      (s) => { statusRef.current = s; setStatus(s); },
+      (info) => doneRef.current?.(info)
+    );
     engineRef.current = engine;
     return () => { engine.reset(); engineRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Load this document's source once, on mount.
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine || !docId) { return; }
+    let cancelled = false;
+    void (async () => {
+      const data = await window.api.libraryOpen(docId);
+      if (cancelled) { return; }
+      if (!data.bytes) { alert("源文件缺失"); return; }
+      await engine.openSource({ bytes: new Uint8Array(data.bytes), name: data.name, sourceUrl: data.sourceUrl, docId });
+      if (cancelled) { return; }
+      sourceLoadedRef.current = true;
+      if (keyRef.current) { await loadKey(engine, docId, keyRef.current); }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId]);
+
+  // Apply the selected translation whenever it changes (menu pick / completion).
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine || !docId || !sourceLoadedRef.current || !activeKey) { return; }
+    const s = statusRef.current;
+    if (s?.cacheKey === activeKey && (s.phase === "done" || s.running)) { return; }
+    void loadKey(engine, docId, activeKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId, activeKey]);
+
+  // Push block-overlay preferences to the engine (translating vs. viewing).
+  useEffect(() => {
+    engineRef.current?.setBlockPrefs({ translating: showBlocksTranslating, viewing: showBlocksTranslation });
+  }, [showBlocksTranslating, showBlocksTranslation]);
+
+  // A jump requested before the document finished loading is applied once ready.
+  useEffect(() => {
+    const p = pendingPageRef.current;
+    if (p && (status?.numPages || 0) > 0) {
+      pendingPageRef.current = 0;
+      engineRef.current?.goToNumberedPage(p);
+    }
+  }, [status?.numPages]);
+
   useEffect(() => {
     function onMove(e: MouseEvent): void {
+      if (!visibleRef.current) { return; }
       const el = document.elementFromPoint(e.clientX, e.clientY) as Element | null;
       const link = el && el.closest ? el.closest(".link-rect") : null;
       const pop = el && el.closest ? el.closest(".citation-pop") : null;
@@ -114,6 +177,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
       }
     }
     function onDown(e: MouseEvent): void {
+      if (!visibleRef.current) { return; }
       const t = e.target as Element | null;
       if (t && t.closest && t.closest(".citation-pop")) { return; }
       scheduleHide();
@@ -128,6 +192,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
 
   useEffect(() => {
     function onUp(): void {
+      if (!visibleRef.current) { return; }
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || !sel.toString().trim()) { setSelPop(null); return; }
       const node = sel.anchorNode;
@@ -140,6 +205,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
       setSelPop({ x: rect.left - sr.left + rect.width / 2, y: rect.top - sr.top, text: sel.toString().trim(), page: statusRef.current?.displayPage || 1 });
     }
     function onDown(e: MouseEvent): void {
+      if (!visibleRef.current) { return; }
       const t = e.target as Element | null;
       if (t && t.closest && t.closest(".sel-ask")) { return; }
       setSelPop(null);
@@ -231,15 +297,11 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   }, [panel, status?.numPages]);
 
   useImperativeHandle(ref, () => ({
-    openSource: (payload, auto) => engineRef.current?.openSource(payload, { auto }) ?? Promise.resolve(),
-    loadTranslation: async (bytes, docId, cacheKey) => {
+    goToPage: (page: number) => {
       const engine = engineRef.current;
-      if (!engine) { return; }
-      await engine.loadTranslation(bytes);
-      if (docId && cacheKey) { await engine.loadBlocks(docId, cacheKey); }
-    },
-    goToPage: (page: number) => engineRef.current?.goToNumberedPage(page),
-    reset: () => engineRef.current?.reset()
+      if (engine && (statusRef.current?.numPages || 0) > 0) { engine.goToNumberedPage(page); }
+      else { pendingPageRef.current = page; }
+    }
   }), []);
 
   const s = status;
@@ -247,7 +309,6 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const hasTranslation = !!s?.hasTranslation;
   const running = !!s?.running;
   const numPages = s?.numPages || 0;
-  const isCompare = s?.view === "compare";
   const curTocPage = s?.displayPage ?? -1;
   const curTocFrac = s?.scrollFraction ?? 0;
   let tocActive = -1;
@@ -300,7 +361,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   }
 
   return (
-    <div className="workspace" data-page-theme={theme} hidden={!hasSource}>
+    <div className="workspace" data-page-theme={theme} hidden={!hasSource || !visible}>
       <header className="toolbar">
         <div className="controls">
           <button type="button" className={"panel-btn" + (panel ? " active" : "")} title="目录 / 缩略图" onClick={() => setPanel(panel ? null : "toc")}><Icon name="panel-left" small /></button>
@@ -367,10 +428,6 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
                   <label className="menu-row"><span>页数</span>
                     <input type="text" value={pages} disabled={running} placeholder="全部（如 1-3,5）" onChange={(e) => setPages(e.target.value)} />
                   </label>
-                  <label className="menu-check">
-                    <input type="checkbox" checked={!!s?.blocksOn} disabled={!isCompare} onChange={() => engineRef.current?.toggleBlocks()} />
-                    <span>显示块框（对照视图）</span>
-                  </label>
                 </div>
 
                 {hasTranslation && (
@@ -419,8 +476,8 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
         <div className="run-bar">
           <div className="run-bar-fill" style={{ width: pct + "%" }} />
           <div className="run-bar-text">
-            <span className="run-bar-phase">翻译中</span>
-            <span>已完成 {s?.donePages || 0}/{s?.totalPages || "?"} 页</span>
+            <span className="run-bar-phase">{s?.message || "翻译中"}</span>
+            {(s?.totalPages || 0) > 0 && <span>已完成 {s?.donePages || 0}/{s?.totalPages} 页</span>}
             {(s?.blockTotal || 0) > 0 && <span>第 {s?.blockPage || s?.currentPage || "-"} 页 · 块 {s?.blockIndex || 0}/{s?.blockTotal}</span>}
           </div>
         </div>

@@ -485,6 +485,13 @@ export class EngineManager extends EventEmitter {
         }
       }
 
+      // A cancel may arrive while we were starting the local model server (slow); bail
+      // out here so the queue is released instead of running an orphaned job.
+      if (job.cancelled) {
+        this.finish(job, -1);
+        return;
+      }
+
       const env: NodeJS.ProcessEnv = {
         ...process.env,
         PYTHONUTF8: "1",
