@@ -11,6 +11,11 @@ import { AgentService, type AgentChatRequest } from "./agent/agent";
 import * as conversations from "./agent/conversations";
 import { Updater } from "./updater";
 
+// 开发运行使用独立数据目录，避免与安装版争用 %APPDATA%\Arxiver
+if (!app.isPackaged) {
+  app.setPath("userData", path.join(app.getPath("appData"), "Arxiver-dev"));
+}
+
 const engine = new EngineManager();
 const agent = new AgentService();
 const updater = new Updater();
