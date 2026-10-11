@@ -20,9 +20,6 @@ export default function Rail({
 }): JSX.Element {
   return (
     <nav className="rail" aria-label="主导航">
-      <button className="rail-brand" title="Arxiv PDF Translate" onClick={() => onChange("collections")}>
-        <img className="brand-mark" src="icons/logo.svg" alt="" />
-      </button>
       <div className="rail-nav">
         {ITEMS.map((item, index) => (
           <div key={item.id} style={{ display: "contents" }}>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX, type MutableRefObject } from "react";
 import type { LibraryDoc, Conversation, ConversationSummary } from "../../../shared/types";
 import { Icon } from "./Icons";
 import { formatDate } from "../lib/format";
@@ -30,7 +30,8 @@ export default function DetailPanel({
   settings,
   aiSelection,
   onCite,
-  onClearSelection
+  onClearSelection,
+  openDocs
 }: {
   lib: LibraryApi;
   onOpen: (doc: LibraryDoc) => void;
@@ -38,6 +39,7 @@ export default function DetailPanel({
   aiSelection?: { text: string; page: number } | null;
   onCite?: (docId: string, page: number) => void;
   onClearSelection?: () => void;
+  openDocs?: { id: string; name: string }[];
 }): JSX.Element {
   const doc = lib.selected;
 
@@ -55,13 +57,13 @@ export default function DetailPanel({
             <p>从中间列表选择一篇文献以查看信息、PDF 预览、笔记与标签。</p>
           </div>
         ) : (
-          <div className="tab-panel">
+          <div className={"tab-panel" + (lib.tab === "ai" ? " ai-tab" : "")}>
             {lib.tab === "info" && (lib.editMode
               ? <InfoEdit lib={lib} doc={doc} />
               : <InfoDisplay lib={lib} doc={doc} onOpenView={openDoc} citeDoi={settings.citeDoi} />)}
             {lib.tab === "notes" && <NotesPanel lib={lib} doc={doc} />}
             {lib.tab === "tags" && <TagsPanel lib={lib} doc={doc} />}
-            {lib.tab === "ai" && settings.aiEnabled && <AiPanel doc={doc} settings={settings} selection={aiSelection} onCite={onCite || (() => {})} onClearSelection={onClearSelection || (() => {})} />}
+            {lib.tab === "ai" && settings.aiEnabled && <AiPanel doc={doc} settings={settings} selection={aiSelection} onCite={onCite || (() => {})} onClearSelection={onClearSelection || (() => {})} openDocs={openDocs || []} resolveDocTitle={(id) => lib.documents.find((d) => d.id === id)?.title || id} />}
           </div>
         )}
       </div>
@@ -235,48 +237,194 @@ function TagsPanel({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Elem
 }
 
 interface AiToolTrace { name: string; args?: string; content?: string }
+interface AiConfirm { confirmId: string; name: string; args: string; status: "pending" | "approved" | "rejected" }
 interface AiTurn {
   role: "user" | "assistant";
   text: string;
   tools?: AiToolTrace[];
+  confirmations?: AiConfirm[];
   reasoning?: string;
   error?: string;
   streaming?: boolean;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
-function AiPanel({ doc, settings, selection, onCite, onClearSelection }: {
+function fmtConvTime(ts: number): string {
+  const d = new Date(ts * 1000);
+  const now = new Date();
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  const hm = pad(d.getHours()) + ":" + pad(d.getMinutes());
+  if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()) { return hm; }
+  return pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + hm;
+}
+
+interface NavAnchor { first: number; text: string; answer: string }
+
+function convAnchors(list: AiTurn[]): NavAnchor[] {
+  const runs: { first: number; last: number; text: string }[] = [];
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].role !== "user" || !list[i].text.trim()) { continue; }
+    const prev = runs[runs.length - 1];
+    if (prev && prev.last === i - 1) { prev.last = i; prev.text += " / " + list[i].text.trim(); }
+    else { runs.push({ first: i, last: i, text: list[i].text.trim() }); }
+  }
+  return runs.map((r) => {
+    const next = list[r.last + 1];
+    const answer = next && next.role === "assistant" ? next.text.trim() : "";
+    return { first: r.first, text: r.text, answer };
+  });
+}
+
+const NAV_BASE = 26;
+const NAV_MIN = 14;
+
+function QuestionNav({ anchors, anchorsRef, msgRefs, scrollRef, onGoto }: {
+  anchors: NavAnchor[];
+  anchorsRef: MutableRefObject<NavAnchor[]>;
+  msgRefs: MutableRefObject<(HTMLDivElement | null)[]>;
+  scrollRef: MutableRefObject<HTMLDivElement | null>;
+  onGoto: (i: number) => void;
+}): JSX.Element {
+  const [hover, setHover] = useState(-1);
+  const [hoverTop, setHoverTop] = useState(0);
+  const [active, setActive] = useState(0);
+  const hoverRef = useRef(-1);
+  const activeRef = useRef(0);
+  const barRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const navRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) { return; }
+    const onScroll = (): void => {
+      const list = anchorsRef.current;
+      const rectTop = el.getBoundingClientRect().top;
+      let act = 0;
+      for (let k = 0; k < list.length; k++) {
+        const me = msgRefs.current[list[k].first];
+        if (!me) { continue; }
+        if (me.getBoundingClientRect().top - rectTop <= el.clientHeight * 0.32) { act = k; } else { break; }
+      }
+      if (act !== activeRef.current) { activeRef.current = act; setActive(act); }
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [anchorsRef, msgRefs, scrollRef]);
+
+  const onNavMove = (e: { clientY: number }): void => {
+    const navEl = navRef.current;
+    let best = -1;
+    let bestD = Infinity;
+    let bestTop = 0;
+    for (let k = 0; k < barRefs.current.length; k++) {
+      const el = barRefs.current[k];
+      if (!el) { continue; }
+      const r = el.getBoundingClientRect();
+      const d = Math.abs(e.clientY - (r.top + r.height / 2));
+      if (d < bestD) {
+        bestD = d;
+        best = k;
+        bestTop = navEl ? r.top + r.height / 2 - navEl.getBoundingClientRect().top : 0;
+      }
+    }
+    if (best !== hoverRef.current) { hoverRef.current = best; setHover(best); setHoverTop(bestTop); }
+  };
+  const onNavLeave = (): void => { if (hoverRef.current !== -1) { hoverRef.current = -1; setHover(-1); } };
+
+  const cur = hover >= 0 ? anchors[hover] : null;
+  return (
+    <div className="ai-qnav" ref={navRef} onMouseMove={onNavMove} onMouseLeave={onNavLeave}>
+      {cur && (
+        <div className="ai-qnav-tip" style={{ top: hoverTop }}>
+          <div className="ai-qnav-tip-title">{cur.text}</div>
+          {cur.answer ? <div className="ai-qnav-tip-body">{cur.answer}</div> : null}
+        </div>
+      )}
+      {anchors.map((a, k) => {
+        const len = hover < 0 ? NAV_MIN : Math.max(7, NAV_BASE - Math.abs(k - hover) * 4);
+        const cls = "ai-qnav-bar" + (hover === k ? " active" : (hover < 0 && k === active ? " current" : ""));
+        return (
+          <button key={a.first} ref={(el) => { barRefs.current[k] = el; }} type="button" className={cls} onClick={() => onGoto(a.first)}>
+            <span className="ai-qnav-line" style={{ transform: "scaleX(" + (len / NAV_BASE).toFixed(3) + ")" }} />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ConfirmCard({ item, onDecide }: { item: AiConfirm; onDecide: (confirmId: string, approved: boolean, args?: string) => void }): JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const [args, setArgs] = useState(item.args);
+  if (item.status !== "pending") {
+    return <div className={"ai-confirm is-" + item.status}>{item.status === "approved" ? "✓ 已批准" : "✕ 已拒绝"}：{item.name}</div>;
+  }
+  let pretty = args;
+  try { pretty = JSON.stringify(JSON.parse(args), null, 2); } catch { pretty = args; }
+  return (
+    <div className="ai-confirm">
+      <div className="ai-confirm-head">需要你确认：<code>{item.name}</code></div>
+      {editing
+        ? <textarea className="ai-confirm-args" value={args} onChange={(e) => setArgs(e.target.value)} spellCheck={false} />
+        : <pre className="ai-confirm-args">{pretty}</pre>}
+      <div className="ai-confirm-actions">
+        <button type="button" className="btn primary" onClick={() => onDecide(item.confirmId, true, editing ? args : undefined)}>批准</button>
+        <button type="button" className="btn" onClick={() => setEditing((v) => !v)}>{editing ? "取消修改" : "修改"}</button>
+        <button type="button" className="btn danger" onClick={() => onDecide(item.confirmId, false)}>拒绝</button>
+      </div>
+    </div>
+  );
+}
+
+function AiPanel({ doc, settings, selection, onCite, onClearSelection, openDocs, resolveDocTitle }: {
   doc: LibraryDoc;
   settings: AppSettings;
   selection?: { text: string; page: number } | null;
   onCite: (docId: string, page: number) => void;
   onClearSelection: () => void;
+  openDocs: { id: string; name: string }[];
+  resolveDocTitle: (id: string) => string;
 }): JSX.Element {
   const [turns, setTurns] = useState<AiTurn[]>([]);
   const [input, setInput] = useState("");
-  const [scope, setScope] = useState<"paper" | "library">("paper");
   const [sending, setSending] = useState(false);
   const [convId, setConvId] = useState("");
   const [convList, setConvList] = useState<ConversationSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [refs, setRefs] = useState<{ id: string; title: string }[]>([]);
+  const [atOpen, setAtOpen] = useState(false);
+  const [histQuery, setHistQuery] = useState("");
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const turnRef = useRef("");
   const turnsRef = useRef<AiTurn[]>([]);
   const convIdRef = useRef("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const msgRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const atBottomRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
+  const anchorsRef = useRef<NavAnchor[]>([]);
   turnsRef.current = turns;
   convIdRef.current = convId;
-
-  const targetDocId = scope === "paper" ? doc.id : undefined;
 
   const persist = (messages: AiTurn[]): void => {
     const id = convIdRef.current;
     if (!id) { return; }
     const firstUser = messages.find((m) => m.role === "user");
-    const clean = messages.filter((m) => m.text.trim() || m.error || (m.tools && m.tools.length > 0));
+    const clean = messages.filter((m) => m.text.trim() || m.error || (m.tools && m.tools.length > 0) || (m.confirmations && m.confirmations.length > 0));
+    const docIds = new Set<string>();
+    if (doc.id) { docIds.add(doc.id); }
+    for (const m of messages) {
+      for (const t of m.tools || []) {
+        const re = /"docId"\s*:\s*"([0-9a-fA-F]+)"/g;
+        let mm: RegExpExecArray | null;
+        while ((mm = re.exec(t.args || "")) !== null) { docIds.add(mm[1]); }
+      }
+    }
     void window.api.agentSaveConversation({
       id,
-      scope,
-      docId: targetDocId,
+      scope: "library",
+      docId: undefined,
+      docIds: Array.from(docIds),
       title: (firstUser?.text || "新对话").slice(0, 60),
       updated_at: 0,
       messages: clean.map((m) => ({ role: m.role, text: m.text, tools: m.tools, reasoning: m.reasoning, error: m.error, usage: m.usage }))
@@ -284,10 +432,9 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection }: {
   };
 
   useEffect(() => {
-    setTurns([]); setInput(""); setSending(false); turnRef.current = ""; setConvId(""); convIdRef.current = ""; setShowHistory(false);
     let cancelled = false;
     void (async () => {
-      const list = await window.api.agentConversations({ scope, docId: scope === "paper" ? doc.id : undefined });
+      const list = await window.api.agentConversations({ scope: "library" });
       if (cancelled) { return; }
       setConvList(list);
       if (list[0]) {
@@ -297,9 +444,31 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection }: {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc.id, scope]);
+  }, []);
 
-  useEffect(() => { const el = scrollRef.current; if (el) { el.scrollTop = el.scrollHeight; } }, [turns]);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && atBottomRef.current) { el.scrollTop = el.scrollHeight; }
+  }, [turns]);
+
+  const onScroll = (): void => {
+    const el = scrollRef.current;
+    if (!el) { return; }
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    if (near !== atBottomRef.current) { atBottomRef.current = near; setShowJump(!near); }
+  };
+  const jumpToBottom = (): void => {
+    const el = scrollRef.current;
+    if (el) { el.scrollTop = el.scrollHeight; }
+    atBottomRef.current = true;
+    setShowJump(false);
+  };
+  const gotoMsg = (i: number): void => {
+    const el = msgRefs.current[i];
+    const sc = scrollRef.current;
+    if (!el || !sc) { return; }
+    sc.scrollTop = el.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop - 8;
+  };
 
   useEffect(() => {
     const off = window.api.onAgentEvent((e) => {
@@ -314,9 +483,10 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection }: {
         else if (e.type === "tool_call") { cur.tools = [...(cur.tools || []), { name: e.name || "", args: e.args }]; }
         else if (e.type === "tool_result") {
           const tools = (cur.tools || []).slice();
-          for (let j = tools.length - 1; j >= 0; j--) { if (tools[j].name === e.name) { tools[j] = { ...tools[j], content: e.content }; break; } }
+          for (let j = tools.length - 1; j >= 0; j--) { if (tools[j].name === e.name && tools[j].content === undefined) { tools[j] = { ...tools[j], content: e.content }; break; } }
           cur.tools = tools;
         }
+        else if (e.type === "confirmation") { cur.confirmations = [...(cur.confirmations || []), { confirmId: e.confirmId || "", name: e.name || "", args: e.args || "{}", status: "pending" }]; }
         else if (e.type === "usage") { cur.usage = e.usage; }
         else if (e.type === "error") { cur.error = e.error || "出错了"; cur.streaming = false; }
         else if (e.type === "done") { cur.streaming = false; }
@@ -326,12 +496,12 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection }: {
       if (e.type === "done" || e.type === "error") {
         setSending(false);
         persist(turnsRef.current);
-        void window.api.agentConversations({ scope, docId: targetDocId }).then(setConvList);
+        void window.api.agentConversations({ scope: "library" }).then(setConvList);
       }
     });
     return off;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, doc.id, convId]);
+  }, [convId]);
 
   const send = (preset?: string): void => {
     const q = (preset !== undefined ? preset : input).trim();
@@ -342,13 +512,18 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection }: {
       setConvId(id);
     }
     setInput("");
+    atBottomRef.current = true;
+    setShowJump(false);
     const history = turnsRef.current
       .filter((t) => t.text.trim())
       .map((t) => ({ role: t.role, content: t.text }));
     setTurns((prev) => [...prev, { role: "user", text: q }, { role: "assistant", text: "", streaming: true }]);
     setSending(true);
     const sel = selection ? selection : undefined;
-    void window.api.agentChat({ scope, docId: doc.id, selection: sel, message: q, history })
+    const refIds = refs.map((r) => r.id);
+    setRefs([]);
+    setAtOpen(false);
+    void window.api.agentChat({ scope: "library", docId: doc.id, selection: sel, refs: refIds, message: q, history })
       .then(({ turnId }) => { turnRef.current = turnId; })
       .catch((err) => {
         setSending(false);
@@ -364,6 +539,28 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection }: {
 
   const stop = (): void => { if (turnRef.current) { void window.api.agentCancel(turnRef.current); } };
 
+  const atOptions = openDocs.filter((d) => d.id !== doc.id);
+  const anchors = convAnchors(turns);
+  anchorsRef.current = anchors;
+  const histFiltered = convList.filter((c) => {
+    const q = histQuery.trim().toLowerCase();
+    if (!q) { return true; }
+    const titles = (c.docIds || []).map(resolveDocTitle).join(" ");
+    return (c.title + " " + titles).toLowerCase().includes(q);
+  });
+  const pickRef = (d: { id: string; name: string }): void => {
+    setRefs((prev) => (prev.some((r) => r.id === d.id) ? prev : [...prev, { id: d.id, title: d.name }]));
+    setAtOpen(false);
+    inputRef.current?.focus();
+  };
+
+  const decide = (confirmId: string, approved: boolean, args?: string): void => {
+    setTurns((prev) => prev.map((t) => t.confirmations
+      ? { ...t, confirmations: t.confirmations.map((c) => c.confirmId === confirmId ? { ...c, status: approved ? "approved" : "rejected", args: args ?? c.args } : c) }
+      : t));
+    void window.api.agentConfirm(confirmId, { approved, args });
+  };
+
   const newConv = (): void => { setTurns([]); setConvId(""); convIdRef.current = ""; setShowHistory(false); };
   const openConv = async (id: string): Promise<void> => {
     const conv = await window.api.agentConversation(id);
@@ -372,43 +569,45 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection }: {
   };
   const delConv = async (id: string): Promise<void> => {
     await window.api.agentDeleteConversation(id);
-    setConvList(await window.api.agentConversations({ scope, docId: targetDocId }));
+    setConvList(await window.api.agentConversations({ scope: "library" }));
     if (id === convIdRef.current) { newConv(); }
   };
 
   return (
     <div className="ai-panel">
       <div className="ai-head">
-        <span className="ai-badge"><Icon name="sparkle" small /></span>
-        <div className="ai-scope-tabs">
-          <button type="button" className={scope === "paper" ? "active" : ""} onClick={() => { setScope("paper"); }}>当前文章</button>
-          <button type="button" className={scope === "library" ? "active" : ""} onClick={() => { setScope("library"); }}>全库</button>
-        </div>
+        <span className="ai-badge"><Icon name="arxiver" small /></span>
+        <span className="ai-brand">Arxiver</span>
         <span className="od-fill" />
         <button type="button" className="icon-btn" title="新对话" onClick={newConv}><Icon name="plus" small /></button>
         <div className="ai-hist-wrap">
           <button type="button" className="icon-btn" title="历史对话" onClick={() => setShowHistory((v) => !v)}><Icon name="history" small /></button>
           {showHistory && (
             <div className="ai-hist-pop">
-              {convList.length === 0 ? <div className="ai-hist-empty">暂无历史</div> : convList.map((c) => (
-                <div key={c.id} className={"ai-hist-item" + (c.id === convId ? " active" : "")}>
-                  <button type="button" className="ai-hist-open" onClick={() => { void openConv(c.id); }}>
-                    <span className="ai-hist-title od-truncate">{c.title}</span>
-                    <span className="ai-hist-time">{new Date(c.updated_at * 1000).toLocaleString()}</span>
-                  </button>
-                  <button type="button" className="icon-btn" title="删除" onClick={() => { void delConv(c.id); }}><Icon name="trash" small /></button>
-                </div>
-              ))}
+              <input className="ai-hist-search" placeholder="搜索对话或论文…" value={histQuery} onChange={(e) => setHistQuery(e.target.value)} />
+              {histFiltered.length === 0 ? <div className="ai-hist-empty">无匹配记录</div> : histFiltered.map((c) => {
+                const titles = (c.docIds || []).map(resolveDocTitle);
+                const para = titles.slice(0, 2).join(" · ") + (titles.length > 2 ? ` +${titles.length - 2}` : "");
+                return (
+                  <div key={c.id} className={"ai-hist-item" + (c.id === convId ? " active" : "")}>
+                    <button type="button" className="ai-hist-open" onClick={() => { void openConv(c.id); }}>
+                      <span className="ai-hist-title od-truncate">{c.title}</span>
+                      <span className="ai-hist-meta od-truncate">{para ? para + " · " : ""}{c.count} 问 · {fmtConvTime(c.updated_at)}</span>
+                    </button>
+                    <button type="button" className="icon-btn" title="删除" onClick={() => { void delConv(c.id); }}><Icon name="trash" small /></button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
       </div>
-      <div className="ai-scroll" ref={scrollRef}>
+      <div className="ai-scroll" ref={scrollRef} onScroll={onScroll}>
         {turns.length === 0 ? (
           <div className="ai-intro">
-            <div className="ai-mark"><Icon name="sparkle" /></div>
-            <h3>{scope === "paper" ? "就这篇文献提问" : "跨文库提问"}</h3>
-            <p>{scope === "paper" ? `基于《${doc.title}》检索并作答，回答带可点击引用。` : "在整本文库中检索相关段落并综合作答。"}</p>
+            <div className="ai-mark"><Icon name="arxiver" /></div>
+            <h3>向 Arxiver 提问</h3>
+            <p>会自动判断该读《{doc.title}》还是检索整库，需要时跨文献查找或反问你；回答带可点击引用。涉及修改（如标签、元数据）会先请你批准。</p>
             <div className="ai-suggest">
               <button onClick={() => send("总结核心贡献")}>总结核心贡献</button>
               <button onClick={() => send("解释主要方法")}>解释主要方法</button>
@@ -417,14 +616,21 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection }: {
           </div>
         ) : (
           turns.map((t, i) => (
-            <div key={i} className={"msg " + (t.role === "user" ? "msg-user" : "msg-assistant")}>
-              <div className="msg-avatar">{t.role === "user" ? "我" : <Icon name="sparkle" small />}</div>
+            <div key={i} ref={(el) => { msgRefs.current[i] = el; }} className={"msg " + (t.role === "user" ? "msg-user" : "msg-assistant")}>
+              <div className="msg-avatar">{t.role === "user" ? "我" : <Icon name="arxiver" small />}</div>
               <div className="msg-body">
-                <div className="msg-role">{t.role === "user" ? "我" : "AI 助手"}</div>
+                <div className="msg-role">{t.role === "user" ? "我" : "Arxiver"}</div>
                 {t.role === "user" ? (
                   <div className="msg-content">{t.text}</div>
                 ) : (
                   <>
+                    {t.reasoning ? (
+                      <details className="ai-reasoning" open={!!(t.streaming && !t.text)}>
+                        <summary>思考过程</summary>
+                        <div className="ai-reasoning-body">{t.reasoning}</div>
+                      </details>
+                    ) : null}
+                    {t.confirmations && t.confirmations.map((c) => <ConfirmCard key={c.confirmId} item={c} onDecide={decide} />)}
                     {t.tools && t.tools.length > 0 && (
                       <details className="ai-tools">
                         <summary>工具调用（{t.tools.length}）</summary>
@@ -444,20 +650,46 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection }: {
           ))
         )}
       </div>
+      {showJump && (
+        <button type="button" className="ai-jump" title="回到底部" onClick={jumpToBottom}><Icon name="chev-down" small /></button>
+      )}
+      {anchors.length >= 2 && (
+        <QuestionNav anchors={anchors} anchorsRef={anchorsRef} msgRefs={msgRefs} scrollRef={scrollRef} onGoto={gotoMsg} />
+      )}
       <div className="ai-composer">
-        {selection && selection.text.trim() ? (
-          <div className="ai-selection">
-            <span className="od-truncate">已选文本（第 {selection.page} 页）：{selection.text.trim().slice(0, 120)}</span>
-            <button type="button" className="icon-btn" title="移除" onClick={onClearSelection}><Icon name="x" small /></button>
+        {atOpen && (
+          <div className="ai-at-pop">
+            {atOptions.length === 0
+              ? <div className="ai-hist-empty">没有其它已打开的文献</div>
+              : atOptions.map((d) => <button key={d.id} type="button" className="ai-at-item" onClick={() => pickRef(d)}>@ {d.name}</button>)}
+          </div>
+        )}
+        {(selection && selection.text.trim()) || refs.length > 0 ? (
+          <div className="ai-refs">
+            {selection && selection.text.trim() ? (
+              <span className="ai-ref-chip">选文（第 {selection.page} 页）：{selection.text.trim().slice(0, 40)}
+                <button type="button" className="ai-ref-x" title="移除" onClick={onClearSelection}><Icon name="x" small /></button>
+              </span>
+            ) : null}
+            {refs.map((r) => (
+              <span key={r.id} className="ai-ref-chip">@{r.title}
+                <button type="button" className="ai-ref-x" title="移除" onClick={() => setRefs((prev) => prev.filter((x) => x.id !== r.id))}><Icon name="x" small /></button>
+              </span>
+            ))}
           </div>
         ) : null}
         <form className="composer-box" onSubmit={(e) => { e.preventDefault(); send(); }}>
           <textarea
-            placeholder="随心输入"
+            ref={inputRef}
+            placeholder="随心输入，@ 引用已打开的文献"
             rows={1}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v.endsWith("@")) { setInput(v.slice(0, -1)); setAtOpen(true); }
+              else { setAtOpen(false); setInput(v); }
+            }}
+            onKeyDown={(e) => { if (e.key === "Escape") { setAtOpen(false); } if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           />
           <div className="composer-row">
             <span className="od-fill" />

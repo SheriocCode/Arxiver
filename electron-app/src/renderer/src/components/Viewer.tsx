@@ -468,7 +468,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
               style={{ left: selPop.x, top: selPop.y }}
               onClick={() => { onAskSelection?.(selPop.text, selPop.page); setSelPop(null); window.getSelection()?.removeAllRanges(); }}
             >
-              <Icon name="sparkle" small /> 问 AI
+              <Icon name="arxiver" small /> 问 Arxiver
             </button>
           )}
           {citation && (

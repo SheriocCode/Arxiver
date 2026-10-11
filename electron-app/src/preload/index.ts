@@ -53,6 +53,7 @@ const api = {
 
   agentChat: (payload: unknown) => ipcRenderer.invoke("agent:chat", payload),
   agentCancel: (turnId: string) => ipcRenderer.invoke("agent:cancel", turnId),
+  agentConfirm: (confirmId: string, decision: unknown) => ipcRenderer.invoke("agent:confirm", confirmId, decision),
   agentConversations: (filter: unknown) => ipcRenderer.invoke("agent:conversations", filter),
   agentConversation: (id: string) => ipcRenderer.invoke("agent:conversation", id),
   agentSaveConversation: (conv: unknown) => ipcRenderer.invoke("agent:conversationSave", conv),

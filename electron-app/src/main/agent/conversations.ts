@@ -23,7 +23,15 @@ export function list(filter?: { scope: "paper" | "library"; docId?: string }): C
       const conv = JSON.parse(fs.readFileSync(path.join(dir(), name), "utf8")) as Conversation;
       if (!conv || !conv.id) { continue; }
       if (filter && (conv.scope !== filter.scope || (filter.scope === "paper" && conv.docId !== filter.docId))) { continue; }
-      out.push({ id: conv.id, scope: conv.scope, docId: conv.docId, title: conv.title || "新对话", updated_at: conv.updated_at || 0, count: (conv.messages || []).length });
+      out.push({
+        id: conv.id,
+        scope: conv.scope,
+        docId: conv.docId,
+        docIds: Array.isArray(conv.docIds) ? conv.docIds : [],
+        title: conv.title || "新对话",
+        updated_at: conv.updated_at || 0,
+        count: (conv.messages || []).filter((m) => m.role === "user").length
+      });
     } catch { /* skip corrupt */ }
   }
   out.sort((a, b) => b.updated_at - a.updated_at);

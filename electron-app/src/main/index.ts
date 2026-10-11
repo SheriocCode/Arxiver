@@ -246,6 +246,7 @@ function registerIpc(): void {
 
   ipcMain.handle("agent:chat", (_event, payload: AgentChatRequest) => agent.run(payload));
   ipcMain.handle("agent:cancel", (_event, turnId: string) => agent.cancel(turnId));
+  ipcMain.handle("agent:confirm", (_event, confirmId: string, decision: { approved: boolean; args?: string }) => agent.confirm(confirmId, decision));
   ipcMain.handle("agent:conversations", (_event, filter: { scope: "paper" | "library"; docId?: string }) => conversations.list(filter));
   ipcMain.handle("agent:conversation", (_event, id: string) => conversations.get(id));
   ipcMain.handle("agent:conversationSave", (_event, conv) => conversations.save(conv));

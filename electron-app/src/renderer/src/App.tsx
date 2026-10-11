@@ -37,6 +37,12 @@ export default function App(): JSX.Element {
   const viewerRef = useRef<ViewerHandle>(null);
   const lib = useLibrary();
   const { settings, update: updateSettings } = useSettings();
+  const libRef = useRef(lib);
+  libRef.current = lib;
+  useEffect(() => {
+    const off = window.api.onAgentEvent((e) => { if (e.type === "library_changed") { void libRef.current.refresh(); } });
+    return off;
+  }, []);
 
   const histRef = useRef<Section[]>(["collections"]);
   const [histIdx, setHistIdx] = useState(0);
@@ -74,8 +80,9 @@ export default function App(): JSX.Element {
 
   useEffect(() => {
     lib.setTab(settings.defaultTab);
+    // apply the default tab only on mount / when the setting changes, not on every doc switch
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lib.selectedId, settings.defaultTab]);
+  }, [settings.defaultTab]);
 
   const loadDoc = useCallback(async (entry: OpenDoc) => {
     const data = await window.api.libraryOpen(entry.id);
@@ -109,10 +116,11 @@ export default function App(): JSX.Element {
   const activateDoc = useCallback((id: string) => {
     const entry = docs.find((d) => d.id === id);
     if (!entry) { return; }
+    lib.select(id);
     setActiveDocId(id);
     setActiveTab("doc");
     void loadDoc(entry);
-  }, [docs, loadDoc]);
+  }, [docs, loadDoc, lib]);
 
   const closeDoc = useCallback((id: string) => {
     if (id !== activeDocId) { setDocs((prev) => prev.filter((d) => d.id !== id)); return; }
@@ -120,9 +128,9 @@ export default function App(): JSX.Element {
     const next = docs.filter((d) => d.id !== id);
     setDocs(next);
     const neighbor = next[Math.min(idx, next.length - 1)] || null;
-    if (neighbor) { setActiveDocId(neighbor.id); void loadDoc(neighbor); }
+    if (neighbor) { lib.select(neighbor.id); setActiveDocId(neighbor.id); void loadDoc(neighbor); }
     else { setActiveDocId(""); setActiveTab("library"); viewerRef.current?.reset(); }
-  }, [docs, activeDocId, loadDoc]);
+  }, [docs, activeDocId, loadDoc, lib]);
 
   const openDocById = useCallback((id: string) => {
     const doc = lib.documents.find((d) => d.id === id);
@@ -255,7 +263,7 @@ export default function App(): JSX.Element {
               ))}
               <div className="tb-tabs-right">
                 {detailOpen && lib.selected &&
-                  ([["info", "file", "信息"], ["notes", "note", "笔记"], ["tags", "tag", "标签"], ["ai", "sparkle", "AI"]] as const)
+                  ([["info", "file", "信息"], ["notes", "note", "笔记"], ["tags", "tag", "标签"], ["ai", "arxiver", "Arxiver"]] as const)
                     .filter(([id]) => id !== "ai" || settings.aiEnabled)
                     .map(([id, ic, label]) => (
                       <button key={id} className={"tb-viewtab" + (lib.tab === id ? " active" : "")} onClick={() => { lib.setTab(id); lib.setEditMode(false); }}>
@@ -285,6 +293,7 @@ export default function App(): JSX.Element {
                 aiSelection={aiSelection}
                 onCite={citeJump}
                 onClearSelection={() => setAiSelection(null)}
+                openDocs={docs.map((d) => ({ id: d.id, name: d.name }))}
               />
               {lib.section === "logs" && <LogsView logKey={logCat} logStatus={logStatus} onClose={() => lib.setSection("collections")} />}
               <div className="reader-overlay" hidden={activeTab !== "doc"}>

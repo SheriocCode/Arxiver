@@ -85,17 +85,19 @@ export interface AgentChatRequest {
   scope: "paper" | "library";
   docId?: string;
   selection?: { text: string; page: number };
+  refs?: string[];
   message: string;
   history?: { role: "user" | "assistant"; content: string }[];
 }
 
 export interface AgentEvent {
   turnId: string;
-  type: "delta" | "reasoning" | "tool_call" | "tool_result" | "usage" | "done" | "error";
+  type: "delta" | "reasoning" | "tool_call" | "tool_result" | "confirmation" | "library_changed" | "usage" | "done" | "error";
   text?: string;
   name?: string;
   args?: string;
   content?: string;
+  confirmId?: string;
   error?: string;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
@@ -113,6 +115,7 @@ export interface Conversation {
   id: string;
   scope: "paper" | "library";
   docId?: string;
+  docIds?: string[];
   title: string;
   updated_at: number;
   messages: ConvMessage[];
@@ -121,6 +124,7 @@ export interface ConversationSummary {
   id: string;
   scope: "paper" | "library";
   docId?: string;
+  docIds: string[];
   title: string;
   updated_at: number;
   count: number;
@@ -256,6 +260,7 @@ export interface Api {
   onJobBlocks(cb: (info: { id: string; blocks: BlockEvent[] }) => void): () => void;
   agentChat(payload: AgentChatRequest): Promise<{ turnId: string }>;
   agentCancel(turnId: string): Promise<void>;
+  agentConfirm(confirmId: string, decision: { approved: boolean; args?: string }): Promise<void>;
   onAgentEvent(cb: (event: AgentEvent) => void): () => void;
   agentConversations(filter: { scope: "paper" | "library"; docId?: string }): Promise<ConversationSummary[]>;
   agentConversation(id: string): Promise<Conversation | null>;

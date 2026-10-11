@@ -4,6 +4,7 @@ import type { ToolDef } from "./model";
 
 export interface ToolImpl {
   def: ToolDef;
+  write?: boolean;
   run: (args: Record<string, unknown>) => Promise<string>;
 }
 
@@ -111,14 +112,133 @@ export const TOOLS: ToolImpl[] = [
       if (hits.length === 0) { return "（未检索到相关段落）"; }
       return hits.map((h) => `[[cite:${docId}#${h.page}]] 第 ${h.page} 页\n${h.text}`).join("\n\n---\n\n");
     }
+  },
+  {
+    write: true,
+    def: {
+      name: "update_metadata",
+      description: "更新某篇文献的元数据（标题/作者/年份/期刊/DOI/摘要）。属于写入操作，需用户批准。",
+      parameters: {
+        type: "object",
+        properties: {
+          docId: { type: "string", description: "文献 id" },
+          title: { type: "string" },
+          authors: { type: "string" },
+          year: { type: "string" },
+          venue: { type: "string" },
+          doi: { type: "string" },
+          summary: { type: "string" }
+        },
+        required: ["docId"]
+      }
+    },
+    async run(args) {
+      const patch: Record<string, string> = {};
+      for (const key of ["title", "authors", "year", "venue", "doi", "summary"]) {
+        if (typeof args[key] === "string") { patch[key] = String(args[key]); }
+      }
+      const doc = library.updateDocument(String(args.docId || ""), patch);
+      return doc ? `已更新《${doc.title}》的元数据` : "未找到该文献";
+    }
+  },
+  {
+    write: true,
+    def: {
+      name: "apply_tags",
+      description: "为某篇文献添加/移除标签。属于写入操作，需用户批准。",
+      parameters: {
+        type: "object",
+        properties: {
+          docId: { type: "string", description: "文献 id" },
+          add: { type: "array", items: { type: "string" }, description: "要添加的标签" },
+          remove: { type: "array", items: { type: "string" }, description: "要移除的标签" }
+        },
+        required: ["docId"]
+      }
+    },
+    async run(args) {
+      const doc = library.getDocument(String(args.docId || ""));
+      if (!doc) { return "未找到该文献"; }
+      const tags = new Set(doc.tags || []);
+      for (const t of (args.add as string[]) || []) { tags.add(String(t)); }
+      for (const t of (args.remove as string[]) || []) { tags.delete(String(t)); }
+      library.updateDocument(doc.id, { tags: Array.from(tags) });
+      return `《${doc.title}》标签已更新为：${Array.from(tags).join(", ") || "（无）"}`;
+    }
+  },
+  {
+    write: true,
+    def: {
+      name: "set_flags",
+      description: "设置文献的星标（starred）/已读（read）状态。属于写入操作，需用户批准。",
+      parameters: {
+        type: "object",
+        properties: { docId: { type: "string" }, starred: { type: "boolean" }, read: { type: "boolean" } },
+        required: ["docId"]
+      }
+    },
+    async run(args) {
+      const patch: Record<string, boolean> = {};
+      if (typeof args.starred === "boolean") { patch.starred = args.starred; }
+      if (typeof args.read === "boolean") { patch.read = args.read; }
+      const doc = library.updateDocument(String(args.docId || ""), patch);
+      return doc ? `《${doc.title}》状态已更新` : "未找到该文献";
+    }
+  },
+  {
+    write: true,
+    def: {
+      name: "move_to_trash",
+      description: "将某篇文献移入回收站。属于写入操作，需用户批准。",
+      parameters: { type: "object", properties: { docId: { type: "string" } }, required: ["docId"] }
+    },
+    async run(args) {
+      const doc = library.setTrash(String(args.docId || ""), true);
+      return doc ? `已将《${doc.title}》移入回收站` : "未找到该文献";
+    }
+  },
+  {
+    write: true,
+    def: {
+      name: "restore_from_trash",
+      description: "从回收站恢复某篇文献。属于写入操作，需用户批准。",
+      parameters: { type: "object", properties: { docId: { type: "string" } }, required: ["docId"] }
+    },
+    async run(args) {
+      const doc = library.setTrash(String(args.docId || ""), false);
+      return doc ? `已恢复《${doc.title}》` : "未找到该文献";
+    }
+  },
+  {
+    write: true,
+    def: {
+      name: "add_to_collection",
+      description: "把某篇文献加入某个分类（分类不存在则新建）。属于写入操作，需用户批准。",
+      parameters: { type: "object", properties: { docId: { type: "string" }, name: { type: "string" } }, required: ["docId", "name"] }
+    },
+    async run(args) {
+      const doc = library.getDocument(String(args.docId || ""));
+      if (!doc) { return "未找到该文献"; }
+      const name = String(args.name || "").trim();
+      if (!name) { return "分类名不能为空"; }
+      let col = library.list().collections.find((c) => c.name === name);
+      if (!col) { col = library.addCollection(name, null); }
+      const cols = new Set(doc.collections || []);
+      cols.add(col.id);
+      library.updateDocument(doc.id, { collections: Array.from(cols) });
+      return `已将《${doc.title}》加入分类「${name}」`;
+    }
   }
 ];
 
-export function toolDefs(scope: "paper" | "library" = "library"): ToolDef[] {
-  const allowed = scope === "paper"
-    ? new Set(["read_document", "search_in_document"])
-    : new Set(TOOLS.map((t) => t.def.name));
-  return TOOLS.filter((t) => allowed.has(t.def.name)).map((t) => t.def);
+const WRITE_NAMES = new Set(TOOLS.filter((t) => t.write).map((t) => t.def.name));
+
+export function isWriteTool(name: string): boolean {
+  return WRITE_NAMES.has(name);
+}
+
+export function toolDefs(): ToolDef[] {
+  return TOOLS.map((t) => t.def);
 }
 
 export async function runTool(name: string, argsJson: string): Promise<string> {
