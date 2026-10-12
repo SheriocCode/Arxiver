@@ -31,6 +31,7 @@ export function useLibrary() {
   const [collections, setCollections] = useState<LibraryCollection[]>([]);
   const [history, setHistory] = useState<ReadingRecord[]>([]);
   const [tagColors, setTagColors] = useState<Record<string, string>>({});
+  const [tagNames, setTagNames] = useState<string[]>([]);
 
   const [section, setSection] = useState<Section>("collections");
   const [collId, setCollId] = useState<string>("all");
@@ -48,6 +49,7 @@ export function useLibrary() {
     setCollections(data.collections);
     setHistory(data.history);
     setTagColors(data.tag_colors || {});
+    setTagNames(data.tag_names || []);
     setSelectedIds((prev) => {
       const ids = new Set(data.documents.map((d) => d.id));
       const kept = prev.filter((id) => ids.has(id));
@@ -100,11 +102,13 @@ export function useLibrary() {
 
   const tagCounts = useMemo(() => {
     const counts: Record<string, number> = {};
+    // 显式新建过的标签即使暂时没有文献也列出来
+    for (const t of tagNames) { counts[t] = 0; }
     for (const doc of live) {
       for (const t of doc.tags) { counts[t] = (counts[t] || 0) + 1; }
     }
     return counts;
-  }, [live]);
+  }, [live, tagNames]);
 
   const selectedId = selectedIds[0] || "";
   const selected = documents.find((d) => d.id === selectedId) || null;
@@ -160,6 +164,40 @@ export function useLibrary() {
     await window.api.librarySetTagColor(name, color);
   }, []);
 
+  const renameTag = useCallback(async (from: string, to: string) => {
+    await window.api.libraryRenameTag(from, to);
+    setTag((cur) => (cur === from ? to : cur));
+    await refresh();
+  }, [refresh]);
+
+  const deleteTag = useCallback(async (name: string) => {
+    await window.api.libraryDeleteTag(name);
+    setTag((cur) => (cur === name ? "" : cur));
+    await refresh();
+  }, [refresh]);
+
+  const addTag = useCallback(async (name: string) => {
+    const t = name.trim();
+    if (!t) { return; }
+    setTagNames((prev) => (prev.includes(t) ? prev : [...prev, t]));
+    await window.api.libraryAddTag(t);
+  }, []);
+
+  const moveCollection = useCallback(async (id: string, target: string | null, position: "before" | "after" | "inside") => {
+    await window.api.libraryMoveCollection(id, target, position);
+    await refresh();
+  }, [refresh]);
+
+  const renameCollection = useCallback(async (id: string, name: string) => {
+    await window.api.libraryRenameCollection(id, name);
+    await refresh();
+  }, [refresh]);
+
+  const setDocsCollection = useCallback(async (ids: string[], collectionId: string | null) => {
+    await window.api.librarySetDocsCollection(ids, collectionId);
+    await refresh();
+  }, [refresh]);
+
   const recordOpen = useCallback(async (id: string) => {
     await window.api.libraryRecordOpen(id);
     setHistory((prev) => [{ itemId: id, at: Date.now() / 1000 }, ...prev.filter((r) => r.itemId !== id)].slice(0, 500));
@@ -171,7 +209,7 @@ export function useLibrary() {
     scoped, visible, tagCounts, selected, selectedId,
     setSection, setCollId, setTag, setFilter, setQuery, setSort, setTab, setEditMode,
     select, clearSelection, update, setTrash, purge, emptyTrash, addCollection, removeCollection,
-    setTagColor, recordOpen, countFor, itemsForCollection, refresh
+    setTagColor, renameTag, deleteTag, addTag, moveCollection, renameCollection, setDocsCollection, recordOpen, countFor, itemsForCollection, refresh
   };
 }
 

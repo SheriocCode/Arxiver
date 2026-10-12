@@ -32,16 +32,20 @@ export default function ListPane({
   lib,
   onAddDocument,
   showUnread,
+  fetchMeta,
   onOpenDoc
 }: {
   lib: LibraryApi;
   onAddDocument: () => void;
   showUnread: boolean;
+  fetchMeta: boolean;
   onOpenDoc: (id: string) => void;
 }): JSX.Element {
   const [cols, setCols] = useState(DEFAULT_COLS);
   const dragging = useRef<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; doc: LibraryDoc } | null>(null);
+  const [dropOver, setDropOver] = useState(false);
+  const [importing, setImporting] = useState("");
 
   useEffect(() => {
     if (!menu) { return; }
@@ -89,8 +93,35 @@ export default function ListPane({
 
   const multi = lib.selectedIds.length > 1;
 
+  const onDropFiles = async (e: React.DragEvent): Promise<void> => {
+    e.preventDefault();
+    setDropOver(false);
+    if (isTrash) { return; }
+    const files = Array.from(e.dataTransfer.files || []).filter((f) => /\.pdf$/i.test(f.name));
+    if (!files.length) { return; }
+    const target = ["all", "recent", "unfiled", "duplicates", "trash"].includes(lib.collId) ? [] : [lib.collId];
+    for (const f of files) {
+      setImporting(`正在导入 ${f.name}…`);
+      try {
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        const doc = await window.api.libraryAdd({ sourceBytes: bytes, name: f.name, collections: target });
+        if (fetchMeta) { await window.api.libraryEnrichMetadata(doc.id); }
+      } catch {
+        /* 单个文件失败不影响其它 */
+      }
+    }
+    setImporting("");
+    await lib.refresh();
+  };
+
   return (
-    <main className="list-pane" aria-label="文献列表">
+    <main
+      className="list-pane"
+      aria-label="文献列表"
+      onDragOver={(e) => { if (!e.dataTransfer.types.includes("Files") || isTrash) { return; } e.preventDefault(); setDropOver(true); }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) { setDropOver(false); } }}
+      onDrop={(e) => { void onDropFiles(e); }}
+    >
       <div className="list-toolbar">
         <div className="list-heading">
           <h1>{title}</h1>
@@ -130,6 +161,20 @@ export default function ListPane({
             {label}<span className="chip-count">{n}</span>
           </button>
         ))}
+        <div className="list-search">
+          <Icon name="search" small />
+          <input
+            type="search"
+            placeholder="搜索标题、作者、标签…"
+            value={lib.query}
+            onChange={(e) => lib.setQuery(e.target.value)}
+          />
+          {lib.query.length > 0 && (
+            <button type="button" className="list-search-clear" aria-label="清除搜索" title="清除搜索" onClick={() => lib.setQuery("")}>
+              <Icon name="x" small />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="list-scroll">
@@ -166,6 +211,13 @@ export default function ListPane({
         )}
       </div>
       </div>
+
+      {dropOver && (
+        <div className="drop-veil">
+          <Icon name="plus" />
+          <span>{importing || "松开以导入 PDF（可多选）"}</span>
+        </div>
+      )}
 
       {menu && (
         <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
@@ -220,6 +272,13 @@ function Row({ doc, lib, isTrash, showUnread, maxDots, onOpen, onContext }: {
       className={"item-row" + (selected ? " is-selected" : "")}
       role="option"
       aria-selected={selected}
+      draggable
+      onDragStart={(e) => {
+        if (!selected) { lib.select(doc.id); }
+        const ids = lib.selectedIds.includes(doc.id) && lib.selectedIds.length ? lib.selectedIds : [doc.id];
+        e.dataTransfer.setData("application/x-arxiver-docs", JSON.stringify(ids));
+        e.dataTransfer.effectAllowed = "copy";
+      }}
       onClick={(e) => lib.select(doc.id, e.ctrlKey || e.metaKey)}
       onDoubleClick={onOpen}
       onContextMenu={(e) => { e.preventDefault(); onContext(e); }}

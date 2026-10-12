@@ -246,7 +246,7 @@ function TagsPanel({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Elem
   );
 }
 
-interface AiToolTrace { name: string; args?: string; content?: string }
+interface AiToolTrace { name: string; args?: string; content?: string; ms?: number; at?: number }
 interface AiConfirm { confirmId: string; name: string; args: string; status: "pending" | "approved" | "rejected" }
 interface AiTurn {
   role: "user" | "assistant";
@@ -490,10 +490,15 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection, openDocs,
         const cur: AiTurn = { ...next[i] };
         if (e.type === "delta" && e.text) { cur.text += e.text; }
         else if (e.type === "reasoning" && e.text) { cur.reasoning = (cur.reasoning || "") + e.text; }
-        else if (e.type === "tool_call") { cur.tools = [...(cur.tools || []), { name: e.name || "", args: e.args }]; }
+        else if (e.type === "tool_call") { cur.tools = [...(cur.tools || []), { name: e.name || "", args: e.args, at: Date.now() }]; }
         else if (e.type === "tool_result") {
           const tools = (cur.tools || []).slice();
-          for (let j = tools.length - 1; j >= 0; j--) { if (tools[j].name === e.name && tools[j].content === undefined) { tools[j] = { ...tools[j], content: e.content }; break; } }
+          for (let j = tools.length - 1; j >= 0; j--) {
+            if (tools[j].name === e.name && tools[j].content === undefined) {
+              tools[j] = { ...tools[j], content: e.content, ms: Math.max(0, Date.now() - (tools[j].at || Date.now())) };
+              break;
+            }
+          }
           cur.tools = tools;
         }
         else if (e.type === "confirmation") { cur.confirmations = [...(cur.confirmations || []), { confirmId: e.confirmId || "", name: e.name || "", args: e.args || "{}", status: "pending" }]; }

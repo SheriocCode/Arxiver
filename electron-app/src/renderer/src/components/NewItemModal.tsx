@@ -12,11 +12,25 @@ export default function NewItemModal({
   defaultCollection: string;
   onClose: () => void;
   onCreated: (doc: LibraryDoc) => void;
-  onImportFile: () => void;
+  onImportFile: (collectionId: string) => void;
 }): JSX.Element {
   const [form, setForm] = useState({ title: "", authors: "", year: "", venue: "", type: "会议论文", tags: "" });
   const [coll, setColl] = useState(defaultCollection);
   const [invalid, setInvalid] = useState(false);
+  const [ident, setIdent] = useState("");
+  const [identErr, setIdentErr] = useState("");
+  const [importing, setImporting] = useState(false);
+
+  async function importIdent(): Promise<void> {
+    const value = ident.trim();
+    if (!value || importing) { return; }
+    setImporting(true);
+    setIdentErr("");
+    const res = await window.api.libraryImportByIdentifier(value, coll ? [coll] : []);
+    setImporting(false);
+    if (!res.ok || !res.doc) { setIdentErr(res.error || "导入失败"); return; }
+    onCreated(res.doc);
+  }
   const set = (k: keyof typeof form, v: string): void => {
     setForm((f) => ({ ...f, [k]: v }));
     if (k === "title") { setInvalid(false); }
@@ -50,6 +64,31 @@ export default function NewItemModal({
         </div>
         <form onSubmit={submit}>
           <div className="modal-body">
+            <div className="field">
+              <label>
+                按链接导入（arXiv / DOI）
+                <span className="help" aria-hidden="true">?
+                  <span className="help-pop">
+                    元信息取自 <b>arXiv</b> / <b>CrossRef</b> 官方接口（不是爬页面）。<br />
+                    可粘贴：arXiv 链接、arXiv 编号（如 2401.12345）、DOI、或 https://doi.org/… 链接。<br />
+                    arXiv 会顺带下载 PDF；DOI 只导入元信息（出版社 PDF 需订阅）。
+                  </span>
+                </span>
+              </label>
+              <div className="ident-row">
+                <input
+                  value={ident}
+                  placeholder="粘贴 arXiv 链接 / 编号（如 2401.12345）/ DOI"
+                  onChange={(e) => { setIdent(e.target.value); if (identErr) { setIdentErr(""); } }}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void importIdent(); } }}
+                />
+                <button type="button" className="btn btn-primary" disabled={importing || !ident.trim()} onClick={() => { void importIdent(); }}>
+                  {importing ? "获取中…" : "获取并导入"}
+                </button>
+              </div>
+              <span className={"error" + (identErr ? " is-on" : "")}>{identErr}</span>
+            </div>
+            <div className="ident-sep" />
             <div className={"field" + (invalid ? " invalid" : "")}>
               <label>标题 <span className="req">*</span></label>
               <input value={form.title} autoFocus onChange={(e) => set("title", e.target.value)} />
@@ -81,7 +120,7 @@ export default function NewItemModal({
             </div>
           </div>
           <div className="modal-foot">
-            <button type="button" className="btn btn-ghost" style={{ marginRight: "auto" }} onClick={onImportFile}>
+            <button type="button" className="btn btn-ghost" style={{ marginRight: "auto" }} onClick={() => onImportFile(coll)}>
               <svg className="icon icon-sm" aria-hidden="true"><use href="#i-plus" /></svg> 导入 PDF 文件…
             </button>
             <button type="button" className="btn btn-ghost" onClick={onClose}>取消</button>

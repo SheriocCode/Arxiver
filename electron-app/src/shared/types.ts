@@ -124,7 +124,7 @@ export interface AgentEvent {
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
-export interface ConvTool { name: string; args?: string; content?: string }
+export interface ConvTool { name: string; args?: string; content?: string; ms?: number; at?: number }
 export interface ConvMessage {
   role: "user" | "assistant";
   text: string;
@@ -175,6 +175,58 @@ export interface StorageEntry {
   size: number;
   created_at: number;
   variants?: Partial<Record<"dual" | "mono", number>>;
+}
+
+/** 翻译日志一条：已完成（来自文库译文）或进行中/失败（来自引擎任务） */
+export interface TranslationLogEntry {
+  id: string;
+  docId: string;
+  cacheKey: string;
+  name: string;
+  sourceName: string;
+  sourceUrl: string;
+  targetLang: string;
+  service: string;
+  variant: string;
+  pages: string;
+  size: number;
+  status: "done" | "running" | "queued" | "failed";
+  message: string;
+  created_at: number;
+  finished_at: number | null;
+  donePages: number;
+  totalPages: number;
+  progress: number | null;
+}
+
+export type LogLevel = "info" | "warn" | "error";
+
+/** 系统运行日志一条 */
+export interface SystemLogEntry {
+  at: number;
+  level: LogLevel;
+  scope: string;
+  message: string;
+}
+
+export interface SystemLogSnapshot {
+  entries: SystemLogEntry[];
+  /** 日志文件路径（可在资源管理器中打开） */
+  file: string;
+}
+
+/** 按标识符（arXiv / DOI）取回的元信息 */
+export interface ResolvedMeta {
+  kind: "arxiv" | "doi";
+  id: string;
+  title: string;
+  authors: string;
+  year: string;
+  venue: string;
+  doi: string;
+  abstract: string;
+  pdfUrl: string;
+  pageUrl: string;
 }
 
 export interface ItemNote {
@@ -236,6 +288,8 @@ export interface LibraryState {
   history: ReadingRecord[];
   // tag name -> palette key (see renderer state/tagColors.ts); absent = no color
   tag_colors: Record<string, string>;
+  /** 用户显式新建的标签（可能暂时没有文献） */
+  tag_names: string[];
 }
 
 export interface AppInfo {
@@ -271,12 +325,16 @@ export interface Api {
   docOutline(id: string): Promise<DocOutline>;
   saveResult(id: string, variant?: string): Promise<string | null>;
   listStorage(): Promise<{ entries: StorageEntry[]; total: number }>;
+  logsTranslation(): Promise<TranslationLogEntry[]>;
+  logsSystem(): Promise<SystemLogSnapshot>;
   libraryState(): Promise<LibraryState>;
   libraryAdd(payload: SourcePayload & { type?: string; collections?: string[] }): Promise<LibraryDoc>;
   libraryAddManual(payload: {
     title: string; authors?: string; year?: string; venue?: string; type?: string;
     tags?: string[]; collections?: string[]; summary?: string; abstract?: string;
   }): Promise<LibraryDoc>;
+  libraryImportByIdentifier(input: string, collections: string[]): Promise<{ ok: boolean; doc?: LibraryDoc; error?: string }>;
+  libraryEnrichMetadata(id: string): Promise<LibraryDoc | null>;
   libraryUpdate(id: string, patch: Partial<LibraryDoc>): Promise<LibraryDoc | null>;
   librarySetTrash(id: string, trashed: boolean): Promise<LibraryDoc | null>;
   libraryPurge(id: string): Promise<boolean>;
@@ -284,6 +342,12 @@ export interface Api {
   libraryAddCollection(name: string, parent?: string | null): Promise<LibraryCollection>;
   libraryRemoveCollection(id: string): Promise<boolean>;
   librarySetTagColor(tag: string, color: string): Promise<void>;
+  libraryRenameTag(from: string, to: string): Promise<boolean>;
+  libraryDeleteTag(name: string): Promise<boolean>;
+  libraryAddTag(name: string): Promise<boolean>;
+  libraryRenameCollection(id: string, name: string): Promise<boolean>;
+  libraryMoveCollection(id: string, target: string | null, position: "before" | "after" | "inside"): Promise<boolean>;
+  librarySetDocsCollection(ids: string[], collectionId: string | null): Promise<number>;
   libraryRecordOpen(id: string): Promise<void>;
   libraryOpen(id: string): Promise<{ bytes: Uint8Array | null; name: string; sourceUrl: string }>;
   libraryReveal(id: string): Promise<boolean>;

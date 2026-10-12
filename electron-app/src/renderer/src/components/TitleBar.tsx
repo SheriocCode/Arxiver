@@ -3,7 +3,7 @@ import { Icon } from "./Icons";
 import type { Section } from "../state/useLibrary";
 
 const SECTION_LABEL: Record<Section, string> = {
-  collections: "分类",
+  collections: "文献库",
   tags: "标签",
   recent: "最近",
   logs: "日志"

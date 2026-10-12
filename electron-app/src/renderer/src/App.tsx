@@ -60,6 +60,19 @@ export default function App(): JSX.Element {
     return off;
   }, []);
 
+  // 兜底：不让拖到窗口空白处的文件把页面导航成 file://（只有列表区的拖放会真正处理）
+  useEffect(() => {
+    const prevent = (e: DragEvent): void => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files")) { e.preventDefault(); }
+    };
+    document.addEventListener("dragover", prevent);
+    document.addEventListener("drop", prevent);
+    return () => {
+      document.removeEventListener("dragover", prevent);
+      document.removeEventListener("drop", prevent);
+    };
+  }, []);
+
   const histRef = useRef<Section[]>(["collections"]);
   const [histIdx, setHistIdx] = useState(0);
   const navigate = useCallback((s: Section) => {
@@ -231,14 +244,20 @@ export default function App(): JSX.Element {
     }).then(() => lib.refresh());
   }, [lib]);
 
-  const importFile = useCallback(async () => {
+  const importFile = useCallback(async (collectionId: string) => {
     const picked = await window.api.pickFile();
     if (!picked) { return; }
-    const doc = await window.api.libraryAdd({ filePath: picked.filePath, name: picked.name });
+    const doc = await window.api.libraryAdd({
+      filePath: picked.filePath,
+      name: picked.name,
+      collections: collectionId ? [collectionId] : []
+    });
+    // 「自动抓取元数据」开启时：按文件名 / PDF 自带信息 / 首页里的 arXiv、DOI 补全元信息
+    if (settings.fetchMeta) { await window.api.libraryEnrichMetadata(doc.id); }
     await lib.refresh();
     lib.select(doc.id);
     setNewOpen(false);
-  }, [lib]);
+  }, [lib, settings.fetchMeta]);
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((c) => {
@@ -255,7 +274,8 @@ export default function App(): JSX.Element {
       const tag = (document.activeElement?.tagName || "").toLowerCase();
       if (e.key === "/" && !/input|textarea|select/.test(tag)) {
         e.preventDefault();
-        (document.querySelector(".side-search input") as HTMLInputElement | null)?.focus();
+        const el = (document.querySelector(".side-search input") || document.querySelector(".list-search input")) as HTMLInputElement | null;
+        el?.focus();
       }
       if (e.key === "Escape") {
         if (settingsOpen) { setSettingsOpen(false); }
@@ -351,6 +371,7 @@ export default function App(): JSX.Element {
                 lib={lib}
                 onAddDocument={() => setNewOpen(true)}
                 showUnread={settings.showUnread}
+                fetchMeta={settings.fetchMeta}
                 onOpenDoc={openDocById}
               />
               <DetailPanel

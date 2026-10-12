@@ -12,6 +12,7 @@ Electron 桌面端的 PDF 翻译引擎（基于 PDFMathTranslate / babeldoc 的�
 | `run.py` | 启动引导：把引擎根目录与 `site-packages` 加入 `sys.path`，恢复离线 assets，转交 CLI 参数 |
 | `extract_text.py` | 用内置 PyMuPDF 提取逐页文本（供 AI 助手检索） |
 | `outline.py` | 目录（大纲）：优先读 PDF 自带书签；没有书签时用 PyMuPDF 启发式识别标题生成 |
+| `pdfmeta.py` | 探测 PDF 自带元信息（标题/作者）并扫描首页里的 arXiv 编号 / DOI，供本地导入时自动补全 |
 | `translate_engine/` | 引擎源码主体（本仓库维护） |
 | `requirements.txt` | `site-packages` 的第三方依赖清单 |
 | `VERSION` | 引擎版本；引擎有实质更新时 bump（见 `NOTES.local.md`） |

@@ -12,7 +12,11 @@ import * as localModel from "./localmodel";
 import { AgentService, type AgentChatRequest } from "./agent/agent";
 import * as conversations from "./agent/conversations";
 import { getOutline } from "./outline";
+import { resolveIdentifier, parseIdentifier } from "./metadata";
+import { probePdf } from "./pdfmeta";
+import * as logger from "./logger";
 import { Updater } from "./updater";
+import type { TranslationLogEntry } from "../shared/types";
 
 // 数据目录优先级：
 //   1. 显式覆盖 --user-data-dir=<path> 或环境变量 ARXIVER_USER_DATA（便于同时试跑多份构建）
@@ -47,6 +51,11 @@ function perf(label: string): void {
   if (PERF) { console.log(`[perf] +${Date.now() - PERF_T0}ms ${label}`); }
 }
 perf("main module loaded");
+
+// 翻译任务状态（用于系统运行日志：只在状态变化时记一条）
+const jobStatus = new Map<string, string>();
+
+process.on("unhandledRejection", (e) => logger.warn("app", "unhandledRejection: " + logger.errText(e)));
 
 interface SourcePayload {
   docId?: string;
@@ -132,6 +141,7 @@ function createWindow(): void {
     mainWindow.maximize();
     mainWindow.show();
     mainWindow.focus();
+    logger.info("window", "主窗口已显示");
     perf(`main window shown (ready-to-show) maximized=${mainWindow.isMaximized()} bounds=${JSON.stringify(mainWindow.getBounds())}`);
     if (PERF) { setTimeout(() => app.exit(0), 2500); }
   };
@@ -176,7 +186,18 @@ function send(channel: string, payload: unknown): void {
   }
 }
 
-engine.on("update", (job: PublicJob) => send("job:update", job));
+engine.on("update", (job: PublicJob) => {
+  send("job:update", job);
+  // 只在状态变化时记一条系统日志（进度更新太频繁）
+  if (jobStatus.get(job.id) === job.status) { return; }
+  jobStatus.set(job.id, job.status);
+  const title = job.result_name || job.source_name || job.id;
+  if (job.status === "queued") { logger.info("translate", `加入队列：${title}`); }
+  else if (job.status === "running") { logger.info("translate", `开始翻译：${title}（${job.total_pages} 页）`); }
+  else if (job.status === "done") { logger.info("translate", `翻译完成：${title}（${job.total_pages} 页）`); }
+  else if (job.status === "error") { logger.error("translate", `翻译失败：${title} — ${job.error || job.message}`); }
+  else if (job.status === "cancelled") { logger.warn("translate", `已取消：${title}`); }
+});
 engine.on("partial", (id: string, info: unknown) => send("job:partial", { id, ...(info as object) }));
 engine.on("blocks", (id: string, blocks: unknown) => send("job:blocks", { id, blocks }));
 agent.on("event", (event: unknown) => send("agent:event", event));
@@ -289,6 +310,64 @@ function writeUiSettings(data: unknown): void {
   } catch {
     /* 忽略写失败 */
   }
+}
+
+// 翻译日志：文库里的已完成译文 + 引擎里进行中 / 失败的任务
+function translationLog(): TranslationLogEntry[] {
+  const out: TranslationLogEntry[] = [];
+  const docOf = new Map<string, string>();
+  for (const doc of library.list().documents) {
+    for (const ref of doc.translations || []) { docOf.set(ref.cacheKey, doc.id); }
+  }
+  for (const e of library.listTranslations().entries) {
+    out.push({
+      id: e.id,
+      docId: docOf.get(e.id) || "",
+      cacheKey: e.id,
+      name: e.name || e.source_name,
+      sourceName: e.source_name,
+      sourceUrl: e.source_url,
+      targetLang: e.target_lang,
+      service: e.service,
+      variant: e.output_variant,
+      pages: e.pages,
+      size: e.size,
+      status: "done",
+      message: "",
+      created_at: (e.created_at || 0) * 1000,
+      finished_at: null,
+      donePages: 0,
+      totalPages: 0,
+      progress: null
+    });
+  }
+  const known = new Set(out.map((x) => x.cacheKey));
+  for (const j of engine.list()) {
+    if (j.cache_key && known.has(j.cache_key)) { continue; }
+    const failed = j.status === "error" || j.status === "cancelled";
+    out.push({
+      id: j.id,
+      docId: j.doc_id,
+      cacheKey: j.cache_key || "",
+      name: j.result_name || j.source_name || j.id,
+      sourceName: j.source_name,
+      sourceUrl: j.source_url,
+      targetLang: j.params?.target_lang || "",
+      service: j.params?.service || "",
+      variant: j.params?.output_variant || "",
+      pages: j.params?.pages || "",
+      size: 0,
+      status: failed ? "failed" : j.status === "running" ? "running" : "queued",
+      message: j.error || j.message || "",
+      created_at: (j.created_at || 0) * 1000,
+      finished_at: j.finished_at ? j.finished_at * 1000 : null,
+      donePages: j.done_pages,
+      totalPages: j.total_pages,
+      progress: j.progress
+    });
+  }
+  out.sort((a, b) => b.created_at - a.created_at);
+  return out;
 }
 
 function registerIpc(): void {
@@ -435,6 +514,8 @@ function registerIpc(): void {
   ipcMain.handle("agent:conversationDelete", (_event, id: string) => conversations.remove(id));
 
   ipcMain.handle("storage:list", () => library.listTranslations());
+  ipcMain.handle("logs:system", () => ({ entries: logger.list(), file: logger.logFile() }));
+  ipcMain.handle("logs:translation", () => translationLog());
   ipcMain.handle("library:result", (_event, id: string, cacheKey: string, variant?: string) => storage.readTranslation(id, cacheKey, variant));
   ipcMain.handle("library:blocks", (_event, id: string, cacheKey: string) => storage.readBlocks(id, cacheKey));
   ipcMain.handle("doc:outline", (_event, id: string) => getOutline(id));
@@ -465,6 +546,90 @@ function registerIpc(): void {
     summary: payload.summary,
     abstract: payload.abstract
   }));
+
+  // 本地导入后补全元数据：优先文件名里的 arXiv 编号，其次 PDF 自带元信息 / 首页里的 arXiv、DOI
+  ipcMain.handle("library:enrichMetadata", async (_event, docId: string) => {
+    const doc = library.getDocument(docId);
+    if (!doc) { return null; }
+    try {
+      const nameHit = parseIdentifier(doc.sourceName || "");
+      let meta = nameHit ? await resolveIdentifier(doc.sourceName || "") : null;
+      if (!meta) {
+        const probe = await probePdf(docId);
+        if (probe) {
+          const id = probe.arxivId || probe.doi;
+          if (id) { meta = await resolveIdentifier(id); }
+          if (!meta) {
+            // 只有 PDF 自带的 title/author 也要用上
+            const patch: Partial<typeof doc> = {};
+            if (probe.title && probe.title.length > 3 && probe.title.length < 300) { patch.title = probe.title; }
+            if (probe.author) { patch.authors = probe.author; }
+            if (Object.keys(patch).length) { library.updateDocument(docId, patch); }
+            return library.getDocument(docId);
+          }
+        }
+      }
+      if (meta) {
+        library.updateDocument(docId, {
+          title: meta.title || doc.title,
+          authors: meta.authors || doc.authors,
+          year: meta.year || doc.year,
+          venue: meta.venue || doc.venue,
+          doi: meta.doi || doc.doi,
+          abstract: meta.abstract || doc.abstract,
+          summary: meta.abstract || doc.summary,
+          type: meta.kind === "arxiv" ? "预印本" : doc.type
+        });
+        logger.info("library", `已补全元信息：${meta.title || docId}`);
+      }
+      return library.getDocument(docId);
+    } catch (e) {
+      logger.warn("library", "补全元信息失败：" + logger.errText(e));
+      return doc;
+    }
+  });
+
+  // 按标识符导入（粘贴 arXiv 链接/编号或 DOI）：走官方接口取元信息，arXiv 顺带下载 PDF
+  ipcMain.handle("library:importByIdentifier", async (_event, input: string, collections: string[]) => {
+    try {
+      const meta = await resolveIdentifier(input);
+      if (!meta) {
+        return { ok: false, error: "没识别出 arXiv 编号或 DOI（可直接粘贴链接）" };
+      }
+      let bytes: Buffer | undefined;
+      let name = meta.id.replace(/[\\/:*?"<>|]/g, "_") + ".pdf";
+      if (meta.pdfUrl) {
+        try {
+          const loaded = await fetchPdf(meta.pdfUrl);
+          bytes = loaded.bytes;
+          if (loaded.name) { name = loaded.name; }
+        } catch (e) {
+          logger.warn("library", "下载 PDF 失败（仍导入元信息）：" + logger.errText(e));
+        }
+      }
+      const doc = library.addDocument({
+        bytes,
+        name,
+        sourceUrl: meta.pageUrl,
+        title: meta.title || meta.id,
+        type: meta.kind === "arxiv" ? "预印本" : "期刊论文",
+        collections
+      });
+      library.updateDocument(doc.id, {
+        authors: meta.authors,
+        year: meta.year,
+        venue: meta.venue,
+        doi: meta.doi,
+        abstract: meta.abstract,
+        summary: meta.abstract
+      });
+      logger.info("library", `按标识符导入：${meta.title || meta.id}（${meta.kind}）`);
+      return { ok: true, doc: library.getDocument(doc.id) };
+    } catch (e) {
+      logger.warn("library", "按标识符导入失败：" + logger.errText(e));
+      return { ok: false, error: logger.errText(e, 200) };
+    }
+  });
   ipcMain.handle("library:update", (_event, id: string, patch) => library.updateDocument(id, patch));
   ipcMain.handle("library:setTrash", (_event, id: string, trashed: boolean) => library.setTrash(id, trashed));
   ipcMain.handle("library:purge", (_event, id: string) => library.purge(id));
@@ -472,6 +637,12 @@ function registerIpc(): void {
   ipcMain.handle("library:addCollection", (_event, name: string, parent?: string | null) => library.addCollection(name, parent ?? null));
   ipcMain.handle("library:removeCollection", (_event, id: string) => library.removeCollection(id));
   ipcMain.handle("library:setTagColor", (_event, tag: string, color: string) => library.setTagColor(tag, color));
+  ipcMain.handle("library:renameTag", (_event, from: string, to: string) => library.renameTag(from, to));
+  ipcMain.handle("library:deleteTag", (_event, name: string) => library.deleteTag(name));
+  ipcMain.handle("library:addTag", (_event, name: string) => library.addTag(name));
+  ipcMain.handle("library:renameCollection", (_event, id: string, name: string) => library.renameCollection(id, name));
+  ipcMain.handle("library:moveCollection", (_event, id: string, target: string | null, position: "before" | "after" | "inside") => library.moveCollection(id, target, position));
+  ipcMain.handle("library:setDocsCollection", (_event, ids: string[], collectionId: string | null) => library.setDocsCollection(ids, collectionId));
   ipcMain.handle("library:recordOpen", (_event, id: string) => library.recordOpen(id));
   ipcMain.handle("library:addTranslation", (_event, id: string, ref) => library.addTranslation(id, ref));
   ipcMain.handle("library:removeTranslation", (_event, id: string, key: string) => library.removeTranslation(id, key));
@@ -512,6 +683,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     perf("app.whenReady");
+    logger.info("app", `Arxiver ${app.getVersion()} 启动（${app.isPackaged ? "安装版" : "开发版"}），数据目录 ${paths.userDataDir()}`);
     if (process.platform === "win32") {
       app.setAppUserModelId("com.sherioccode.arxiver");
     }

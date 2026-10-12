@@ -3,7 +3,7 @@ import { Icon } from "./Icons";
 import type { Section } from "../state/useLibrary";
 
 const ITEMS: { id: Section; label: string; ic: string }[] = [
-  { id: "collections", label: "分类", ic: "folder" },
+  { id: "collections", label: "文献库", ic: "folder" },
   { id: "tags", label: "标签", ic: "tag" },
   { id: "recent", label: "最近", ic: "clock" },
   { id: "logs", label: "日志", ic: "log" }

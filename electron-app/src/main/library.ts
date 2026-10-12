@@ -61,6 +61,8 @@ interface LibraryState {
   collections: LibraryCollection[];
   history: ReadingRecord[];
   tag_colors: Record<string, string>;
+  /** 用户显式新建的标签（可能暂时没有文献，只为配色/搜索用） */
+  tag_names: string[];
 }
 
 function indexPath(): string {
@@ -83,7 +85,8 @@ function load(): LibraryState {
     documents: Array.isArray(parsed?.documents) ? (parsed!.documents as LibraryDoc[]) : [],
     collections: Array.isArray(parsed?.collections) ? (parsed!.collections as LibraryCollection[]) : [],
     history: Array.isArray(parsed?.history) ? (parsed!.history as ReadingRecord[]) : [],
-    tag_colors: parsed?.tag_colors && typeof parsed.tag_colors === "object" ? parsed.tag_colors : {}
+    tag_colors: parsed?.tag_colors && typeof parsed.tag_colors === "object" ? parsed.tag_colors : {},
+    tag_names: Array.isArray(parsed?.tag_names) ? (parsed!.tag_names as string[]) : []
   };
   // normalize older records
   for (const doc of state.documents) {
@@ -236,7 +239,11 @@ export function emptyTrash(): number {
 
 export function addCollection(name: string, parent: string | null = null): LibraryCollection {
   const store = load();
-  const collection = { id: crypto.randomBytes(4).toString("hex"), name: String(name || "新集合"), parent };
+  const clean = String(name || "新集合").trim() || "新集合";
+  // 同一层级下重名不重复创建，直接返回已有的
+  const dup = store.collections.find((c) => (c.parent || null) === (parent || null) && c.name.toLowerCase() === clean.toLowerCase());
+  if (dup) { return dup; }
+  const collection = { id: crypto.randomBytes(4).toString("hex"), name: clean, parent };
   store.collections.push(collection);
   save();
   return collection;
@@ -271,6 +278,129 @@ export function setTagColor(tag: string, color: string): void {
   if (color) { store.tag_colors[name] = color; }
   else { delete store.tag_colors[name]; }
   save();
+}
+
+/** 新建标签（只为让它出现在侧栏；实际归属仍由文献决定） */
+export function addTag(name: string): boolean {
+  const store = load();
+  const t = String(name || "").trim();
+  if (!t) { return false; }
+  // 重复检测：已登记、或已被某篇文献使用，都不再重复登记
+  if (store.tag_names.includes(t)) { return false; }
+  if (store.documents.some((d) => d.tags && d.tags.includes(t))) { return false; }
+  store.tag_names.push(t);
+  save();
+  return true;
+}
+
+/** 重命名标签：改所有文档上的标签名，并迁移颜色 */
+export function renameTag(from: string, to: string): boolean {
+  const store = load();
+  const a = String(from || "").trim();
+  const b = String(to || "").trim();
+  if (!a || !b || a === b) { return false; }
+  for (const doc of store.documents) {
+    if (doc.tags && doc.tags.includes(a)) {
+      doc.tags = Array.from(new Set(doc.tags.map((t) => (t === a ? b : t))));
+      doc.modified_at = Date.now() / 1000;
+    }
+  }
+  if (store.tag_colors[a]) {
+    store.tag_colors[b] = store.tag_colors[a];
+    delete store.tag_colors[a];
+  }
+  store.tag_names = Array.from(new Set(store.tag_names.map((t) => (t === a ? b : t))));
+  save();
+  return true;
+}
+
+/** 删除标签：从所有文档上移除，并清掉颜色与登记 */
+export function deleteTag(name: string): boolean {
+  const store = load();
+  const t = String(name || "").trim();
+  if (!t) { return false; }
+  for (const doc of store.documents) {
+    if (doc.tags && doc.tags.includes(t)) {
+      doc.tags = doc.tags.filter((x) => x !== t);
+      doc.modified_at = Date.now() / 1000;
+    }
+  }
+  delete store.tag_colors[t];
+  store.tag_names = store.tag_names.filter((x) => x !== t);
+  save();
+  return true;
+}
+
+/** 把若干文献加入某个分类（collectionId 为 null 表示从所有分类移出 → 未分类） */
+export function setDocsCollection(ids: string[], collectionId: string | null): number {
+  const store = load();
+  const wanted = new Set(ids || []);
+  let changed = 0;
+  for (const doc of store.documents) {
+    if (!wanted.has(doc.id)) { continue; }
+    if (collectionId === null) {
+      if (doc.collections.length === 0) { continue; }
+      doc.collections = [];
+    } else {
+      if (doc.collections.includes(collectionId)) { continue; }
+      doc.collections = [...doc.collections, collectionId];
+    }
+    doc.modified_at = Date.now() / 1000;
+    changed++;
+  }
+  if (changed) { save(); }
+  return changed;
+}
+
+/** 重命名分类（分类只是虚拟归类，不会移动任何文件）；同层级重名会被拒绝 */
+export function renameCollection(id: string, name: string): boolean {
+  const store = load();
+  const col = store.collections.find((c) => c.id === id);
+  const n = String(name || "").trim();
+  if (!col || !n) { return false; }
+  const dup = store.collections.some((c) => c.id !== id && (c.parent || null) === (col.parent || null) && c.name.toLowerCase() === n.toLowerCase());
+  if (dup) { return false; }
+  col.name = n;
+  save();
+  return true;
+}
+
+/** 移动分类：target 为 null 表示移到「我的文库」根下末尾；
+ *  position = before/after 表示插到某个分类的前/后（同级排序），inside 表示成为其子分类。 */
+export function moveCollection(id: string, target: string | null, position: "before" | "after" | "inside"): boolean {
+  const store = load();
+  const col = store.collections.find((c) => c.id === id);
+  if (!col) { return false; }
+
+  if (target === null) {
+    col.parent = null;
+    store.collections = [...store.collections.filter((c) => c.id !== id), col];
+    save();
+    return true;
+  }
+
+  const tgt = store.collections.find((c) => c.id === target);
+  if (!tgt || tgt.id === id) { return false; }
+  // 不允许挂到自己的子孙下面
+  let walk: string | null = tgt.id;
+  while (walk) {
+    if (walk === id) { return false; }
+    walk = store.collections.find((c) => c.id === walk)?.parent || null;
+  }
+
+  if (position === "inside") {
+    col.parent = tgt.id;
+    save();
+    return true;
+  }
+
+  col.parent = tgt.parent;
+  const rest = store.collections.filter((c) => c.id !== id);
+  const idx = rest.findIndex((c) => c.id === tgt.id);
+  rest.splice(position === "before" ? idx : idx + 1, 0, col);
+  store.collections = rest;
+  save();
+  return true;
 }
 
 export function recordOpen(id: string): void {

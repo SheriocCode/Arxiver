@@ -50,6 +50,7 @@ export interface PublicJob {
   params: TransParams;
   created_at: number;
   finished_at: number | null;
+  doc_id: string;
 }
 
 export interface BlockEvent {
@@ -207,7 +208,8 @@ export class EngineManager extends EventEmitter {
       log_tail: job.logTail.slice(-2000), cache_key: job.cacheKey, cached: job.cached,
       result_name: job.resultName, variants: job.resultVariants,
       source_name: job.filename, source_url: job.sourceUrl, params: job.params,
-      created_at: job.createdAt, finished_at: job.finishedAt
+      created_at: job.createdAt, finished_at: job.finishedAt,
+      doc_id: job.docId
     };
   }
 

@@ -2,6 +2,7 @@ import { app, net } from "electron";
 import { EventEmitter } from "node:events";
 import updaterPkg from "electron-updater";
 import type { UpdateStatus } from "../shared/types";
+import * as logger from "./logger";
 
 const { autoUpdater } = updaterPkg as unknown as { autoUpdater: any };
 
@@ -25,11 +26,23 @@ export class Updater extends EventEmitter {
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.on("checking-for-update", () => this.set({ state: "checking" }));
-    autoUpdater.on("update-available", (info: any) => this.set({ state: "available", version: info?.version, notes: toNotes(info?.releaseNotes) }));
-    autoUpdater.on("update-not-available", () => this.set({ state: "none" }));
+    autoUpdater.on("update-available", (info: any) => {
+      logger.info("update", `发现新版本 ${info?.version || ""}`);
+      this.set({ state: "available", version: info?.version, notes: toNotes(info?.releaseNotes) });
+    });
+    autoUpdater.on("update-not-available", () => {
+      logger.info("update", "已是最新版本");
+      this.set({ state: "none" });
+    });
     autoUpdater.on("download-progress", (p: any) => this.set({ state: "downloading", percent: Math.round(p?.percent || 0) }));
-    autoUpdater.on("update-downloaded", (info: any) => this.set({ state: "ready", version: info?.version, notes: toNotes(info?.releaseNotes) }));
-    autoUpdater.on("error", (err: any) => this.set({ state: "error", error: String(err?.message || err) }));
+    autoUpdater.on("update-downloaded", (info: any) => {
+      logger.info("update", `新版本已下载：${info?.version || ""}`);
+      this.set({ state: "ready", version: info?.version, notes: toNotes(info?.releaseNotes) });
+    });
+    autoUpdater.on("error", (err: any) => {
+      logger.warn("update", "更新出错：" + logger.errText(err));
+      this.set({ state: "error", error: String(err?.message || err) });
+    });
     if (autoCheck) { this.autoCheckOnce(); }
   }
 
