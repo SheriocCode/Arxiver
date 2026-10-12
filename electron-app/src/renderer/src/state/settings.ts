@@ -21,6 +21,10 @@ export interface AppSettings {
   autoSync: boolean;
   showBlocksTranslating: boolean;
   showBlocksTranslation: boolean;
+  splashEnabled: boolean;
+  backgroundEnabled: boolean;
+  backgroundFile: string;
+  backgroundOpacity: number;
 }
 
 const DEFAULTS: AppSettings = {
@@ -41,7 +45,11 @@ const DEFAULTS: AppSettings = {
   autoSummary: false,
   autoSync: true,
   showBlocksTranslating: true,
-  showBlocksTranslation: true
+  showBlocksTranslation: true,
+  splashEnabled: true,
+  backgroundEnabled: false,
+  backgroundFile: "",
+  backgroundOpacity: 0.9
 };
 
 export const ACCENTS: Record<Accent, { a: string; strong: string; strongHover: string; soft: string; soft2: string }> = {
@@ -50,12 +58,12 @@ export const ACCENTS: Record<Accent, { a: string; strong: string; strongHover: s
   orange: { a: "#c8713a", strong: "#a85a28", strongHover: "#8f4c20", soft: "rgba(200,113,58,.16)", soft2: "rgba(200,113,58,.30)" }
 };
 
-const KEY = "at.settings";
-
+// 设置存在主进程（userData/ui-settings.json）而不是 localStorage：
+// localStorage 按渲染端 origin 隔离（dev 端口一变就"丢设置"），且是异步落盘（强杀会丢）。
 function load(): AppSettings {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) || "{}");
-    return { ...DEFAULTS, ...raw };
+    const raw = window.api.uiSettingsGetSync() as Partial<AppSettings> | null;
+    return { ...DEFAULTS, ...(raw || {}) };
   } catch {
     return { ...DEFAULTS };
   }
@@ -69,20 +77,20 @@ function apply(s: AppSettings): void {
   root.style.setProperty("--accent-strong-hover", ac.strongHover);
   root.style.setProperty("--accent-soft", ac.soft);
   root.style.setProperty("--accent-soft-2", ac.soft2);
+  root.style.setProperty("--bg-opacity", String(s.backgroundOpacity));
   root.classList.toggle("reduce-motion", !!s.reduceMotion);
+  // 启用自选背景时，让界面面板半透明，露出后面的图片/视频
+  root.classList.toggle("has-bg", !!(s.backgroundEnabled && s.backgroundFile));
 }
 
 export function useSettings() {
   const [settings, setSettings] = useState<AppSettings>(() => load());
 
   useEffect(() => { apply(settings); }, [settings]);
+  useEffect(() => { void window.api.uiSettingsSet(settings); }, [settings]);
 
   const update = useCallback((patch: Partial<AppSettings>) => {
-    setSettings((prev) => {
-      const next = { ...prev, ...patch };
-      try { localStorage.setItem(KEY, JSON.stringify(next)); } catch { /* ignore */ }
-      return next;
-    });
+    setSettings((prev) => ({ ...prev, ...patch }));
   }, []);
 
   return { settings, update };

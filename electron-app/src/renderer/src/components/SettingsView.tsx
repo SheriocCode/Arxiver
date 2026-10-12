@@ -85,6 +85,17 @@ export default function SettingsView({
     setTimeout(() => setHint(""), 2000);
   }
 
+  async function pickBackground(): Promise<void> {
+    const picked = await window.api.backgroundPick();
+    if (!picked) { return; }
+    updateSettings({ backgroundFile: picked.name, backgroundEnabled: true });
+  }
+
+  async function clearBackground(): Promise<void> {
+    await window.api.backgroundClear();
+    updateSettings({ backgroundFile: "", backgroundEnabled: false });
+  }
+
   return (
     <div className="modal-root" onMouseDown={(e) => { if (e.target === e.currentTarget) { onClose(); } }}>
       <div className="settings-modal" role="dialog" aria-label="设置">
@@ -198,6 +209,31 @@ export default function SettingsView({
                   </Row>
                   <Row label="查看译文时显示块框" desc="打开已翻译文件时是否标出文本块">
                     <Switch on={settings.showBlocksTranslation} onToggle={() => updateSettings({ showBlocksTranslation: !settings.showBlocksTranslation })} />
+                  </Row>
+                </Group>
+                <Group title="启动与背景">
+                  <Row label="开屏动画" desc="启动时播放一段开屏动画">
+                    <Switch on={settings.splashEnabled} onToggle={() => updateSettings({ splashEnabled: !settings.splashEnabled })} />
+                  </Row>
+                  <Row label="界面背景" desc="在界面底层显示自定义图片或视频（面板会变半透明以露出背景）">
+                    <Switch on={settings.backgroundEnabled} onToggle={() => updateSettings({ backgroundEnabled: !settings.backgroundEnabled })} />
+                  </Row>
+                  <Row label="背景文件" desc={settings.backgroundFile ? `当前：${settings.backgroundFile}` : "支持图片（png / jpg / webp / gif）与视频（mp4 / webm）"}>
+                    <div className="set-inline">
+                      <button className="btn" onClick={() => { void pickBackground(); }}><Icon name="layers" small /> 选择…</button>
+                      {settings.backgroundFile && <button className="btn btn-ghost" onClick={() => { void clearBackground(); }}>清除</button>}
+                    </div>
+                  </Row>
+                  <Row label="背景不透明度" desc="调低可压暗背景，让前景文字更清晰">
+                    <input
+                      className="set-range"
+                      type="range"
+                      min={10}
+                      max={100}
+                      step={5}
+                      value={Math.round(settings.backgroundOpacity * 100)}
+                      onChange={(e) => updateSettings({ backgroundOpacity: parseInt(e.target.value, 10) / 100 })}
+                    />
                   </Row>
                 </Group>
               </>

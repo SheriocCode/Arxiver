@@ -4,6 +4,7 @@ import { Icon } from "./Icons";
 import { formatDate } from "../lib/format";
 import { getPdfjs } from "../lib/pdf";
 import type { LibraryApi } from "../state/useLibrary";
+import { tagColor } from "../state/tagColors";
 import type { AppSettings } from "../state/settings";
 import { Markdown } from "../lib/markdown";
 
@@ -14,6 +15,15 @@ function arxivId(url: string): string {
 
 function docKind(doc: LibraryDoc): string {
   return doc.type || (/arxiv/i.test(doc.sourceUrl || "") ? "预印本" : "文档");
+}
+
+function TagChip({ tag, lib }: { tag: string; lib: LibraryApi }): JSX.Element {
+  return (
+    <button className="tag" onClick={() => lib.setTag(tag)}>
+      <span className="tag-dot" style={{ background: tagColor(lib.tagColors[tag]) }} />
+      {tag}
+    </button>
+  );
 }
 
 function citation(doc: LibraryDoc, withDoi: boolean): string {
@@ -106,7 +116,7 @@ function InfoDisplay({ lib, doc, onOpenView, citeDoi }: { lib: LibraryApi; doc: 
 
       <div className="section-title">标签</div>
       <div className="tag-cloud">
-        {tags.map((t) => <button key={t} className="tag" onClick={() => lib.setTag(t)}>{t}</button>)}
+        {tags.map((t) => <TagChip key={t} tag={t} lib={lib} />)}
         <button className="tag-add" onClick={() => lib.setTab("tags")}><Icon name="plus" small /> 添加</button>
       </div>
     </>
@@ -213,7 +223,7 @@ function TagsPanel({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Elem
       <div className="section-title" style={{ marginTop: 0 }}>当前标签</div>
       <div className="tag-cloud">
         {tags.length === 0 ? <span style={{ color: "var(--faint)", fontSize: 13 }}>暂无标签</span>
-          : tags.map((t) => <button className="tag" key={t} onClick={() => lib.setTag(t)}>{t}</button>)}
+          : tags.map((t) => <TagChip key={t} tag={t} lib={lib} />)}
       </div>
       <div className="section-title">添加标签</div>
       <div className="od-row">
@@ -230,7 +240,7 @@ function TagsPanel({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Elem
       <div className="section-title">所有标签</div>
       <div className="tag-cloud">
         {all.length === 0 ? <span style={{ color: "var(--faint)", fontSize: 13 }}>无</span>
-          : all.map((t) => <button className="tag" key={t} onClick={() => lib.setTag(t)}>{t}</button>)}
+          : all.map((t) => <TagChip key={t} tag={t} lib={lib} />)}
       </div>
     </>
   );

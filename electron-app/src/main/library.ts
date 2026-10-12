@@ -60,6 +60,7 @@ interface LibraryState {
   documents: LibraryDoc[];
   collections: LibraryCollection[];
   history: ReadingRecord[];
+  tag_colors: Record<string, string>;
 }
 
 function indexPath(): string {
@@ -81,7 +82,8 @@ function load(): LibraryState {
   state = {
     documents: Array.isArray(parsed?.documents) ? (parsed!.documents as LibraryDoc[]) : [],
     collections: Array.isArray(parsed?.collections) ? (parsed!.collections as LibraryCollection[]) : [],
-    history: Array.isArray(parsed?.history) ? (parsed!.history as ReadingRecord[]) : []
+    history: Array.isArray(parsed?.history) ? (parsed!.history as ReadingRecord[]) : [],
+    tag_colors: parsed?.tag_colors && typeof parsed.tag_colors === "object" ? parsed.tag_colors : {}
   };
   // normalize older records
   for (const doc of state.documents) {
@@ -260,6 +262,15 @@ export function removeCollection(id: string): boolean {
   }
   save();
   return true;
+}
+
+export function setTagColor(tag: string, color: string): void {
+  const store = load();
+  const name = String(tag || "").trim();
+  if (!name) { return; }
+  if (color) { store.tag_colors[name] = color; }
+  else { delete store.tag_colors[name]; }
+  save();
 }
 
 export function recordOpen(id: string): void {

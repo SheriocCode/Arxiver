@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import type { AppConfig, AppInfo } from "../../shared/types";
 import { IconDefs, Icon } from "./components/Icons";
+import AppBackground from "./components/AppBackground";
 import TitleBar from "./components/TitleBar";
 import Rail from "./components/Rail";
 import Sidebar from "./components/Sidebar";
@@ -10,6 +11,7 @@ import Viewer, { type ViewerHandle } from "./components/Viewer";
 import SettingsView from "./components/SettingsView";
 import NewItemModal from "./components/NewItemModal";
 import LogsView from "./components/LogsView";
+import SplashScreen from "./components/SplashScreen";
 import { useLibrary, type Section } from "./state/useLibrary";
 import { useSettings } from "./state/settings";
 import type { TranslationDoneInfo } from "./viewer/engine";
@@ -246,6 +248,7 @@ export default function App(): JSX.Element {
   return (
     <>
       <IconDefs />
+      {settings.backgroundEnabled && settings.backgroundFile && <AppBackground file={settings.backgroundFile} />}
       <div className="window">
         <TitleBar
           section={lib.section}
@@ -378,6 +381,8 @@ export default function App(): JSX.Element {
           onCreated={async (doc) => { await lib.refresh(); lib.select(doc.id); setNewOpen(false); }}
         />
       )}
+
+      {settings.splashEnabled && <SplashScreen />}
     </>
   );
 }

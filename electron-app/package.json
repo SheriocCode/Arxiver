@@ -60,7 +60,10 @@
         "owner": "SheriocCode",
         "repo": "Arxiver"
       }
-    ]
+    ],
+    "electronDownload": {
+      "isVerifyChecksum": false
+    }
   },
   "dependencies": {
     "electron-updater": "^6.6.2",

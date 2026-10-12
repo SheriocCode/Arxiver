@@ -1,6 +1,7 @@
-import { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell, nativeImage } from "electron";
+import { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell, nativeImage, screen, protocol } from "electron";
 import path from "node:path";
 import fs from "node:fs";
+import { Readable } from "node:stream";
 
 import * as config from "./config";
 import * as storage from "./storage";
@@ -10,6 +11,7 @@ import { EngineManager, clearTmpJobs, type PublicJob, type TransParams } from ".
 import * as localModel from "./localmodel";
 import { AgentService, type AgentChatRequest } from "./agent/agent";
 import * as conversations from "./agent/conversations";
+import { getOutline } from "./outline";
 import { Updater } from "./updater";
 
 // 数据目录优先级：
@@ -25,6 +27,11 @@ if (userDataOverride) {
   app.setPath("userData", path.join(app.getPath("appData"), "Arxiver-dev"));
 }
 
+// 用户自选背景用的自定义协议，必须在本进程 ready 之前注册。
+protocol.registerSchemesAsPrivileged([
+  { scheme: "arxiver-bg", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
+]);
+
 const engine = new EngineManager();
 const agent = new AgentService();
 const updater = new Updater();
@@ -32,6 +39,14 @@ const updater = new Updater();
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
+
+// 启动耗时打点：仅当 ARXIVER_PERF=1 时输出（用于对比/调试，不影响正常使用）
+const PERF = !!process.env.ARXIVER_PERF;
+const PERF_T0 = Date.now();
+function perf(label: string): void {
+  if (PERF) { console.log(`[perf] +${Date.now() - PERF_T0}ms ${label}`); }
+}
+perf("main module loaded");
 
 interface SourcePayload {
   docId?: string;
@@ -62,17 +77,23 @@ function showWindow(): void {
 }
 
 function createWindow(): void {
+  perf("createWindow() called");
+  // 初始就用"最大化大小"建窗（而不是显示后再最大化），避免出现"先小窗、再最大化"的一帧闪烁。
+  const work = screen.getPrimaryDisplay().workArea;
   mainWindow = new BrowserWindow({
-    width: 1180,
-    height: 820,
+    x: work.x,
+    y: work.y,
+    width: work.width,
+    height: work.height,
     minWidth: 900,
     minHeight: 640,
     title: "Arxiver",
     icon: paths.iconPath(),
     titleBarStyle: "hidden",
     titleBarOverlay: { color: "#0d0d0d", symbolColor: "#e6e6e9", height: 36 },
-    backgroundColor: "#171717",
+    backgroundColor: "#0b0b0b",
     autoHideMenuBar: true,
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,
@@ -82,15 +103,48 @@ function createWindow(): void {
   });
 
   mainWindow.on("maximize", () => mainWindow?.webContents.send("window:maximized", true));
-  mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window:maximized", false));
+  mainWindow.on("unmaximize", () => {
+    mainWindow?.webContents.send("window:maximized", false);
+    // 建窗时用的就是"最大化大小"，所以取消最大化时要收敛到正常的浮动窗口尺寸
+    const win = mainWindow;
+    if (win) {
+      const b = win.getBounds();
+      if (b.width >= work.width && b.height >= work.height) {
+        const w = Math.min(1180, work.width - 80);
+        const h = Math.min(820, work.height - 80);
+        win.setBounds({
+          x: work.x + Math.round((work.width - w) / 2),
+          y: work.y + Math.round((work.height - h) / 2),
+          width: w,
+          height: h
+        });
+      }
+    }
+  });
+
+  mainWindow.webContents.once("did-start-loading", () => perf("renderer did-start-loading"));
+  mainWindow.webContents.once("dom-ready", () => perf("renderer dom-ready"));
+  mainWindow.webContents.once("did-finish-load", () => perf("renderer did-finish-load"));
+
+  // 首帧就绪后再显示，避免白屏闪烁（启动动画现在是渲染端窗口内的遮罩层）。
+  const reveal = (): void => {
+    if (!mainWindow || mainWindow.isVisible()) { return; }
+    mainWindow.maximize();
+    mainWindow.show();
+    mainWindow.focus();
+    perf(`main window shown (ready-to-show) maximized=${mainWindow.isMaximized()} bounds=${JSON.stringify(mainWindow.getBounds())}`);
+    if (PERF) { setTimeout(() => app.exit(0), 2500); }
+  };
+  mainWindow.once("ready-to-show", reveal);
+  mainWindow.webContents.on("did-fail-load", (_e, _code, _desc, _url, isMainFrame) => {
+    if (isMainFrame) { reveal(); }
+  });
 
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
     mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
-
-  mainWindow.maximize();
 
   const win = mainWindow;
   win.on("close", (event) => {
@@ -201,18 +255,120 @@ async function loadSourceBytes(payload?: SourcePayload): Promise<{ bytes: Buffer
   throw new Error("未指定 PDF 来源");
 }
 
+const BG_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".bmp": "image/bmp",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".mkv": "video/x-matroska"
+};
+
+function backgroundMime(name: string): string {
+  return BG_MIME[path.extname(name).toLowerCase()] || "application/octet-stream";
+}
+
+function readUiSettings(): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(paths.uiSettingsPath(), "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeUiSettings(data: unknown): void {
+  try {
+    const file = paths.uiSettingsPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(data ?? {}, null, 2), "utf8");
+  } catch {
+    /* 忽略写失败 */
+  }
+}
+
 function registerIpc(): void {
+  // 用户自选背景：arxiver-bg://bg/<文件名> → <userData>/background/<文件名>
+  // 自己处理 Range（否则视频无法边下边播 / 拖动）。
+  protocol.handle("arxiver-bg", (request) => {
+    const name = path.basename(decodeURIComponent(new URL(request.url).pathname));
+    const file = name ? path.join(paths.backgroundDir(), name) : "";
+    if (!file || !fs.existsSync(file)) {
+      return new Response("Not found", { status: 404 });
+    }
+    const size = fs.statSync(file).size;
+    const type = backgroundMime(name);
+    const match = /bytes=(\d*)-(\d*)/.exec(request.headers.get("range") || "");
+    if (match) {
+      const start = match[1] ? parseInt(match[1], 10) : 0;
+      const end = match[2] ? Math.min(parseInt(match[2], 10), size - 1) : size - 1;
+      if (start >= size || start > end) {
+        return new Response("Range Not Satisfiable", { status: 416, headers: { "content-range": `bytes */${size}` } });
+      }
+      return new Response(Readable.toWeb(fs.createReadStream(file, { start, end })) as ReadableStream, {
+        status: 206,
+        headers: {
+          "content-type": type,
+          "content-length": String(end - start + 1),
+          "content-range": `bytes ${start}-${end}/${size}`,
+          "accept-ranges": "bytes"
+        }
+      });
+    }
+    return new Response(Readable.toWeb(fs.createReadStream(file)) as ReadableStream, {
+      status: 200,
+      headers: { "content-type": type, "content-length": String(size), "accept-ranges": "bytes" }
+    });
+  });
+
+  ipcMain.handle("background:pick", async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      title: "选择背景图片或视频",
+      properties: ["openFile"],
+      filters: [
+        { name: "图片或视频", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "mp4", "webm", "mov", "mkv"] },
+        { name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp"] },
+        { name: "视频", extensions: ["mp4", "webm", "mov", "mkv"] }
+      ]
+    });
+    const source = result.canceled ? "" : result.filePaths[0] || "";
+    if (!source) { return null; }
+    const dir = paths.backgroundDir();
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    const name = "bg" + path.extname(source).toLowerCase();
+    fs.copyFileSync(source, path.join(dir, name));
+    return { name, source };
+  });
+
+  ipcMain.handle("background:clear", () => {
+    fs.rmSync(paths.backgroundDir(), { recursive: true, force: true });
+    return true;
+  });
+
+  // 同步读取：渲染端首屏就要拿到设置（避免启动瞬间按默认值闪一下开屏动画）
+  ipcMain.on("ui-settings:get", (event) => { event.returnValue = readUiSettings(); });
+  ipcMain.handle("ui-settings:get", () => readUiSettings());
+  ipcMain.handle("ui-settings:set", (_event, data: unknown) => { writeUiSettings(data); return true; });
+
   ipcMain.handle("config:get", () => config.get());
   ipcMain.handle("config:set", (_event, patch) => config.update(patch));
   ipcMain.handle("local:status", () => localModel.localModelStatus());
 
-  ipcMain.handle("app:info", () => ({
+  ipcMain.handle("app:info", () => {
+    perf("renderer first IPC (app:info) — React mounted");
+    return {
     version: app.getVersion(),
     engineVersion: paths.engineVersion(),
     platform: process.platform,
     userData: paths.userDataDir(),
     engineDir: paths.engineDir()
-  }));
+    };
+  });
 
   ipcMain.handle("source:pick", async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
@@ -280,6 +436,7 @@ function registerIpc(): void {
   ipcMain.handle("storage:list", () => library.listTranslations());
   ipcMain.handle("library:result", (_event, id: string, cacheKey: string, variant?: string) => storage.readTranslation(id, cacheKey, variant));
   ipcMain.handle("library:blocks", (_event, id: string, cacheKey: string) => storage.readBlocks(id, cacheKey));
+  ipcMain.handle("doc:outline", (_event, id: string) => getOutline(id));
 
   ipcMain.handle("library:state", () => library.list());
   ipcMain.handle("library:add", async (_event, payload: SourcePayload & { type?: string; collections?: string[] }) => {
@@ -313,6 +470,7 @@ function registerIpc(): void {
   ipcMain.handle("library:emptyTrash", () => library.emptyTrash());
   ipcMain.handle("library:addCollection", (_event, name: string, parent?: string | null) => library.addCollection(name, parent ?? null));
   ipcMain.handle("library:removeCollection", (_event, id: string) => library.removeCollection(id));
+  ipcMain.handle("library:setTagColor", (_event, tag: string, color: string) => library.setTagColor(tag, color));
   ipcMain.handle("library:recordOpen", (_event, id: string) => library.recordOpen(id));
   ipcMain.handle("library:addTranslation", (_event, id: string, ref) => library.addTranslation(id, ref));
   ipcMain.handle("library:removeTranslation", (_event, id: string, key: string) => library.removeTranslation(id, key));
@@ -352,6 +510,7 @@ if (!gotLock) {
   app.on("second-instance", showWindow);
 
   app.whenReady().then(() => {
+    perf("app.whenReady");
     if (process.platform === "win32") {
       app.setAppUserModelId("com.sherioccode.arxiver");
     }

@@ -66,8 +66,19 @@ export function configPath(): string {
   return path.join(userDataDir(), "config.json");
 }
 
+// 界面设置（外观/启动等），由主进程同步写文件持久化，避免 localStorage 因渲染端
+// origin（dev 端口）变化或进程被强杀而丢失。
+export function uiSettingsPath(): string {
+  return path.join(userDataDir(), "ui-settings.json");
+}
+
 export function storageDir(): string {
   return path.join(userDataDir(), "storage");
+}
+
+// 用户自选的界面背景（图片/视频），由 arxiver-bg:// 协议提供给渲染端。
+export function backgroundDir(): string {
+  return path.join(userDataDir(), "background");
 }
 
 export function tmpJobsDir(): string {

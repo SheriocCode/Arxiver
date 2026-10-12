@@ -295,18 +295,17 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 .item-type { display: grid; place-items: center; color: var(--muted); }
 .item-row.is-selected .item-type { color: var(--accent); }
 .item-main { min-width: 0; }
-.item-title { font-size: 13.5px; font-weight: 500; color: var(--text); }
+.item-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13.5px; font-weight: 500; color: var(--text); }
 .item-row.is-selected .item-title { color: #eafff8; }
-.item-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.item-tags { display: flex; align-items: center; gap: 4px; overflow: hidden; min-width: 0; }
-.item-tag {
-  flex: 0 1 auto; min-width: 0; display: inline-block; max-width: 110px; padding: 2px 7px; border-radius: 999px;
-  font-size: 11px; line-height: 1.55; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis;
-  background: var(--surface); border: 1px solid var(--border); color: var(--text-2);
+.item-sub { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.item-tags { display: flex; align-items: center; gap: 5px; overflow: hidden; min-width: 0; }
+.tag-dot { flex: none; width: 9px; height: 9px; border-radius: var(--pill); background: var(--faint); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18); }
+.item-tag-more {
+  flex: none; display: inline-grid; place-items: center;
+  min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--pill);
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--muted); font-size: 10px; line-height: 1;
 }
-.item-row.is-selected .item-tag { border-color: var(--accent-soft-2); color: #d8f5ec; }
-.item-tag.is-more { flex: none; color: var(--muted); border-style: dashed; }
 .item-date { font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .item-year { text-align: right; font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .item-flags { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
@@ -861,9 +860,10 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 .reader-overlay .outline-tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
 .reader-overlay .outline-body { flex: 1; min-height: 0; overflow: auto; padding: 6px; }
 .reader-overlay .outline-empty { padding: 16px 12px; color: var(--faint); font-size: 12px; }
+.reader-overlay .outline-note { padding: 6px 10px 8px; margin-bottom: 4px; color: var(--faint); font-size: 11.5px; border-bottom: 1px dashed var(--border); }
 .reader-overlay .toc-item { display: block; width: 100%; text-align: left; height: auto; min-height: 28px; margin-bottom: 2px; padding: 5px 10px; background: transparent; color: var(--text-2); border-radius: var(--radius-sm); font-size: 12.5px; line-height: 1.35; white-space: normal; }
 .reader-overlay .toc-item:hover { background: var(--hover); color: var(--text); }
-.reader-overlay .toc-item.active { background: var(--surface-2); color: var(--text); }
+.reader-overlay .toc-item.active { background: var(--accent-soft); color: var(--text); }
 .reader-overlay .toc-item[disabled] { color: var(--faint); opacity: .7; }
 .reader-overlay .thumb { display: block; width: 100%; height: auto; padding: 4px; margin-bottom: 6px; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); }
 .reader-overlay .thumb canvas { width: 100%; height: auto; display: block; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
@@ -1122,9 +1122,68 @@ body.col-resizing { cursor: col-resize; -webkit-user-select: none; user-select: 
 .ctx-menu button.danger { color: var(--danger); }
 .ctx-menu button.danger:hover { background: var(--danger-soft); }
 
+/* tag color assignment (sidebar tag list) */
+.side-tag-dot { cursor: pointer; }
+.side-tag-dot:hover .tag-dot { box-shadow: 0 0 0 3px var(--accent-soft-2); }
+.tag-palette { min-width: 208px; }
+.tag-palette-head { padding: 2px 6px 8px; font-size: 11px; color: var(--muted); }
+.tag-swatches { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; padding: 0 6px; }
+.tag-swatch {
+  width: 26px; height: 26px; border-radius: var(--radius-sm); cursor: pointer;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+}
+.tag-swatch.is-on { box-shadow: 0 0 0 2px var(--text); }
+.tag-palette-custom {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 10px; padding: 0 6px; font-size: 12.5px; color: var(--text-2);
+}
+.tag-palette-custom input[type="color"] {
+  width: 48px; height: 26px; padding: 0; cursor: pointer;
+  background: transparent; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+}
+.tag-palette-clear {
+  margin-top: 8px; width: 100%; padding: 7px 8px; border-radius: var(--radius-sm);
+  background: transparent; border: 0; color: var(--text-2); font-size: 12.5px; cursor: pointer; text-align: left;
+}
+.tag-palette-clear:hover { background: var(--hover); color: var(--text); }
+
 /* stacking: modals above the in-app PDF reader */
 .reader-overlay { z-index: 10; }
 .modal-root { z-index: 200; }
+
+/* 启动动画：App 窗口内的遮罩层（z 高于一切 UI），放完视频淡出 */
+.splash-screen {
+  position: fixed; inset: 0; z-index: 1000;
+  display: grid; place-items: center;
+  background: #0b0b0b; cursor: pointer;
+  transition: opacity 0.4s var(--ease);
+}
+.splash-screen.is-fading { opacity: 0; }
+/* 居中，占窗口约 75%（宽 75%；高度也封顶 75%，用 object-fit 保持视频比例） */
+.splash-screen video { width: 75%; height: 75%; object-fit: contain; }
+.splash-skip {
+  position: absolute; right: 14px; bottom: 12px;
+  font-size: 11px; letter-spacing: 0.04em; color: rgba(255, 255, 255, 0.32);
+}
+
+/* ===== 用户自选的界面背景（图片 / 视频）===== */
+.app-bg { position: fixed; inset: 0; z-index: -1; overflow: hidden; background: #0b0b0b; }
+.app-bg-media { display: block; width: 100%; height: 100%; object-fit: cover; opacity: var(--bg-opacity, 0.9); }
+/* 轻微压暗，保证前景文字可读 */
+.app-bg::after { content: ""; position: absolute; inset: 0; background: rgba(0, 0, 0, 0.3); }
+
+/* 启用背景时让各面板半透明，露出后面的图片/视频 */
+html.has-bg, html.has-bg body { background: transparent !important; }
+html.has-bg .window { background: transparent; }
+html.has-bg .titlebar { background: color-mix(in srgb, var(--bg-rail) 55%, transparent); }
+html.has-bg .sidebar { background: color-mix(in srgb, var(--bg-panel) 74%, transparent); }
+html.has-bg .list-pane { background: color-mix(in srgb, var(--bg) 68%, transparent); }
+html.has-bg .detail { background: color-mix(in srgb, var(--bg-panel) 74%, transparent); }
+html.has-bg .list-scroll .col-head { background: color-mix(in srgb, var(--bg) 72%, transparent); }
+html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, transparent); }
+
+.set-inline { display: flex; align-items: center; gap: 8px; }
+.set-range { width: 190px; accent-color: var(--accent); cursor: pointer; }
 
 /* ---- AI agent ---- */
 .reader-overlay .sel-ask {

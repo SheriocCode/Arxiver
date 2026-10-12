@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type JSX,
 import type { LibraryDoc } from "../../../shared/types";
 import { Icon } from "./Icons";
 import type { LibraryApi } from "../state/useLibrary";
+import { tagColor } from "../state/tagColors";
 
 function arxivId(url: string): string {
   const m = /arxiv\.org\/(?:abs|pdf)\/([^?#\s]+?)(?:v\d+)?(?:\.pdf)?$/i.exec(String(url || ""));
@@ -50,6 +51,9 @@ export default function ListPane({
   }, [menu]);
 
   const gridTemplate = `24px ${cols.title}px ${cols.tags}px ${cols.year}px ${cols.added}px ${cols.modified}px 44px minmax(0, 1fr)`;
+  // how many tag dots fit in the (resizable) tags column; the rest collapse into a
+  // trailing "+N" pill (9px dot + 5px gap = 14px each, plus room for the pill)
+  const maxDots = Math.max(1, Math.floor((cols.tags - 24) / 14));
 
   const startResize = useCallback((key: keyof typeof DEFAULT_COLS, e: React.MouseEvent) => {
     dragging.current = key;
@@ -154,6 +158,7 @@ export default function ListPane({
               lib={lib}
               isTrash={isTrash}
               showUnread={showUnread}
+              maxDots={maxDots}
               onOpen={() => onOpenDoc(doc.id)}
               onContext={(e) => setMenu({ x: e.clientX, y: e.clientY, doc })}
             />
@@ -196,16 +201,17 @@ function ResizeHandle({ onStart }: { onStart: (e: ReactMouseEvent) => void }): J
   );
 }
 
-function Row({ doc, lib, isTrash, showUnread, onOpen, onContext }: {
+function Row({ doc, lib, isTrash, showUnread, maxDots, onOpen, onContext }: {
   doc: LibraryDoc;
   lib: LibraryApi;
   isTrash: boolean;
   showUnread: boolean;
+  maxDots: number;
   onOpen: () => void;
   onContext: (e: ReactMouseEvent) => void;
 }): JSX.Element {
   const tags = doc.tags || [];
-  const shown = tags.slice(0, 3);
+  const shown = tags.slice(0, maxDots);
   const extra = tags.length - shown.length;
   const sub = [doc.venue, doc.authors].filter(Boolean).join(" · ");
   const selected = lib.selectedIds.includes(doc.id);
@@ -223,9 +229,9 @@ function Row({ doc, lib, isTrash, showUnread, onOpen, onContext }: {
         <span className="item-title">{doc.title}</span>
         {sub && <span className="item-sub">{sub}</span>}
       </span>
-      <span className="item-tags">
-        {shown.map((t) => <span key={t} className="item-tag" title={tags.join(", ")}>{t}</span>)}
-        {extra > 0 && <span className="item-tag is-more" title={tags.join(", ")}>+{extra}</span>}
+      <span className="item-tags" title={tags.length ? tags.join(", ") : undefined}>
+        {shown.map((t) => <span key={t} className="tag-dot" style={{ background: tagColor(lib.tagColors[t]) }} />)}
+        {extra > 0 && <span className="item-tag-more" title={tags.join(", ")}>+{extra}</span>}
       </span>
       <span className="item-year">{doc.year || ""}</span>
       <span className="item-date col-added">{fmtDate(doc.added_at)}</span>

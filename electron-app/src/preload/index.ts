@@ -26,6 +26,7 @@ const api = {
 
   readTranslation: (id: string, cacheKey: string, variant?: string) => ipcRenderer.invoke("library:result", id, cacheKey, variant),
   readBlocks: (id: string, cacheKey: string) => ipcRenderer.invoke("library:blocks", id, cacheKey),
+  docOutline: (id: string) => ipcRenderer.invoke("doc:outline", id),
   listStorage: () => ipcRenderer.invoke("storage:list"),
 
   libraryState: () => ipcRenderer.invoke("library:state"),
@@ -37,11 +38,19 @@ const api = {
   libraryEmptyTrash: () => ipcRenderer.invoke("library:emptyTrash"),
   libraryAddCollection: (name: string, parent?: string | null) => ipcRenderer.invoke("library:addCollection", name, parent ?? null),
   libraryRemoveCollection: (id: string) => ipcRenderer.invoke("library:removeCollection", id),
+  librarySetTagColor: (tag: string, color: string) => ipcRenderer.invoke("library:setTagColor", tag, color),
   libraryRecordOpen: (id: string) => ipcRenderer.invoke("library:recordOpen", id),
   libraryOpen: (id: string) => ipcRenderer.invoke("library:open", id),
   libraryReveal: (id: string) => ipcRenderer.invoke("library:reveal", id),
   libraryAddTranslation: (id: string, ref: unknown) => ipcRenderer.invoke("library:addTranslation", id, ref),
   libraryRemoveTranslation: (id: string, key: string) => ipcRenderer.invoke("library:removeTranslation", id, key),
+
+  backgroundPick: () => ipcRenderer.invoke("background:pick"),
+  backgroundClear: () => ipcRenderer.invoke("background:clear"),
+
+  uiSettingsGet: () => ipcRenderer.invoke("ui-settings:get"),
+  uiSettingsGetSync: () => ipcRenderer.sendSync("ui-settings:get"),
+  uiSettingsSet: (data: unknown) => ipcRenderer.invoke("ui-settings:set", data),
 
   openPath: (target: string) => ipcRenderer.invoke("shell:open", target),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),

@@ -61,6 +61,9 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const [pages, setPages] = useState("");
   const [panel, setPanel] = useState<"toc" | "thumbs" | null>(null);
   const [outline, setOutline] = useState<{ title: string; page: number; level: number; anchor: number }[]>([]);
+  const [outlineLoading, setOutlineLoading] = useState(false);
+  const [outlineGenerating, setOutlineGenerating] = useState(false);
+  const [outlineGenerated, setOutlineGenerated] = useState(false);
   const thumbRefs = useRef<(HTMLCanvasElement | null)[]>([]);
   const [theme, setTheme] = useState<PageTheme>("original");
   const [themeOpen, setThemeOpen] = useState(false);
@@ -275,9 +278,16 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   useEffect(() => {
     if (panel !== "toc") { return; }
     let cancelled = false;
+    setOutlineLoading(true);
+    setOutlineGenerating(false);
+    setOutlineGenerated(false);
     (async () => {
-      const items = await engineRef.current?.outline();
-      if (!cancelled) { setOutline(items || []); }
+      const res = await engineRef.current?.outline(() => { if (!cancelled) { setOutlineGenerating(true); } });
+      if (cancelled) { return; }
+      setOutline(res?.items || []);
+      setOutlineGenerated(!!res?.generated);
+      setOutlineGenerating(false);
+      setOutlineLoading(false);
     })();
     return () => { cancelled = true; };
   }, [panel, status?.numPages]);
@@ -311,12 +321,21 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const numPages = s?.numPages || 0;
   const curTocPage = s?.displayPage ?? -1;
   const curTocFrac = s?.scrollFraction ?? 0;
+  // active = the entry closest before the viewport, by (page, anchor); outline order
+  // does not match anchor order within a page, so we cannot rely on the last match.
+  // tolerance stays tiny so a heading is not "passed" by a heading just below it
+  const ANCHOR_EPS = 0.005;
   let tocActive = -1;
+  let bestPage = -Infinity;
+  let bestAnchor = -Infinity;
   for (let i = 0; i < outline.length; i++) {
     const e = outline[i];
-    if (!e.page) { continue; }
-    if (e.page < curTocPage || (e.page === curTocPage && e.anchor <= curTocFrac + 0.03)) { tocActive = i; }
-    else if (e.page > curTocPage) { break; }
+    if (!e.page || e.page > curTocPage) { continue; }
+    if (e.page < curTocPage || e.anchor <= curTocFrac + ANCHOR_EPS) {
+      if (e.page > bestPage || (e.page === bestPage && e.anchor > bestAnchor)) {
+        tocActive = i; bestPage = e.page; bestAnchor = e.anchor;
+      }
+    }
   }
   const pct = s?.phase === "done" ? 100 : (s?.progress || 0);
   const showOverlay = !!s && s.phase === "error";
@@ -492,21 +511,28 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
             </div>
             <div className="outline-body">
               {panel === "toc"
-                ? (outline.length === 0
-                  ? <div className="outline-empty">无目录</div>
-                  : outline.map((it, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      className={"toc-item" + (i === tocActive ? " active" : "")}
-                      style={{ paddingLeft: 12 + it.level * 14 }}
-                      disabled={!it.page}
-                      title={it.title}
-                      onClick={() => { if (it.page) { engineRef.current?.goToDest(it.page, it.anchor); } }}
-                    >
-                      {it.title}
-                    </button>
-                  )))
+                ? (outlineLoading
+                  ? <div className="outline-empty">{outlineGenerating ? "原pdf无目录，正在生成目录…" : "正在读取目录…"}</div>
+                  : outline.length === 0
+                    ? <div className="outline-empty">无目录</div>
+                    : (
+                      <>
+                        {outlineGenerated && <div className="outline-note">原 PDF 无书签，目录为自动生成</div>}
+                        {outline.map((it, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            className={"toc-item" + (i === tocActive ? " active" : "")}
+                            style={{ paddingLeft: 12 + it.level * 14 }}
+                            disabled={!it.page}
+                            title={it.title}
+                            onClick={() => { if (it.page) { engineRef.current?.goToDest(it.page, it.anchor); } }}
+                          >
+                            {it.title}
+                          </button>
+                        ))}
+                      </>
+                    ))
                 : Array.from({ length: s?.numPages || 0 }, (_, i) => i + 1).map((p) => (
                   <button key={p} type="button" className={"thumb" + (p === (s?.displayPage ?? -1) ? " active" : "")} onClick={() => engineRef.current?.goToNumberedPage(p)}>
                     <canvas ref={(el) => { thumbRefs.current[p - 1] = el; }} />

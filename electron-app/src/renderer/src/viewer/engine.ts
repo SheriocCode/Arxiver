@@ -111,6 +111,9 @@ export class ViewerEngine {
   private layout: Layout = "double";
   private blockPrefs = { translating: true, viewing: true };
   private totalPages = 0;
+  // scrollTop we set ourselves during a jump; the matching scroll event must not
+  // overwrite the requested page (in double-page layout it is only the left page)
+  private expectedScrollTop = -1;
   private buildGen = 0;
 
   private status: ViewerStatus;
@@ -369,6 +372,10 @@ export class ViewerEngine {
 
   private updateCurrentPage(): void {
     if (!this.rows.length) { return; }
+    if (this.expectedScrollTop >= 0) {
+      if (Math.abs(this.root.scrollTop - this.expectedScrollTop) < 2) { return; }
+      this.expectedScrollTop = -1;
+    }
     const top = this.root.scrollTop + 4;
     let idx = 0;
     for (let i = 0; i < this.rows.length; i++) { idx = i; if (this.rows[i].offsetTop + this.rows[i].offsetHeight > top) { break; } }
@@ -385,23 +392,32 @@ export class ViewerEngine {
     if (!this.rows.length) { return; }
     const i = Math.max(0, Math.min(this.rows.length - 1, row));
     this.root.scrollTop = Math.max(0, this.rows[i].offsetTop - 12);
+    this.expectedScrollTop = this.root.scrollTop;
     this.currentPageIndex = i;
-    this.emit({ displayPage: this.rowFirstPage[i] || i + 1 });
+    this.emit({ displayPage: this.rowFirstPage[i] || i + 1, scrollFraction: 0 });
   }
 
   goToDest(page: number, anchor: number): void {
     if (!this.rows.length || page < 1) { return; }
-    const row = Math.floor((page - 1) / this.perRow());
-    const i = Math.max(0, Math.min(this.rows.length - 1, row));
+    const i = Math.max(0, Math.min(this.rows.length - 1, Math.floor((page - 1) / this.perRow())));
     const rowEl = this.rows[i];
-    const offset = rowEl.offsetHeight * Math.max(0, Math.min(1, anchor || 0));
-    this.root.scrollTop = Math.max(0, rowEl.offsetTop + offset);
+    const frac = Math.max(0, Math.min(1, anchor || 0));
+    this.root.scrollTop = Math.max(0, rowEl.offsetTop + rowEl.offsetHeight * frac);
+    this.expectedScrollTop = this.root.scrollTop;
     this.currentPageIndex = i;
-    this.emit({ displayPage: this.rowFirstPage[i] || page });
+    // report the exact target page (in double-page layout rowFirstPage is only the left page)
+    this.emit({ displayPage: page, scrollFraction: frac });
   }
   nextPage(): void { this.goToPage(this.currentPageIndex + 1); }
   prevPage(): void { this.goToPage(this.currentPageIndex - 1); }
-  goToNumberedPage(n: number): void { this.goToPage(Math.floor((n - 1) / this.perRow())); }
+  goToNumberedPage(n: number): void {
+    if (!this.rows.length) { return; }
+    const i = Math.max(0, Math.min(this.rows.length - 1, Math.floor((n - 1) / this.perRow())));
+    this.root.scrollTop = Math.max(0, this.rows[i].offsetTop - 12);
+    this.expectedScrollTop = this.root.scrollTop;
+    this.currentPageIndex = i;
+    this.emit({ displayPage: n, scrollFraction: 0 });
+  }
 
   private applyZoom(z: number): void {
     const sx = this.root.scrollWidth ? (this.root.scrollLeft + this.root.clientWidth / 2) / this.root.scrollWidth : 0.5;
@@ -651,12 +667,11 @@ export class ViewerEngine {
     this.emit({ hasTranslation: true, view: this.view, layout: this.layout, phase: "done" });
   }
 
-  async outline(): Promise<{ title: string; page: number; level: number; anchor: number }[]> {
+  async outline(onGenerating?: () => void): Promise<{ items: { title: string; page: number; level: number; anchor: number }[]; generated: boolean }> {
     const out: { title: string; page: number; level: number; anchor: number }[] = [];
-    if (!this.leftDoc) { return out; }
+    if (!this.leftDoc) { return { items: out, generated: false }; }
     let raw: any[] | null = null;
     try { raw = await this.leftDoc.getOutline(); } catch { raw = null; }
-    if (!raw) { return out; }
     const walk = async (items: any[], level: number): Promise<void> => {
       for (const item of items) {
         let page = 0, anchor = 0;
@@ -678,8 +693,22 @@ export class ViewerEngine {
         if (Array.isArray(item.items) && item.items.length) { await walk(item.items, level + 1); }
       }
     };
-    await walk(raw, 0);
-    return out;
+    if (raw) { await walk(raw, 0); }
+    // No embedded bookmarks: fall back to a generated outline (engine-side heuristic).
+    if (!out.length && this.docId) {
+      onGenerating?.();
+      try {
+        const res = await window.api.docOutline(this.docId);
+        for (const it of res.items || []) {
+          out.push({
+            title: it.title, page: it.page, level: Math.max(0, (it.level || 1) - 1),
+            anchor: typeof it.anchor === "number" ? it.anchor : 0
+          });
+        }
+        return { items: out, generated: res.source === "heuristic" && out.length > 0 };
+      } catch { /* ignore */ }
+    }
+    return { items: out, generated: false };
   }
 
   async renderThumbnail(page: number, canvas: HTMLCanvasElement): Promise<void> {

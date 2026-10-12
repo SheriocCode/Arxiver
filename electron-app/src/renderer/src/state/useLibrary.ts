@@ -30,6 +30,7 @@ export function useLibrary() {
   const [documents, setDocuments] = useState<LibraryDoc[]>([]);
   const [collections, setCollections] = useState<LibraryCollection[]>([]);
   const [history, setHistory] = useState<ReadingRecord[]>([]);
+  const [tagColors, setTagColors] = useState<Record<string, string>>({});
 
   const [section, setSection] = useState<Section>("collections");
   const [collId, setCollId] = useState<string>("all");
@@ -46,6 +47,7 @@ export function useLibrary() {
     setDocuments(data.documents);
     setCollections(data.collections);
     setHistory(data.history);
+    setTagColors(data.tag_colors || {});
     setSelectedIds((prev) => {
       const ids = new Set(data.documents.map((d) => d.id));
       const kept = prev.filter((id) => ids.has(id));
@@ -149,18 +151,27 @@ export function useLibrary() {
     await refresh();
   }, [refresh]);
 
+  const setTagColor = useCallback(async (name: string, color: string) => {
+    setTagColors((prev) => {
+      const next = { ...prev };
+      if (color) { next[name] = color; } else { delete next[name]; }
+      return next;
+    });
+    await window.api.librarySetTagColor(name, color);
+  }, []);
+
   const recordOpen = useCallback(async (id: string) => {
     await window.api.libraryRecordOpen(id);
     setHistory((prev) => [{ itemId: id, at: Date.now() / 1000 }, ...prev.filter((r) => r.itemId !== id)].slice(0, 500));
   }, []);
 
   return {
-    documents, collections, history, live, trashed,
+    documents, collections, history, live, trashed, tagColors,
     section, collId, tag, filter, query, sort, selectedIds, tab, editMode,
     scoped, visible, tagCounts, selected, selectedId,
     setSection, setCollId, setTag, setFilter, setQuery, setSort, setTab, setEditMode,
     select, clearSelection, update, setTrash, purge, emptyTrash, addCollection, removeCollection,
-    recordOpen, countFor, itemsForCollection, refresh
+    setTagColor, recordOpen, countFor, itemsForCollection, refresh
   };
 }
 

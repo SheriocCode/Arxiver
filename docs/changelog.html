@@ -33,6 +33,18 @@
 
 <p>全部版本见 <a href="https://github.com/SheriocCode/Arxiver/releases">GitHub Releases</a>。</p>
 
+<h2 id="v0802026-10-12">v0.8.0（2026-10-12）</h2>
+
+<ul>
+  <li><strong>多标签页阅读器</strong>：每个文档独立渲染，切换标签不再重建 PDF、无闪烁；翻译在后台继续，任务按文档独立排队与取消。</li>
+  <li><strong>文献列表重做</strong>：标签改为可配色的<strong>彩色圆点</strong>（10 个预设 + 任意色轮取色，超出显示 <code class="language-plaintext highlighter-rouge">+N</code>）；标题单行省略，不再换行。</li>
+  <li><strong>无书签 PDF 自动生成目录</strong>：离线启发式按字号 / 加粗 / 编号 / 章节名识别标题，面板标注「自动生成」，结果缓存。</li>
+  <li><strong>启动动画与自定义界面背景</strong>：开屏动画可开关；界面背景支持图片 / 视频（视频静音循环），并提供不透明度滑块。</li>
+  <li><strong>块框显示拆分</strong>：分别控制「翻译时」与「查看译文时」是否标出文本块。</li>
+  <li><strong>修复</strong>：目录点击错跳 / 多条目同时高亮 / 点击无反应；启动瞬间「整屏灰色 + 左上角黑块」；界面设置偶发丢失（改存本地 <code class="language-plaintext highlighter-rouge">ui-settings.json</code>，同步落盘）。</li>
+  <li>⚠️ <strong>升级须知</strong>：界面设置不再读取旧的浏览器存储，升级后外观 / 启动选项会回到默认值，请重新设置一次；<strong>文库、笔记、已有译文与标签不受影响</strong>。</li>
+</ul>
+
 <h2 id="v0702026-10-11">v0.7.0（2026-10-11）</h2>
 
 <ul>

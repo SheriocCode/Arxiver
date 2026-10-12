@@ -89,6 +89,20 @@ export interface BlockEvent {
   dst: string;
 }
 
+export interface OutlineItem {
+  level: number;
+  title: string;
+  page: number;
+  // vertical position within the page (0 = top); generated outlines set this so
+  // headings sharing a page stay distinguishable
+  anchor?: number;
+}
+
+export interface DocOutline {
+  source: "bookmarks" | "heuristic" | "none" | "error";
+  items: OutlineItem[];
+}
+
 export interface AgentChatRequest {
   scope: "paper" | "library";
   docId?: string;
@@ -218,6 +232,8 @@ export interface LibraryState {
   documents: LibraryDoc[];
   collections: LibraryCollection[];
   history: ReadingRecord[];
+  // tag name -> palette key (see renderer state/tagColors.ts); absent = no color
+  tag_colors: Record<string, string>;
 }
 
 export interface AppInfo {
@@ -250,6 +266,7 @@ export interface Api {
   getPartial(id: string, variant?: string): Promise<Uint8Array | null>;
   readTranslation(id: string, cacheKey: string, variant?: string): Promise<Uint8Array | null>;
   readBlocks(id: string, cacheKey: string): Promise<BlockEvent[]>;
+  docOutline(id: string): Promise<DocOutline>;
   saveResult(id: string, variant?: string): Promise<string | null>;
   listStorage(): Promise<{ entries: StorageEntry[]; total: number }>;
   libraryState(): Promise<LibraryState>;
@@ -264,11 +281,17 @@ export interface Api {
   libraryEmptyTrash(): Promise<number>;
   libraryAddCollection(name: string, parent?: string | null): Promise<LibraryCollection>;
   libraryRemoveCollection(id: string): Promise<boolean>;
+  librarySetTagColor(tag: string, color: string): Promise<void>;
   libraryRecordOpen(id: string): Promise<void>;
   libraryOpen(id: string): Promise<{ bytes: Uint8Array | null; name: string; sourceUrl: string }>;
   libraryReveal(id: string): Promise<boolean>;
   libraryAddTranslation(id: string, ref: TranslationRef): Promise<LibraryDoc | null>;
   libraryRemoveTranslation(id: string, cacheKey: string): Promise<LibraryDoc | null>;
+  backgroundPick(): Promise<{ name: string; source: string } | null>;
+  backgroundClear(): Promise<boolean>;
+  uiSettingsGet(): Promise<Record<string, unknown>>;
+  uiSettingsGetSync(): Record<string, unknown>;
+  uiSettingsSet(data: unknown): Promise<boolean>;
   openPath(target: string): Promise<string>;
   openExternal(url: string): Promise<void>;
   hideWindow(): Promise<void>;

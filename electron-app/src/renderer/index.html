@@ -4,10 +4,12 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: data:;"
+      content="default-src 'self'; img-src 'self' data: blob: arxiver-bg:; media-src 'self' blob: arxiver-bg:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: data: arxiver-bg:;"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Arxiver</title>
+    <!-- 首帧还没应用样式前也保持深色，避免启动时闪白/闪灰 -->
+    <style>html, body { margin: 0; background: #0b0b0b; }</style>
   </head>
   <body>
     <div id="root"></div>

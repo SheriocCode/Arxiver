@@ -1,7 +1,8 @@
-import type { JSX } from "react";
+import { useEffect, useState, type JSX } from "react";
 import { Icon } from "./Icons";
 import type { LibraryApi } from "../state/useLibrary";
 import { PSEUDO } from "../state/useLibrary";
+import { TAG_PRESETS, tagColor } from "../state/tagColors";
 
 const LOG_CATS = [
   { id: "tlog", name: "翻译日志", icon: "log" },
@@ -85,6 +86,15 @@ function LibraryTree({ lib, showCounts }: { lib: LibraryApi; showCounts: boolean
   const tags = Object.keys(lib.tagCounts).sort();
   const parents = lib.collections.filter((c) => !c.parent);
   const Count = ({ n }: { n: number }) => showCounts ? <span className="side-item-count">{n}</span> : <span />;
+  const [palette, setPalette] = useState<{ x: number; y: number; tag: string } | null>(null);
+
+  useEffect(() => {
+    if (!palette) { return; }
+    const close = (): void => setPalette(null);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [palette]);
+
   return (
     <>
       <div className="side-group">
@@ -161,7 +171,13 @@ function LibraryTree({ lib, showCounts }: { lib: LibraryApi; showCounts: boolean
                   className={"side-item" + (lib.tag === t ? " is-active" : "")}
                   onClick={() => { lib.setTag(t); lib.setCollId("all"); }}
                 >
-                  <span className="side-item-icon"><Icon name="tag" small /></span>
+                  <span
+                    className="side-item-icon side-tag-dot"
+                    title="设置颜色"
+                    onClick={(e) => { e.stopPropagation(); setPalette({ x: e.clientX, y: e.clientY, tag: t }); }}
+                  >
+                    <span className="tag-dot" style={{ background: tagColor(lib.tagColors[t]) }} />
+                  </span>
                   <span className="side-item-name">{t}</span>
                   <Count n={lib.tagCounts[t]} />
                 </button>
@@ -170,6 +186,32 @@ function LibraryTree({ lib, showCounts }: { lib: LibraryApi; showCounts: boolean
           </div>
         </div>
       </div>
+
+      {palette && (
+        <div className="ctx-menu tag-palette" style={{ left: palette.x, top: palette.y }} onMouseDown={(e) => e.stopPropagation()}>
+          <div className="tag-palette-head">标签颜色 · {palette.tag}</div>
+          <div className="tag-swatches">
+            {TAG_PRESETS.map((c) => (
+              <button
+                key={c}
+                className={"tag-swatch" + (lib.tagColors[palette.tag] === c ? " is-on" : "")}
+                style={{ background: c }}
+                title={c}
+                onClick={() => { void lib.setTagColor(palette.tag, c); setPalette(null); }}
+              />
+            ))}
+          </div>
+          <label className="tag-palette-custom">
+            <span>自定义颜色</span>
+            <input
+              type="color"
+              value={lib.tagColors[palette.tag]?.startsWith("#") ? lib.tagColors[palette.tag] : "#8a8a8a"}
+              onChange={(e) => { void lib.setTagColor(palette.tag, e.target.value); }}
+            />
+          </label>
+          <button className="tag-palette-clear" onClick={() => { void lib.setTagColor(palette.tag, ""); setPalette(null); }}>清除颜色</button>
+        </div>
+      )}
     </>
   );
 }
