@@ -3,6 +3,7 @@ import type { AppConfig, AppInfo, LocalModelStatus, UpdateStatus } from "../../.
 import { Icon } from "./Icons";
 import { LANGS } from "../lib/langs";
 import { ACCENTS, type AppSettings } from "../state/settings";
+import { Markdown } from "../lib/markdown";
 
 const SECTIONS = [
   { id: "model", name: "翻译引擎", icon: "settings" },
@@ -21,7 +22,8 @@ export default function SettingsView({
   settings,
   updateSettings,
   onSaved,
-  onClose
+  onClose,
+  initialSection
 }: {
   config: AppConfig | null;
   info: AppInfo | null;
@@ -29,8 +31,9 @@ export default function SettingsView({
   updateSettings: (patch: Partial<AppSettings>) => void;
   onSaved: (c: AppConfig) => void;
   onClose: () => void;
+  initialSection?: string;
 }): JSX.Element {
-  const [section, setSection] = useState("model");
+  const [section, setSection] = useState(initialSection || "model");
   const [form, setForm] = useState<Partial<AppConfig>>({});
   const [hint, setHint] = useState("");
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
@@ -225,15 +228,18 @@ export default function SettingsView({
                     </div>
                   </Row>
                   <Row label="背景不透明度" desc="调低可压暗背景，让前景文字更清晰">
-                    <input
-                      className="set-range"
-                      type="range"
-                      min={10}
-                      max={100}
-                      step={5}
-                      value={Math.round(settings.backgroundOpacity * 100)}
-                      onChange={(e) => updateSettings({ backgroundOpacity: parseInt(e.target.value, 10) / 100 })}
-                    />
+                    <div className="set-inline">
+                      <input
+                        className="set-range"
+                        type="range"
+                        min={10}
+                        max={100}
+                        step={1}
+                        value={Math.round(settings.backgroundOpacity * 100)}
+                        onChange={(e) => updateSettings({ backgroundOpacity: parseInt(e.target.value, 10) / 100 })}
+                      />
+                      <span className="set-range-val">{Math.round(settings.backgroundOpacity * 100)}%</span>
+                    </div>
                   </Row>
                 </Group>
               </>
@@ -318,6 +324,12 @@ export default function SettingsView({
                     <button className="btn" onClick={() => { void window.api.checkUpdate(); }}>检查更新</button>
                   )}
                 </div>
+                {update?.notes && (
+                  <div className="about-notes">
+                    <div className="about-notes-title">更新内容{update.version ? ` · v${update.version}` : ""}</div>
+                    <Markdown text={update.notes} onCite={() => undefined} />
+                  </div>
+                )}
               </Group>
             )}
           </div>

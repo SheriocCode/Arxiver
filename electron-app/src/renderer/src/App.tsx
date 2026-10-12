@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
-import type { AppConfig, AppInfo } from "../../shared/types";
+import type { AppConfig, AppInfo, UpdateStatus } from "../../shared/types";
 import { IconDefs, Icon } from "./components/Icons";
 import AppBackground from "./components/AppBackground";
 import TitleBar from "./components/TitleBar";
@@ -22,6 +22,15 @@ interface OpenDoc {
   activeKey: string;
 }
 
+// 右上角的更新提示：仅在"有新版本 / 正在下载 / 已就绪"时出现
+function updateBadge(u: UpdateStatus | null): { label: string; state: string } | null {
+  if (!u) { return null; }
+  if (u.state === "available") { return { label: "有新的更新", state: "available" }; }
+  if (u.state === "downloading") { return { label: `正在下载更新 ${u.percent ?? 0}%`, state: "downloading" }; }
+  if (u.state === "ready") { return { label: "更新已就绪", state: "ready" }; }
+  return null;
+}
+
 export default function App(): JSX.Element {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -30,6 +39,8 @@ export default function App(): JSX.Element {
   const [activeDocId, setActiveDocId] = useState("");
   const [aiSelection, setAiSelection] = useState<{ text: string; page: number } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState("model");
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -78,6 +89,19 @@ export default function App(): JSX.Element {
       setInfo(await window.api.appInfo());
     })();
   }, []);
+
+  // 更新状态：主进程在启动后静默检查一次，这里只做展示（右上角提示 + 设置-关于）
+  useEffect(() => {
+    void window.api.getUpdateStatus().then(setUpdate);
+    return window.api.onUpdateStatus((s) => setUpdate(s));
+  }, []);
+
+  const openSettings = useCallback((section = "model"): void => {
+    setSettingsSection(section);
+    setSettingsOpen(true);
+  }, []);
+
+  const badge = updateBadge(update);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--detail-w", detailOpen ? "372px" : "0px");
@@ -258,7 +282,9 @@ export default function App(): JSX.Element {
           onForward={goForward}
           onToggleSidebar={toggleSidebar}
           onNavigate={navigate}
-          onSettings={() => setSettingsOpen(true)}
+          onSettings={() => openSettings()}
+          update={badge}
+          onUpdate={() => openSettings("about")}
         />
         <div className={"app" + (detailOpen ? " detail-open" : "") + (sidebarCollapsed ? " sidebar-collapsed" : "")}>
           <Rail section={lib.section} onChange={navigate} onSettings={() => setSettingsOpen(true)} />
@@ -369,6 +395,7 @@ export default function App(): JSX.Element {
           updateSettings={updateSettings}
           onSaved={setConfig}
           onClose={() => setSettingsOpen(false)}
+          initialSection={settingsSection}
         />
       )}
 

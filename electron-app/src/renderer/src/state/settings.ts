@@ -45,7 +45,7 @@ const DEFAULTS: AppSettings = {
   autoSummary: false,
   autoSync: true,
   showBlocksTranslating: true,
-  showBlocksTranslation: true,
+  showBlocksTranslation: false,
   splashEnabled: true,
   backgroundEnabled: false,
   backgroundFile: "",

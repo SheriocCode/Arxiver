@@ -17,7 +17,9 @@ export default function TitleBar({
   onForward,
   onToggleSidebar,
   onNavigate,
-  onSettings
+  onSettings,
+  update,
+  onUpdate
 }: {
   section: Section;
   canBack: boolean;
@@ -27,6 +29,8 @@ export default function TitleBar({
   onToggleSidebar: () => void;
   onNavigate: (s: Section) => void;
   onSettings: () => void;
+  update?: { label: string; state: string } | null;
+  onUpdate?: () => void;
 }): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -63,6 +67,11 @@ export default function TitleBar({
         </div>
       </div>
       <div className="titlebar-drag" />
+      {update && (
+        <button className={"tb-update " + update.state} title="打开更新设置" onClick={onUpdate}>
+          <Icon name="arrow-up" small /> {update.label}
+        </button>
+      )}
     </div>
   );
 }

@@ -139,6 +139,8 @@ export interface UpdateStatus {
   version?: string;
   percent?: number;
   error?: string;
+  /** 该版本的更新日志（来自 latest.yml 的 releaseNotes） */
+  notes?: string;
 }
 
 export interface Conversation {

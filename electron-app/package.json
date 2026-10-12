@@ -63,6 +63,9 @@
     ],
     "electronDownload": {
       "isVerifyChecksum": false
+    },
+    "releaseInfo": {
+      "releaseNotesFile": "../RELEASE_NOTES.md"
     }
   },
   "dependencies": {

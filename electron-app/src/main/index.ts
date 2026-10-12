@@ -315,13 +315,14 @@ function registerIpc(): void {
           "content-type": type,
           "content-length": String(end - start + 1),
           "content-range": `bytes ${start}-${end}/${size}`,
-          "accept-ranges": "bytes"
+          "accept-ranges": "bytes",
+          "cache-control": "no-store"
         }
       });
     }
     return new Response(Readable.toWeb(fs.createReadStream(file)) as ReadableStream, {
       status: 200,
-      headers: { "content-type": type, "content-length": String(size), "accept-ranges": "bytes" }
+      headers: { "content-type": type, "content-length": String(size), "accept-ranges": "bytes", "cache-control": "no-store" }
     });
   });
 
@@ -340,7 +341,7 @@ function registerIpc(): void {
     const dir = paths.backgroundDir();
     fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(dir, { recursive: true });
-    const name = "bg" + path.extname(source).toLowerCase();
+    const name = "bg-" + Date.now() + path.extname(source).toLowerCase();
     fs.copyFileSync(source, path.join(dir, name));
     return { name, source };
   });

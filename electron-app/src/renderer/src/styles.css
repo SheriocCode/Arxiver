@@ -1075,6 +1075,18 @@ html, body { background: var(--bg-panel) !important; }
 .tb-viewtab { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 12px; border-radius: 8px; color: var(--muted); font-size: 12.5px; background: transparent; border: 0; cursor: pointer; white-space: nowrap; }
 .tb-viewtab:hover { color: var(--text); }
 .tb-viewtab.active { color: var(--text); background: var(--surface); }
+
+/* 顶栏右上角的更新提示（有新版本 / 下载中 / 已就绪时出现） */
+.tb-update {
+  -webkit-app-region: no-drag;
+  flex: none; display: inline-flex; align-items: center; gap: 5px;
+  height: 24px; padding: 0 9px; margin-right: 10px; border-radius: 6px;
+  border: 0; cursor: pointer; white-space: nowrap; font-size: 12px; font-weight: 500;
+  color: var(--text); background: var(--accent-soft);
+}
+.tb-update:hover { background: var(--accent-soft-2); }
+.tb-update.ready { background: var(--accent); color: #fff; }
+.tb-update.ready:hover { background: var(--accent-strong); }
 .window .app .main-body .reader-overlay { right: var(--detail-w, 372px); }
 
 .tb-detail-toggle { margin-left: 4px; }
@@ -1183,7 +1195,17 @@ html.has-bg .list-scroll .col-head { background: color-mix(in srgb, var(--bg) 72
 html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, transparent); }
 
 .set-inline { display: flex; align-items: center; gap: 8px; }
-.set-range { width: 190px; accent-color: var(--accent); cursor: pointer; }
+/* 细线样式的滑块（默认不透明度） */
+.set-range {
+  -webkit-appearance: none; appearance: none;
+  width: 190px; height: 16px; background: transparent; cursor: pointer;
+}
+.set-range::-webkit-slider-runnable-track { height: 3px; border-radius: var(--pill); background: var(--surface-3); }
+.set-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 4px; height: 14px; margin-top: -5.5px; border-radius: var(--pill); background: var(--accent);
+}
+.set-range-val { min-width: 36px; text-align: right; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 
 /* ---- AI agent ---- */
 .reader-overlay .sel-ask {
@@ -1283,3 +1305,16 @@ textarea.ai-confirm-args { width: 100%; min-height: 96px; border: 0; outline: no
 /* ---- About / update ---- */
 .about-update { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .about-update-text { flex: 1; font-size: 12px; color: var(--muted); }
+/* 设置-关于：该版本的更新日志（来自 latest.yml 的 releaseNotes） */
+.about-notes {
+  margin-top: 14px; max-height: 280px; overflow: auto; padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 12.5px; color: var(--text-2);
+}
+.about-notes-title { margin-bottom: 6px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+.about-notes h1, .about-notes h2, .about-notes h3 { margin: 10px 0 4px; font-size: 13px; color: var(--text); }
+.about-notes p { margin: 4px 0; }
+.about-notes ul, .about-notes ol { margin: 4px 0; padding-left: 18px; }
+.about-notes li { margin: 2px 0; }
+.about-notes code { padding: 0 4px; border-radius: 4px; background: var(--surface-2); font-size: 12px; }
+.about-notes a { color: var(--accent); }
