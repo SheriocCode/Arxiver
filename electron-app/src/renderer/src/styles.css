@@ -1311,6 +1311,45 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 .ai-error { margin-top: 6px; color: #f0857b; font-size: 12px; }
 .ai-usage { margin-top: 4px; color: var(--faint); font-size: 11px; }
 
+/* ---------- AI：外部检索结果卡片（arXiv / OpenAlex） ---------- */
+.paper-num { color: var(--faint); font-weight: 400; margin-right: 4px; }
+.paper-card.is-jumped { animation: card-flash 1.8s var(--ease); }
+@keyframes card-flash {
+  0% { border-color: var(--accent); background: var(--accent-soft); }
+  100% { border-color: var(--border); background: var(--surface); }
+}
+.cite-chip.card-chip { background: rgba(160,160,160,.16); color: var(--text-2); }
+.cite-chip.card-chip:hover { background: rgba(160,160,160,.3); color: var(--text); }
+.paper-list { display: grid; gap: 8px; margin: 8px 0; max-height: min(52vh, 460px); overflow: auto; }
+.paper-block { margin: 8px 0; }
+.paper-head {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 4px 6px; border-radius: var(--radius-sm); font-size: 11px; color: var(--muted);
+}
+.paper-head:hover { background: var(--hover); color: var(--text); }
+.paper-head-label { flex: none; }
+.paper-head-sites { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); }
+.paper-card {
+  display: grid; gap: 4px; padding: 10px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.paper-title {
+  font-size: 12.5px; font-weight: 600; color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.paper-sub { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paper-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--faint); }
+.paper-venue { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paper-src { color: var(--text-2); }
+.paper-noid { display: inline-flex; align-items: center; font-size: 11.5px; color: var(--faint); }
+.paper-abstract {
+  font-size: 11.5px; color: var(--text-2);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.paper-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.paper-actions .btn { height: 24px; padding: 0 8px; font-size: 11.5px; }
+.paper-in { display: inline-flex; align-items: center; font-size: 11.5px; color: var(--accent); }
+
 /* ---- AI conversation history ---- */
 .ai-hist-wrap { position: relative; }
 .ai-hist-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: 260px; max-height: 320px; overflow: auto; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow); padding: 4px; }

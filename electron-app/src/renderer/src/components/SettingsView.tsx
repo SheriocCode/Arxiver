@@ -72,12 +72,13 @@ export default function SettingsView({
         translate_model: config.translate_model, local_model: config.local_model, local_gpu_layers: config.local_gpu_layers,
         local_extra_args: config.local_extra_args,
         chat_base_url: config.chat_base_url, chat_api_key: config.chat_api_key, chat_model: config.chat_model,
+        search_enabled: config.search_enabled, search_api_key: config.search_api_key, search_scope: config.search_scope,
         threads: config.threads, timeout: config.timeout, source_lang: config.source_lang, target_lang: config.target_lang
       });
     }
   }, [config]);
 
-  const set = (k: keyof AppConfig, v: string | number): void => setForm((f) => ({ ...f, [k]: v }));
+  const set = <K extends keyof AppConfig>(k: K, v: AppConfig[K]): void => setForm((f) => ({ ...f, [k]: v }));
   const cur = SECTIONS.find((s) => s.id === section) || SECTIONS[0];
   const inputStyle = { height: 34, minWidth: 240, background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", color: "var(--text)", padding: "0 10px", outline: "none" } as const;
 
@@ -267,6 +268,27 @@ export default function SettingsView({
                   <Row label="接口地址" desc="AI 助手使用的 OpenAI 兼容接口，与翻译引擎相互独立"><input style={inputStyle} value={form.chat_base_url || ""} onChange={(e) => set("chat_base_url", e.target.value)} /></Row>
                   <Row label="API 密钥"><input type="password" style={inputStyle} value={form.chat_api_key || ""} onChange={(e) => set("chat_api_key", e.target.value)} /></Row>
                   <Row label="模型"><input style={inputStyle} value={form.chat_model || ""} onChange={(e) => set("chat_model", e.target.value)} /></Row>
+                  <div className="modal-foot" style={{ border: 0, padding: "4px 0" }}>
+                    <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>
+                    <button className="btn btn-primary" onClick={save}>保存设置</button>
+                  </div>
+                </Group>
+                <Group title="联网搜索">
+                  <Row label="启用联网搜索" desc="允许 AI 用 Tavily 搜索文库外的论文与资料；只发送检索式，不上传本地文献内容。默认关闭">
+                    <Switch on={!!form.search_enabled} onToggle={() => set("search_enabled", !form.search_enabled)} />
+                  </Row>
+                  <Row label="Tavily API Key" desc="在 tavily.com 注册后获取；每次提问约消耗 3~6 credits（免费额度 1000/月）">
+                    <input type="password" style={inputStyle} value={form.search_api_key || ""} onChange={(e) => set("search_api_key", e.target.value)} />
+                  </Row>
+                  <Row label="检索范围" desc="学术优先会对 arXiv / 会议 / 期刊等域名加权（不排他），也可切换到全网">
+                    <select value={form.search_scope || "academic"} onChange={(e) => set("search_scope", e.target.value as AppConfig["search_scope"])} disabled={!form.search_enabled}>
+                      <option value="academic">学术优先</option>
+                      <option value="web">全网</option>
+                    </select>
+                  </Row>
+                  {form.search_enabled && !form.search_api_key ? (
+                    <div style={{ color: "var(--danger)", fontSize: 12 }}>还没填 Tavily API Key，联网搜索不会生效。</div>
+                  ) : null}
                   <div className="modal-foot" style={{ border: 0, padding: "4px 0" }}>
                     <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>
                     <button className="btn btn-primary" onClick={save}>保存设置</button>

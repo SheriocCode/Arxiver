@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type JSX, type MutableRefObject } from "react";
-import type { LibraryDoc, Conversation, ConversationSummary } from "../../../shared/types";
+import type { LibraryDoc, Conversation, ConversationSummary, PaperHit, ConvBlock } from "../../../shared/types";
 import { Icon } from "./Icons";
 import { formatDate } from "../lib/format";
 import { getPdfjs } from "../lib/pdf";
@@ -73,7 +73,7 @@ export default function DetailPanel({
               : <InfoDisplay lib={lib} doc={doc} onOpenView={openDoc} citeDoi={settings.citeDoi} />)}
             {lib.tab === "notes" && <NotesPanel lib={lib} doc={doc} />}
             {lib.tab === "tags" && <TagsPanel lib={lib} doc={doc} />}
-            {lib.tab === "ai" && settings.aiEnabled && <AiPanel doc={doc} settings={settings} selection={aiSelection} onCite={onCite || (() => {})} onClearSelection={onClearSelection || (() => {})} openDocs={openDocs || []} resolveDocTitle={(id) => lib.documents.find((d) => d.id === id)?.title || id} />}
+            {lib.tab === "ai" && settings.aiEnabled && <AiPanel lib={lib} doc={doc} settings={settings} selection={aiSelection} onCite={onCite || (() => {})} onClearSelection={onClearSelection || (() => {})} openDocs={openDocs || []} resolveDocTitle={(id) => lib.documents.find((d) => d.id === id)?.title || id} />}
           </div>
         )}
       </div>
@@ -248,15 +248,40 @@ function TagsPanel({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Elem
 
 interface AiToolTrace { name: string; args?: string; content?: string; ms?: number; at?: number }
 interface AiConfirm { confirmId: string; name: string; args: string; status: "pending" | "approved" | "rejected" }
+// 按到达顺序渲染：模型可能"检索 → 分析 → 再检索 → 作答"，界面要还原这个顺序
+type AiBlock = ConvBlock | { kind: "confirm"; items: AiConfirm[] };
 interface AiTurn {
   role: "user" | "assistant";
   text: string;
-  tools?: AiToolTrace[];
-  confirmations?: AiConfirm[];
-  reasoning?: string;
+  blocks?: AiBlock[];
   error?: string;
   streaming?: boolean;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+}
+
+const textOf = (blocks: AiBlock[] | undefined): string =>
+  (blocks || []).filter((b): b is { kind: "text"; text: string } => b.kind === "text").map((b) => b.text).join("");
+const toolsOf = (blocks: AiBlock[]): AiToolTrace[] => blocks.flatMap((b) => (b.kind === "tools" ? b.items : []));
+const papersOf = (blocks: AiBlock[]): PaperHit[] => blocks.flatMap((b) => (b.kind === "papers" ? b.items : []));
+
+// 旧会话（没有 blocks）按"推理 → 工具 → 卡片 → 文本"补一个块序列
+function blocksOf(m: { text?: string; reasoning?: string; tools?: AiToolTrace[]; papers?: PaperHit[]; blocks?: ConvBlock[] }): AiBlock[] {
+  if (m.blocks && m.blocks.length) { return m.blocks as AiBlock[]; }
+  const out: AiBlock[] = [];
+  if (m.reasoning) { out.push({ kind: "reasoning", text: m.reasoning }); }
+  if (m.tools && m.tools.length) { out.push({ kind: "tools", items: m.tools }); }
+  if (m.papers && m.papers.length) { out.push({ kind: "papers", items: m.papers }); }
+  if (m.text) { out.push({ kind: "text", text: m.text }); }
+  return out;
+}
+
+function appendText(cur: AiTurn, patch: Partial<AiTurn>, kind: "text" | "reasoning", chunk: string): void {
+  const blocks = (cur.blocks || []).slice();
+  const last = blocks[blocks.length - 1];
+  if (last && last.kind === kind) { blocks[blocks.length - 1] = { kind, text: last.text + chunk } as AiBlock; }
+  else { blocks.push({ kind, text: chunk } as AiBlock); }
+  Object.assign(cur, patch, { blocks });
+  if (kind === "text") { cur.text = textOf(blocks); }
 }
 
 function fmtConvTime(ts: number): string {
@@ -386,7 +411,88 @@ function ConfirmCard({ item, onDecide }: { item: AiConfirm; onDecide: (confirmId
   );
 }
 
-function AiPanel({ doc, settings, selection, onCite, onClearSelection, openDocs, resolveDocTitle }: {
+// 一批检索结果：过程性的那几批默认**折叠成一行**（图标 + 数量 + 站点），最后一批展开成卡片。
+// 展开状态由父组件控制，这样 [[card:N]] 跳转时能把目标那一批展开并高亮。
+function PaperBlock({ papers, open, onToggle, onJumped, state, inLibrary, onImport, onOpen }: {
+  papers: PaperHit[];
+  open: boolean;
+  onToggle: () => void;
+  onJumped?: string;
+  state: Record<string, "busy" | "ok" | "err">;
+  inLibrary: (p: PaperHit) => string;
+  onImport: (p: PaperHit) => void;
+  onOpen: (url: string) => void;
+}): JSX.Element {
+  const sites = Array.from(new Set(papers.map((p) => p.venue || p.source).filter(Boolean))).slice(0, 3).join(" / ");
+  return (
+    <div className={"paper-block" + (open ? "" : " is-collapsed")}>
+      <button type="button" className="paper-head" aria-expanded={open} onClick={onToggle}>
+        <Icon name="search" small />
+        <span className="paper-head-label">外部检索结果（{papers.length}）</span>
+        {!open && sites ? <span className="paper-head-sites">{sites}</span> : null}
+        <div className="od-fill" />
+        <Icon name={open ? "chev-down" : "chev-right"} small />
+      </button>
+      {open ? (
+        <PaperCards papers={papers} jumped={onJumped} state={state} inLibrary={inLibrary} onImport={onImport} onOpen={onOpen} />
+      ) : null}
+    </div>
+  );
+}
+
+// 外部检索结果卡片：可一键导入文库，或打开链接 / PDF；带本轮对话里的编号（[[card:N]] 用）
+function PaperCards({ papers, jumped, state, inLibrary, onImport, onOpen }: {
+  papers: PaperHit[];
+  jumped?: string;
+  state: Record<string, "busy" | "ok" | "err">;
+  inLibrary: (p: PaperHit) => string;
+  onImport: (p: PaperHit) => void;
+  onOpen: (url: string) => void;
+}): JSX.Element {
+  // 列表高度受限（CSS max-height + 内部滚动），所以一次性渲染全部卡片：
+  // 这样 [[card:N]] 永远能找到目标，不用先点「查看更多」。
+  return (
+    <div className="paper-list">
+      {papers.map((p) => {
+        const inLib = !!inLibrary(p) || state[p.key] === "ok";
+        const canImport = !!(p.arxivId || p.doi);
+        return (
+          <div key={p.key} className={"paper-card" + (jumped === String(p.idx) ? " is-jumped" : "")} data-card={p.idx} data-id={p.arxivId || p.doi || ""}>
+            <div className="paper-title" title={p.title}>
+              {p.idx ? <span className="paper-num">#{p.idx}</span> : null}
+              {p.title}
+            </div>
+            {p.authors ? <div className="paper-sub">{p.authors}</div> : null}
+            <div className="paper-meta">
+              {p.year ? <span>{p.year}</span> : null}
+              {p.venue ? <span className="paper-venue" title={p.venue}>{p.venue}</span> : null}
+              <span className="paper-src">{p.source}</span>
+              {p.citations > 0 ? <span>被引 {p.citations}</span> : null}
+            </div>
+            {p.abstract ? <div className="paper-abstract">{p.abstract}</div> : null}
+            <div className="paper-actions">
+              {inLib
+                ? <span className="paper-in">已在文库</span>
+                : canImport
+                  ? (
+                    <button type="button" className="btn btn-ghost" disabled={state[p.key] === "busy"} onClick={() => onImport(p)}>
+                      <Icon name={state[p.key] === "err" ? "history" : "plus"} small />
+                      {state[p.key] === "busy" ? "导入中…" : state[p.key] === "err" ? "重试导入" : "导入到文库"}
+                    </button>
+                  )
+                  : <span className="paper-noid" title="该条目没有 DOI / arXiv 编号，无法自动取回全文">无标识符</span>}
+              {p.url ? <button type="button" className="btn btn-ghost" onClick={() => onOpen(p.url)}><Icon name="external" small /> 打开链接</button> : null}
+              {p.pdfUrl ? <button type="button" className="btn btn-ghost" onClick={() => onOpen(p.pdfUrl)}><Icon name="file" small /> PDF</button> : null}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, openDocs, resolveDocTitle }: {
+  lib: LibraryApi;
   doc: LibraryDoc;
   settings: AppSettings;
   selection?: { text: string; page: number } | null;
@@ -409,6 +515,73 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection, openDocs,
   const turnsRef = useRef<AiTurn[]>([]);
   const convIdRef = useRef("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [imp, setImp] = useState<Record<string, "busy" | "ok" | "err">>({});
+  // 每批检索结果的展开状态（键：该块在 blocks 里的下标）；未设置时默认"最后一批展开"
+  const [paperOpen, setPaperOpen] = useState<Record<string, boolean>>({});
+  const [jumped, setJumped] = useState("");
+  const [pendingJump, setPendingJump] = useState(0);
+
+  // [[card:N]] → 展开那一批（等 React 提交后再滚动，避免被重渲染打断）
+  const jumpToCard = (n: number): void => {
+    if (!n) { return; }
+    const list = turnsRef.current;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const blocks = list[i].blocks || [];
+      const bi = blocks.findIndex((b) => b.kind === "papers" && b.items.some((p) => p.idx === n));
+      if (bi < 0) { continue; }
+      setPaperOpen((s) => ({ ...s, [i + ":" + bi]: true }));
+      break;
+    }
+    setPendingJump(n);
+  };
+
+  useEffect(() => {
+    if (!pendingJump) { return; }
+    const el = scrollRef.current?.querySelector<HTMLElement>(`[data-card="${pendingJump}"]`);
+    if (!el) {
+      // 目标所在的那批结果还没渲染出来：下一帧再试一次
+      const raf = window.requestAnimationFrame(() => {
+        const again = scrollRef.current?.querySelector<HTMLElement>(`[data-card="${pendingJump}"]`);
+        if (again) { again.scrollIntoView({ block: "center" }); setJumped(String(pendingJump)); }
+        setPendingJump(0);
+      });
+      return () => window.cancelAnimationFrame(raf);
+    }
+    el.scrollIntoView({ block: "center" });
+    setJumped(String(pendingJump));
+    const t = window.setTimeout(() => setJumped(""), 1600);
+    setPendingJump(0);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingJump, turns]);
+
+  // 卡片上的「导入到文库」：复用按标识符导入（arXiv id / DOI），导入后刷新文库
+  const docIdOfPaper = (p: PaperHit): string => {
+    const doi = (p.doi || "").replace(/^https?:\/\/doi\.org\//i, "").toLowerCase();
+    const ax = (p.arxivId || "").replace(/v\d+$/, "");
+    for (const d of lib.documents) {
+      if (d.trash) { continue; }
+      const ddoi = (d.doi || "").replace(/^https?:\/\/doi\.org\//i, "").toLowerCase();
+      if (doi && ddoi && doi === ddoi) { return d.id; }
+      if (ax && new RegExp("arxiv\\.org/(abs|pdf)/" + ax.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(d.sourceUrl || "")) { return d.id; }
+    }
+    return "";
+  };
+  const importPaper = (p: PaperHit): void => {
+    const id = p.arxivId || p.doi || p.url;
+    if (!id) { return; }
+    setImp((s) => ({ ...s, [p.key]: "busy" }));
+    void window.api.libraryImportByIdentifier(id, [])
+      .then(async (r) => {
+        if (r && (r as { ok?: boolean }).ok) {
+          setImp((s) => ({ ...s, [p.key]: "ok" }));
+          await lib.refresh();
+        } else {
+          setImp((s) => ({ ...s, [p.key]: "err" }));
+        }
+      })
+      .catch(() => setImp((s) => ({ ...s, [p.key]: "err" })));
+  };
   const msgRefs = useRef<(HTMLDivElement | null)[]>([]);
   const atBottomRef = useRef(true);
   const [showJump, setShowJump] = useState(false);
@@ -420,11 +593,11 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection, openDocs,
     const id = convIdRef.current;
     if (!id) { return; }
     const firstUser = messages.find((m) => m.role === "user");
-    const clean = messages.filter((m) => m.text.trim() || m.error || (m.tools && m.tools.length > 0) || (m.confirmations && m.confirmations.length > 0));
+    const clean = messages.filter((m) => m.text.trim() || m.error || (m.blocks && m.blocks.length > 0));
     const docIds = new Set<string>();
     if (doc.id) { docIds.add(doc.id); }
     for (const m of messages) {
-      for (const t of m.tools || []) {
+      for (const t of toolsOf(m.blocks || [])) {
         const re = /"docId"\s*:\s*"([0-9a-fA-F]+)"/g;
         let mm: RegExpExecArray | null;
         while ((mm = re.exec(t.args || "")) !== null) { docIds.add(mm[1]); }
@@ -437,7 +610,17 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection, openDocs,
       docIds: Array.from(docIds),
       title: (firstUser?.text || "新对话").slice(0, 60),
       updated_at: 0,
-      messages: clean.map((m) => ({ role: m.role, text: m.text, tools: m.tools, reasoning: m.reasoning, error: m.error, usage: m.usage }))
+      messages: clean.map((m) => ({
+        role: m.role,
+        text: m.text,
+        // 待确认的卡片不入库（重新打开时已失效）；其余块保留顺序
+        blocks: (m.blocks || []).filter((b) => b.kind !== "confirm") as ConvBlock[],
+        reasoning: m.blocks?.filter((b) => b.kind === "reasoning").map((b) => (b as { text: string }).text).join(""),
+        tools: toolsOf(m.blocks || []),
+        papers: papersOf(m.blocks || []),
+        error: m.error,
+        usage: m.usage
+      }))
     });
   };
 
@@ -449,7 +632,7 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection, openDocs,
       setConvList(list);
       if (list[0]) {
         const conv = await window.api.agentConversation(list[0].id);
-        if (!cancelled && conv) { setTurns(conv.messages as AiTurn[]); setConvId(conv.id); convIdRef.current = conv.id; }
+        if (!cancelled && conv) { setTurns(conv.messages.map((m) => ({ ...m, blocks: blocksOf(m) }))); setConvId(conv.id); convIdRef.current = conv.id; }
       }
     })();
     return () => { cancelled = true; };
@@ -488,20 +671,47 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection, openDocs,
         const next = prev.slice();
         const i = next.length - 1;
         const cur: AiTurn = { ...next[i] };
-        if (e.type === "delta" && e.text) { cur.text += e.text; }
-        else if (e.type === "reasoning" && e.text) { cur.reasoning = (cur.reasoning || "") + e.text; }
-        else if (e.type === "tool_call") { cur.tools = [...(cur.tools || []), { name: e.name || "", args: e.args, at: Date.now() }]; }
+        if (e.type === "delta" && e.text) { appendText(cur, {}, "text", e.text); }
+        else if (e.type === "reasoning" && e.text) { appendText(cur, {}, "reasoning", e.text); }
+        else if (e.type === "tool_call") {
+          const blocks = (cur.blocks || []).slice();
+          const last = blocks[blocks.length - 1];
+          const item: AiToolTrace = { name: e.name || "", args: e.args, at: Date.now() };
+          if (last && last.kind === "tools") { blocks[blocks.length - 1] = { kind: "tools", items: [...last.items, item] }; }
+          else { blocks.push({ kind: "tools", items: [item] }); }
+          cur.blocks = blocks;
+        }
         else if (e.type === "tool_result") {
-          const tools = (cur.tools || []).slice();
-          for (let j = tools.length - 1; j >= 0; j--) {
-            if (tools[j].name === e.name && tools[j].content === undefined) {
-              tools[j] = { ...tools[j], content: e.content, ms: Math.max(0, Date.now() - (tools[j].at || Date.now())) };
-              break;
+          const blocks = (cur.blocks || []).slice();
+          let done = false;
+          for (let bi = blocks.length - 1; bi >= 0 && !done; bi--) {
+            const b = blocks[bi];
+            if (b.kind !== "tools") { continue; }
+            const items = b.items.slice();
+            for (let j = items.length - 1; j >= 0; j--) {
+              if (items[j].name === e.name && items[j].content === undefined) {
+                items[j] = { ...items[j], content: e.content, ms: Math.max(0, Date.now() - (items[j].at || Date.now())) };
+                blocks[bi] = { kind: "tools", items };
+                done = true;
+                break;
+              }
             }
           }
-          cur.tools = tools;
+          cur.blocks = blocks;
         }
-        else if (e.type === "confirmation") { cur.confirmations = [...(cur.confirmations || []), { confirmId: e.confirmId || "", name: e.name || "", args: e.args || "{}", status: "pending" }]; }
+        else if (e.type === "confirmation") {
+          const blocks = (cur.blocks || []).slice();
+          const item: AiConfirm = { confirmId: e.confirmId || "", name: e.name || "", args: e.args || "{}", status: "pending" };
+          const last = blocks[blocks.length - 1];
+          if (last && last.kind === "confirm") { blocks[blocks.length - 1] = { kind: "confirm", items: [...last.items, item] }; }
+          else { blocks.push({ kind: "confirm", items: [item] }); }
+          cur.blocks = blocks;
+        }
+        else if (e.type === "papers" && e.papers) {
+          // 每次检索单独成块（保留"哪一批是第几次搜的"），块内按 key 去重
+          const add = e.papers.filter((p) => p && p.title);
+          if (add.length) { cur.blocks = [...(cur.blocks || []), { kind: "papers", items: add }]; }
+        }
         else if (e.type === "usage") { cur.usage = e.usage; }
         else if (e.type === "error") { cur.error = e.error || "出错了"; cur.streaming = false; }
         else if (e.type === "done") { cur.streaming = false; }
@@ -529,16 +739,29 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection, openDocs,
     setInput("");
     atBottomRef.current = true;
     setShowJump(false);
+    // 历史消息里附上每一轮的检索结果卡片摘要：否则模型看不到上一轮检索到了什么，
+    // 只能凭自己的正文猜（会顺着用户臆断"检索到了某某论文"）。
     const history = turnsRef.current
       .filter((t) => t.text.trim())
-      .map((t) => ({ role: t.role, content: t.text }));
+      .map((t) => {
+        const cards = papersOf(t.blocks || []);
+        if (!cards.length) { return { role: t.role, content: t.text }; }
+        let digest = "";
+        for (const p of cards.slice(0, 40)) {
+          const line = `#${p.idx} ${p.title}（${[p.venue || p.source, p.year].filter(Boolean).join(" · ")}）\n`;
+          if (digest.length + line.length > 3000) { break; }
+          digest += line;
+        }
+        return { role: t.role, content: `${t.text}\n\n[本轮外部检索结果卡片，编号即 [[card:N]] 里的 N：\n${digest}]` };
+      });
     setTurns((prev) => [...prev, { role: "user", text: q }, { role: "assistant", text: "", streaming: true }]);
     setSending(true);
     const sel = selection ? selection : undefined;
     const refIds = refs.map((r) => r.id);
+    const cardBase = turnsRef.current.reduce((n, t) => n + papersOf(t.blocks || []).length, 0);
     setRefs([]);
     setAtOpen(false);
-    void window.api.agentChat({ scope: "library", docId: doc.id, selection: sel, refs: refIds, message: q, history })
+    void window.api.agentChat({ scope: "library", docId: doc.id, selection: sel, refs: refIds, message: q, history, cardBase })
       .then(({ turnId }) => { turnRef.current = turnId; })
       .catch((err) => {
         setSending(false);
@@ -570,8 +793,13 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection, openDocs,
   };
 
   const decide = (confirmId: string, approved: boolean, args?: string): void => {
-    setTurns((prev) => prev.map((t) => t.confirmations
-      ? { ...t, confirmations: t.confirmations.map((c) => c.confirmId === confirmId ? { ...c, status: approved ? "approved" : "rejected", args: args ?? c.args } : c) }
+    setTurns((prev) => prev.map((t) => t.blocks
+      ? {
+        ...t,
+        blocks: t.blocks.map((b) => b.kind === "confirm"
+          ? { ...b, items: b.items.map((c) => c.confirmId === confirmId ? { ...c, status: approved ? "approved" as const : "rejected" as const, args: args ?? c.args } : c) }
+          : b)
+      }
       : t));
     void window.api.agentConfirm(confirmId, { approved, args });
   };
@@ -579,7 +807,7 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection, openDocs,
   const newConv = (): void => { setTurns([]); setConvId(""); convIdRef.current = ""; setShowHistory(false); };
   const openConv = async (id: string): Promise<void> => {
     const conv = await window.api.agentConversation(id);
-    if (conv) { setTurns(conv.messages as AiTurn[]); setConvId(conv.id); convIdRef.current = conv.id; }
+    if (conv) { setTurns(conv.messages.map((m) => ({ ...m, blocks: blocksOf(m) }))); setConvId(conv.id); convIdRef.current = conv.id; }
     setShowHistory(false);
   };
   const delConv = async (id: string): Promise<void> => {
@@ -639,22 +867,51 @@ function AiPanel({ doc, settings, selection, onCite, onClearSelection, openDocs,
                   <div className="msg-content">{t.text}</div>
                 ) : (
                   <>
-                    {t.reasoning ? (
-                      <details className="ai-reasoning" open={!!(t.streaming && !t.text)}>
-                        <summary>思考过程</summary>
-                        <div className="ai-reasoning-body">{t.reasoning}</div>
-                      </details>
-                    ) : null}
-                    {t.confirmations && t.confirmations.map((c) => <ConfirmCard key={c.confirmId} item={c} onDecide={decide} />)}
-                    {t.tools && t.tools.length > 0 && (
-                      <details className="ai-tools">
-                        <summary>工具调用（{t.tools.length}）</summary>
-                        {t.tools.map((tool, j) => (
-                          <div key={j} className="ai-tool"><span className="ai-tool-name">{tool.name}</span>{tool.args ? <span className="ai-tool-args">{tool.args}</span> : null}</div>
-                        ))}
-                      </details>
-                    )}
-                    <div className="msg-content ai-md"><Markdown text={t.text} onCite={onCite} /></div>
+                    {(() => {
+                      const blocks = t.blocks || [];
+                      const lastPapers = blocks.reduce((acc, b, i) => (b.kind === "papers" ? i : acc), -1);
+                      const hasText = blocks.some((b) => b.kind === "text");
+                      return blocks.map((b, bi) => {
+                        if (b.kind === "reasoning") {
+                          return (
+                            <details key={bi} className="ai-reasoning" open={!!(t.streaming && !hasText)}>
+                              <summary>思考过程</summary>
+                              <div className="ai-reasoning-body">{b.text}</div>
+                            </details>
+                          );
+                        }
+                        if (b.kind === "confirm") {
+                          return b.items.map((c) => <ConfirmCard key={c.confirmId} item={c} onDecide={decide} />);
+                        }
+                        if (b.kind === "tools") {
+                          return (
+                            <details key={bi} className="ai-tools">
+                              <summary>工具调用（{b.items.length}）</summary>
+                              {b.items.map((tool, j) => (
+                                <div key={j} className="ai-tool"><span className="ai-tool-name">{tool.name}</span>{tool.args ? <span className="ai-tool-args">{tool.args}</span> : null}</div>
+                              ))}
+                            </details>
+                          );
+                        }
+                        if (b.kind === "papers") {
+                          const key = i + ":" + bi;
+                          return (
+                            <PaperBlock
+                              key={bi}
+                              papers={b.items}
+                              open={paperOpen[key] ?? (bi === lastPapers)}
+                              onToggle={() => setPaperOpen((s) => ({ ...s, [key]: !(s[key] ?? (bi === lastPapers)) }))}
+                              onJumped={jumped}
+                              state={imp}
+                              inLibrary={docIdOfPaper}
+                              onImport={importPaper}
+                              onOpen={(u) => { void window.api.openExternal(u); }}
+                            />
+                          );
+                        }
+                        return <div key={bi} className="msg-content ai-md"><Markdown text={b.text} onCite={onCite} onCard={jumpToCard} /></div>;
+                      });
+                    })()}
                     {t.error ? <div className="ai-error">{t.error}</div> : null}
                     {t.streaming && !t.text ? <span className="typing"><i /><i /><i /></span> : null}
                     {t.usage ? <div className="ai-usage">tokens: {t.usage.prompt_tokens}+{t.usage.completion_tokens}</div> : null}

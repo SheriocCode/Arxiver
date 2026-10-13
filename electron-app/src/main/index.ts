@@ -548,7 +548,7 @@ function registerIpc(): void {
   }));
 
   // 本地导入后补全元数据：优先文件名里的 arXiv 编号，其次 PDF 自带元信息 / 首页里的 arXiv、DOI
-  ipcMain.handle("library:enrichMetadata", async (_event, docId: string) => {
+  async function enrichDocMeta(docId: string): Promise<ReturnType<typeof library.getDocument>> {
     const doc = library.getDocument(docId);
     if (!doc) { return null; }
     try {
@@ -587,12 +587,26 @@ function registerIpc(): void {
       logger.warn("library", "补全元信息失败：" + logger.errText(e));
       return doc;
     }
-  });
+  }
+
+  ipcMain.handle("library:enrichMetadata", async (_event, docId: string) => enrichDocMeta(docId));
 
   // 按标识符导入（粘贴 arXiv 链接/编号或 DOI）：走官方接口取元信息，arXiv 顺带下载 PDF
   ipcMain.handle("library:importByIdentifier", async (_event, input: string, collections: string[]) => {
     try {
-      const meta = await resolveIdentifier(input);
+      const parsed = parseIdentifier(input);
+      let meta = await resolveIdentifier(input);
+      const probeFallback = !meta && parsed?.kind === "arxiv";
+      if (probeFallback && parsed) {
+        // arXiv 元信息接口不可用（限流 / 离线）时兜底：直接下 PDF，元信息交给 PDF 探测
+        meta = {
+          kind: "arxiv", id: parsed.id, title: parsed.id, authors: "", year: "",
+          venue: "arXiv 预印本", doi: "", abstract: "",
+          pdfUrl: `https://arxiv.org/pdf/${parsed.id}`,
+          pageUrl: `https://arxiv.org/abs/${parsed.id}`
+        };
+        logger.warn("library", `arXiv 元信息接口不可用，改用 PDF 兜底导入：${parsed.id}`);
+      }
       if (!meta) {
         return { ok: false, error: "没识别出 arXiv 编号或 DOI（可直接粘贴链接）" };
       }
@@ -624,7 +638,9 @@ function registerIpc(): void {
         summary: meta.abstract
       });
       logger.info("library", `按标识符导入：${meta.title || meta.id}（${meta.kind}）`);
-      return { ok: true, doc: library.getDocument(doc.id) };
+      // 兜底导入（arXiv 接口不可用）时，用 PDF 自带的标题/作者 + 首页里的编号再补一次
+      const finalDoc = probeFallback ? await enrichDocMeta(doc.id) : library.getDocument(doc.id);
+      return { ok: true, doc: finalDoc };
     } catch (e) {
       logger.warn("library", "按标识符导入失败：" + logger.errText(e));
       return { ok: false, error: logger.errText(e, 200) };

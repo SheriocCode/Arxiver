@@ -10,6 +10,9 @@ export interface AppConfig {
   chat_base_url: string;
   chat_api_key: string;
   chat_model: string;
+  search_enabled: boolean;
+  search_api_key: string;
+  search_scope: "academic" | "web";
   source_lang: string;
   target_lang: string;
   output_variant: string;
@@ -110,25 +113,56 @@ export interface AgentChatRequest {
   refs?: string[];
   message: string;
   history?: { role: "user" | "assistant"; content: string }[];
+  // 该对话里已经出现过的检索卡片数：让 [[card:N]] 的编号在整个对话里保持稳定
+  cardBase?: number;
+}
+
+// 外部文献检索结果（arXiv / OpenAlex），既喂给模型也渲染成卡片
+export interface PaperHit {
+  key: string;
+  idx?: number; // 本轮对话里卡片的全局编号（1 起），模型用 [[card:N]] 引用
+  source: string;
+  title: string;
+  authors: string;
+  year: string;
+  date: string;
+  venue: string;
+  url: string;
+  pdfUrl: string;
+  arxivId: string;
+  doi: string;
+  citations: number;
+  abstract: string;
 }
 
 export interface AgentEvent {
   turnId: string;
-  type: "delta" | "reasoning" | "tool_call" | "tool_result" | "confirmation" | "library_changed" | "usage" | "done" | "error";
+  type: "delta" | "reasoning" | "tool_call" | "tool_result" | "confirmation" | "library_changed" | "papers" | "usage" | "done" | "error";
   text?: string;
   name?: string;
   args?: string;
   content?: string;
   confirmId?: string;
+  papers?: PaperHit[];
   error?: string;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
 export interface ConvTool { name: string; args?: string; content?: string; ms?: number; at?: number }
+// 一轮回答里按**到达顺序**排布的内容块（文本 / 工具 / 检索卡片），
+// 这样界面可以按时间顺序还原"先检索、后作答"的过程，而不是固定把卡片堆在最后。
+export type ConvBlock =
+  | { kind: "text"; text: string }
+  | { kind: "reasoning"; text: string }
+  | { kind: "tools"; items: ConvTool[] }
+  | { kind: "papers"; items: PaperHit[] };
+
 export interface ConvMessage {
   role: "user" | "assistant";
   text: string;
+  blocks?: ConvBlock[];
   tools?: ConvTool[];
+  papers?: PaperHit[];
   reasoning?: string;
   error?: string;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };

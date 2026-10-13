@@ -1,11 +1,29 @@
 import * as library from "../library";
 import * as text from "./text";
+import * as websearch from "../websearch";
+import { get as getConfig } from "../config";
 import type { ToolDef } from "./model";
+import type { PaperHit } from "../../shared/types";
 
 export interface ToolImpl {
   def: ToolDef;
   write?: boolean;
-  run: (args: Record<string, unknown>) => Promise<string>;
+  run: (args: Record<string, unknown>, ctx?: ToolContext) => Promise<string>;
+}
+
+// 工具可以把结构化结果额外推给界面（如检索到的论文卡片），并把本轮已发出卡片的编号传进来
+export interface ToolContext {
+  emit?: (event: { type: "papers"; papers: PaperHit[] }) => void;
+  cardBase?: number;
+}
+
+// 「联网搜索」开关与 API Key 来自 设置 → AI 助手（config.json）
+export function webSearchEnabled(): boolean {
+  const c = getConfig();
+  return !!(c.search_enabled && c.search_api_key);
+}
+function webScope(): "academic" | "web" {
+  return getConfig().search_scope === "web" ? "web" : "academic";
 }
 
 interface DocMeta { id: string; title: string; year: string; authors: string }
@@ -21,6 +39,62 @@ function findDoc(id: string): DocMeta | undefined {
 }
 
 export const TOOLS: ToolImpl[] = [
+  {
+    def: {
+      name: "search_web",
+      description: "联网搜索（Tavily），用于查找本地文库之外的最新论文、会议论文、项目主页、代码或任意资料。" +
+        "结果以卡片展示给用户（标题/站点/年份/摘要片段/链接），可直接导入文库（有 arXiv 编号或 DOI 的条目）。" +
+        "检索式要求：**一律用英文**；不要直接把用户的中文原句丢进来，先改写成 1~4 条**受控检索式**——" +
+        "带领域词（如 computer vision / diffusion model）、带会议或年份锚点（如 NeurIPS 2025、CVPR 2024）、必要时加 site: 限定（site:arxiv.org、site:openreview.net）。" +
+        "用户只要一个模糊主题时，用 queries 一次传多条扇出（同一主题的不同说法/不同限定），不要只搜一次。" +
+        "本工具的结果来自互联网、不在本地文库，引用时给出链接，不要用 [[cite:…]]。",
+      parameters: {
+        type: "object",
+        properties: {
+          queries: {
+            type: "array",
+            items: { type: "string" },
+            description: "1~4 条英文检索式（推荐）；模糊主题时扇出多条。与 query 二选一。"
+          },
+          query: { type: "string", description: "单条英文检索式（简写；等价于 queries 只传一条）" },
+          scope: { type: "string", enum: ["academic", "web"], description: "academic（默认）= 学术域名加权；web = 不限域名" },
+          mode: { type: "string", enum: ["prefer", "restrict"], description: "academic 下：prefer（默认）加权不排他；restrict 只在学术域名内检索" },
+          time_range: { type: "string", enum: ["day", "week", "month", "year"], description: "只看最近这段时间内发布的（“最新”类问题建议带 year 或 month）" },
+          max_results: { type: "number", description: "每条检索式返回条数，默认 8，上限 20" }
+        }
+      }
+    },
+    async run(args, ctx) {
+      const one = String(args.query || "").trim();
+      const many = Array.isArray(args.queries) ? (args.queries as unknown[]).map((q) => String(q || "").trim()) : [];
+      const queries = many.length ? many : (one ? [one] : []).filter(Boolean);
+      if (!queries.length) { return "必须提供 queries（或 query）"; }
+      if (queries.some((q) => /[\u4e00-\u9fff]/.test(q))) {
+        return "检索式必须是英文：请先把中文需求改写成 1~4 条英文受控检索式（可加会议名/年份/site: 限定）再调用本工具。";
+      }
+      const scope = args.scope === "web" || args.scope === "academic" ? args.scope : webScope();
+      const timeRange = ["day", "week", "month", "year"].includes(String(args.time_range))
+        ? (String(args.time_range) as websearch.WebSearchOptions["timeRange"])
+        : undefined;
+      const hits = await websearch.searchWeb({
+        queries,
+        scope,
+        mode: args.mode === "restrict" ? "restrict" : "prefer",
+        timeRange,
+        maxResults: Number(args.max_results) || 8
+      }, getConfig().search_api_key);
+      // 卡片在本轮对话里的全局编号（跨多次检索连续），模型据此用 [[card:N]] 引用
+      const base = Number(ctx?.cardBase) || 0;
+      hits.forEach((p, i) => { p.idx = base + i + 1; });
+      ctx?.emit?.({ type: "papers", papers: hits });
+      if (!hits.length) { return websearch.resultsForModel([]); }
+      return websearch.resultsForModel(hits) +
+        "\n\n回答时：挑出真正相关的几条并说明为什么相关，给出链接；不要逐条复述摘要。" +
+        "指代这些结果时**一律用 [[card:N]]**（如 [[card:13]]，会渲染成可点击的卡片引用），不要写 [[N]]、" +
+        "不要写「卡片13」这种纯文本，也不要只给链接让用户自己找。" +
+        "若结果偏向旧论文或无关站点，说明这一点并用更具体的检索式（加会议名 / site: 限定）再查一次。";
+    }
+  },
   {
     def: {
       name: "list_library",
@@ -238,13 +312,16 @@ export function isWriteTool(name: string): boolean {
 }
 
 export function toolDefs(): ToolDef[] {
-  return TOOLS.map((t) => t.def);
+  return TOOLS.filter((t) => t.def.name !== "search_web" || webSearchEnabled()).map((t) => t.def);
 }
 
-export async function runTool(name: string, argsJson: string): Promise<string> {
+export async function runTool(name: string, argsJson: string, ctx?: ToolContext): Promise<string> {
   const tool = TOOLS.find((t) => t.def.name === name);
   if (!tool) { return `未知工具：${name}`; }
+  if (name === "search_web" && !webSearchEnabled()) {
+    return "「联网搜索」未开启或没填 Tavily API Key：请让用户在 设置 → AI 助手 → 联网搜索 里开启并保存，然后再试（在此之前不要猜测外部论文）。";
+  }
   let args: Record<string, unknown> = {};
   try { args = argsJson ? JSON.parse(argsJson) : {}; } catch { args = {}; }
-  try { return await tool.run(args); } catch (err) { return `工具执行出错：${(err as Error).message}`; }
+  try { return await tool.run(args, ctx); } catch (err) { return `工具执行出错：${(err as Error).message}`; }
 }

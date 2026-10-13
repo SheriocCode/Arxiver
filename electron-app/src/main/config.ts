@@ -16,6 +16,10 @@ export interface AppConfig {
   chat_base_url: string;
   chat_api_key: string;
   chat_model: string;
+  // 联网搜索（AI 助手，默认关闭）：Tavily
+  search_enabled: boolean;
+  search_api_key: string;
+  search_scope: "academic" | "web";
   source_lang: string;
   target_lang: string;
   output_variant: string;
@@ -39,6 +43,9 @@ const DEFAULT_CONFIG: AppConfig = {
   chat_base_url: "https://api.deepseek.com",
   chat_api_key: "",
   chat_model: "deepseek-chat",
+  search_enabled: false,
+  search_api_key: "",
+  search_scope: "academic",
   source_lang: "en",
   target_lang: "zh-CN",
   output_variant: "dual",
