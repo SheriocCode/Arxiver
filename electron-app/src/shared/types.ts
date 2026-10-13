@@ -11,7 +11,9 @@ export interface AppConfig {
   chat_api_key: string;
   chat_model: string;
   search_enabled: boolean;
-  search_api_key: string;
+  search_provider: "tavily" | "bocha";
+  search_key_tavily: string;
+  search_key_bocha: string;
   search_scope: "academic" | "web";
   source_lang: string;
   target_lang: string;

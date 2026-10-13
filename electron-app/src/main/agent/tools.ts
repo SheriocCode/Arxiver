@@ -2,7 +2,7 @@ import * as library from "../library";
 import * as text from "./text";
 import * as websearch from "../websearch";
 import { importPaper } from "../importPaper";
-import { get as getConfig } from "../config";
+import { get as getConfig, searchKey, searchProvider, extractKey } from "../config";
 import type { ToolDef } from "./model";
 import type { PaperHit, PageRead } from "../../shared/types";
 
@@ -20,13 +20,16 @@ export interface ToolContext {
   progress?: (text: string) => void;
 }
 
-// 「联网搜索」总开关（读正文只需开关，不必有 Search Key）/ 有 Key 才可用搜索
+// 「联网搜索」总开关（读正文只需开关，不必有 Search Key）/ 有当前服务商的 Key 才可用搜索
 export function webEnabled(): boolean {
   return !!getConfig().search_enabled;
 }
 export function webSearchEnabled(): boolean {
   const c = getConfig();
-  return !!(c.search_enabled && c.search_api_key);
+  return !!(c.search_enabled && searchKey(c));
+}
+function webProvider(): websearch.SearchProvider {
+  return searchProvider(getConfig());
 }
 function webScope(): "academic" | "web" {
   return getConfig().search_scope === "web" ? "web" : "academic";
@@ -87,7 +90,7 @@ export const TOOLS: ToolImpl[] = [
   {
     def: {
       name: "search_web",
-      description: "联网搜索（Tavily），用于查找本地文库之外的最新论文、会议论文、项目主页、代码或任意资料。" +
+      description: "联网搜索（Tavily / 博查，在设置里选服务商），用于查找本地文库之外的最新论文、会议论文、项目主页、代码或任意资料。" +
         "结果以卡片展示给用户（标题/站点/年份/摘要片段/链接），可直接导入文库（有 arXiv 编号或 DOI 的条目）。" +
         "检索式要求：**一律用英文**；不要直接把用户的中文原句丢进来，先改写成 1~4 条**受控检索式**——" +
         "带领域词（如 computer vision / diffusion model）、带会议或年份锚点（如 NeurIPS 2025、CVPR 2024）、必要时加 site: 限定（site:arxiv.org、site:openreview.net）。" +
@@ -126,8 +129,9 @@ export const TOOLS: ToolImpl[] = [
         scope,
         mode: args.mode === "restrict" ? "restrict" : "prefer",
         timeRange,
-        maxResults: Number(args.max_results) || 8
-      }, getConfig().search_api_key);
+        maxResults: Number(args.max_results) || 8,
+        provider: webProvider()
+      }, searchKey(getConfig()));
       // 卡片在本轮对话里的全局编号（跨多次检索连续），模型据此用 [[card:N]] 引用
       const base = Number(ctx?.cardBase) || 0;
       hits.forEach((p, i) => { p.idx = base + i + 1; });
@@ -143,7 +147,7 @@ export const TOOLS: ToolImpl[] = [
   {
     def: {
       name: "fetch_url",
-      description: "读取一个网页或 PDF 的**正文**（优先 Tavily extract，取不到就自己抓），用来深入了解某篇论文的方法/实验/结论，" +
+      description: "读取一个网页或 PDF 的**正文**（优先服务端抽取，取不到就自己抓），用来深入了解某篇论文的方法/实验/结论，" +
         "或者读用户给出的链接。返回与 query 最相关的若干段落。" +
         "用法：在 search_web 找到候选后，挑最相关的 1~3 个（优先 arXiv abs/PDF、OpenReview、会议 proceedings 页）读进来再回答；" +
         "**不要凭搜索片段臆断具体数字、方法细节**。每轮最多读 3 个页面，读不动的链接就如实说明。" +
@@ -164,7 +168,7 @@ export const TOOLS: ToolImpl[] = [
       ctx?.progress?.("正在读取页面…");
       const page = await websearch.readPage(url, {
         query: String(args.query || "").trim(),
-        apiKey: getConfig().search_api_key,
+        apiKey: extractKey(getConfig()),
         maxChars: Number(args.max_chars) || 8000
       });
       ctx?.emit?.({
@@ -575,7 +579,7 @@ export async function runTool(name: string, argsJson: string, ctx?: ToolContext)
   const tool = TOOLS.find((t) => t.def.name === name);
   if (!tool) { return `未知工具：${name}`; }
   if (name === "search_web" && !webSearchEnabled()) {
-    return "「联网搜索」未开启或没填 Tavily API Key：请让用户在 设置 → AI 助手 → 联网搜索 里开启并保存，然后再试（在此之前不要猜测外部论文）。";
+    return `「联网搜索」未开启或没填 ${websearch.PROVIDER_NAMES[webProvider()]} 的 API Key：请让用户在 设置 → AI 助手 → 联网搜索 里检查并保存，然后再试（在此之前不要猜测外部论文）。`;
   }
   if (name === "fetch_url" && !webEnabled()) {
     return "「联网搜索」未开启：联网功能在 设置 → AI 助手 → 联网搜索 里，请让用户开启后再试。";

@@ -10,15 +10,21 @@ import { tokenize } from "./agent/text";
 
 const execFileAsync = promisify(execFile);
 
-// 联网搜索：Tavily（AI Agent 友好的搜索 API）。
-// 不再调用 arXiv 的查询接口（本机 IP 被限流）；论文类结果靠"受控查询 + 学术域名偏好"拿到，
+// 联网搜索：可选服务商（Tavily / 博查），两家都归一化成 RawHit 再走同一套清洗、去重、排序。
+// 不再调用 arXiv 的查询接口；论文类结果靠"受控查询 + 学术域名偏好"拿到，
 // 再按 URL 里的 arXiv 编号 / DOI 决定能不能一键导入。
 // 关键词与查询式必须是英文（由模型负责改写，见 agent 的系统提示词）。
 
-const ENDPOINT = "https://api.tavily.com/search";
+const TAVILY_SEARCH = "https://api.tavily.com/search";
+const TAVILY_EXTRACT = "https://api.tavily.com/extract";
+const BOCHA_SEARCH = "https://api.bochaai.com/v1/web-search";
 const TIMEOUT = 20000;
 const UA = "Arxiver/0.8 (+https://github.com/SheriocCode/Arxiver)";
 const MAX_QUERIES = 4;
+
+export type SearchProvider = "tavily" | "bocha";
+
+export const PROVIDER_NAMES: Record<SearchProvider, string> = { tavily: "Tavily", bocha: "博查" };
 
 // 学术优先白名单：用 prefer 模式（提升权重但不排他），避免把项目主页 / 博客直接过滤掉
 const ACADEMIC_DOMAINS = [
@@ -56,6 +62,15 @@ export interface WebSearchOptions {
   mode?: "prefer" | "restrict";
   timeRange?: "day" | "week" | "month" | "year";
   maxResults?: number;
+  provider?: SearchProvider;
+}
+
+// 两家服务商归一化后的原始结果
+interface RawHit {
+  title: string;
+  url: string;
+  content: string;
+  date: string;
 }
 
 interface TavilyResult {
@@ -64,6 +79,17 @@ interface TavilyResult {
   content?: string;
   score?: number;
   published_date?: string | null;
+}
+
+// 博查（Web Search API）的返回结构
+interface BochaItem {
+  name?: string;
+  url?: string;
+  snippet?: string;
+  summary?: string;
+  siteName?: string;
+  datePublished?: string;
+  dateLastCrawled?: string;
 }
 
 function hostOf(url: string): string {
@@ -89,6 +115,11 @@ function doiIn(url: string): string {
 // arXiv 摘要页的标题常带 "[2602.09016] " 前缀
 function cleanTitle(t: string): string {
   return String(t || "").replace(/^\s*\[(?:arXiv:)?[0-9a-z.\/-]{4,40}\]\s*/i, "").replace(/\s+/g, " ").trim();
+}
+
+// 博查的标题常带站点后缀（如 "[2509.15459] CAGE: … – arxiv"）
+function cleanBochaTitle(t: string): string {
+  return cleanTitle(t).replace(/\s*[-–—|]\s*(arxiv(\.org)?|researchgate|semanticscholar)\s*$/i, "").trim();
 }
 
 // 搜索结果里常混着页面样板（arXiv 摘要页的 Announce Type / Subjects / Title …），
@@ -137,14 +168,22 @@ function urlKey(url: string): string {
   }
 }
 
+function httpHint(status: number, detail: string): string {
+  const hint = status === 401 || status === 403 ? "API Key 无效或没有权限"
+    : status === 432 || status === 433 ? "套餐额度已用尽"
+      : status === 429 ? "请求过于频繁（稍后重试）"
+        : `HTTP ${status}`;
+  return `${hint}${detail ? "：" + detail : ""}`;
+}
+
 async function tavilySearch(
   key: string,
   body: Record<string, unknown>
-): Promise<{ results: TavilyResult[]; credits: number } | { error: string }> {
+): Promise<{ hits: RawHit[]; credits: number } | { error: string }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
   try {
-    const res = await fetch(ENDPOINT, {
+    const res = await fetch(TAVILY_SEARCH, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
       body: JSON.stringify(body),
@@ -155,14 +194,18 @@ async function tavilySearch(
       const detail = (() => {
         try { return String((JSON.parse(text) as any)?.detail?.error || ""); } catch { return text.slice(0, 200); }
       })();
-      const hint = res.status === 401 ? "API Key 无效"
-        : res.status === 432 || res.status === 433 ? "套餐额度已用尽"
-          : res.status === 429 ? "请求过于频繁（稍后重试）"
-            : `HTTP ${res.status}`;
-      return { error: `${hint}${detail ? "：" + detail : ""}` };
+      return { error: httpHint(res.status, detail) };
     }
     const json = (await res.json()) as { results?: TavilyResult[]; usage?: { credits?: number } };
-    return { results: json.results || [], credits: Number(json.usage?.credits || 0) };
+    return {
+      hits: (json.results || []).map((r) => ({
+        title: String(r.title || ""),
+        url: String(r.url || ""),
+        content: String(r.content || ""),
+        date: String(r.published_date || "")
+      })),
+      credits: Number(json.usage?.credits || 0)
+    };
   } catch (e) {
     return { error: logger.errText(e) };
   } finally {
@@ -170,7 +213,79 @@ async function tavilySearch(
   }
 }
 
-function toHit(r: TavilyResult): PaperHit | null {
+const BOCHA_FRESHNESS: Record<string, string> = { day: "oneDay", week: "oneWeek", month: "oneMonth", year: "oneYear" };
+
+// 博查：一次一条 query；summary=true 拿长摘要（比 snippet 完整）；没有 include_domains，学术权重靠本地排序
+async function bochaSearch(
+  key: string,
+  query: string,
+  o: { count: number; timeRange?: WebSearchOptions["timeRange"] }
+): Promise<{ hits: RawHit[]; credits: number } | { error: string }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
+  try {
+    const res = await fetch(BOCHA_SEARCH, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+      body: JSON.stringify({
+        query,
+        summary: true,
+        count: o.count,
+        freshness: o.timeRange ? BOCHA_FRESHNESS[o.timeRange] : "noLimit"
+      }),
+      signal: ctrl.signal
+    });
+    const text = await res.text().catch(() => "");
+    if (!res.ok) { return { error: httpHint(res.status, text.slice(0, 200)) }; }
+    const json = JSON.parse(text) as { code?: number; msg?: string; data?: { webPages?: { value?: BochaItem[] } } };
+    if (json.code !== undefined && json.code !== 200) {
+      return { error: `博查返回 ${json.code}${json.msg ? "：" + json.msg : ""}` };
+    }
+    const items = json.data?.webPages?.value || [];
+    return {
+      hits: items.filter((x) => x.url).map((x) => ({
+        title: cleanBochaTitle(String(x.name || "")),
+        url: String(x.url || ""),
+        content: String(x.summary || x.snippet || ""),
+        date: String(x.datePublished || x.dateLastCrawled || "")
+      })),
+      credits: 0
+    };
+  } catch (e) {
+    return { error: logger.errText(e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+interface OneQueryOpts {
+  scope: "academic" | "web";
+  mode: "prefer" | "restrict";
+  timeRange?: WebSearchOptions["timeRange"];
+  maxResults: number;
+}
+
+function searchOne(
+  provider: SearchProvider, key: string, query: string, o: OneQueryOpts
+): Promise<{ hits: RawHit[]; credits: number } | { error: string }> {
+  if (provider === "bocha") {
+    return bochaSearch(key, query, { count: o.maxResults, timeRange: o.timeRange });
+  }
+  return tavilySearch(key, {
+    query,
+    search_depth: "basic",
+    max_results: o.maxResults,
+    topic: "general",
+    include_usage: true,
+    include_published_date: true,
+    ...(o.scope === "academic"
+      ? { include_domains: ACADEMIC_DOMAINS, include_domains_mode: o.mode === "restrict" ? "restrict" : "prefer" }
+      : {}),
+    ...(o.timeRange ? { time_range: o.timeRange } : {})
+  });
+}
+
+function toHit(r: RawHit): PaperHit | null {
   const url = String(r.url || "").trim();
   const title = cleanTitle(String(r.title || ""));
   if (!url || !title) { return null; }
@@ -179,7 +294,7 @@ function toHit(r: TavilyResult): PaperHit | null {
   const snippet = tidySnippet(raw, /arxiv\.org\/abs\//i.test(url));
   const arxivId = arxivIdIn(url) || arxivIdIn(raw);
   const doi = doiIn(url);
-  const published = r.published_date ? String(r.published_date) : "";
+  const published = String(r.date || "");
   const date = /^\d{4}-\d{2}-\d{2}/.test(published) ? published.slice(0, 10) : "";
   return {
     key: doi ? "doi:" + doi.toLowerCase() : (arxivId ? "ax:" + arxivId : "url:" + urlKey(url)),
@@ -227,21 +342,14 @@ function merge(list: PaperHit[]): PaperHit[] {
 export async function searchWeb(o: WebSearchOptions, apiKey: string): Promise<PaperHit[]> {
   const queries = Array.from(new Set((o.queries || []).map((q) => String(q || "").trim()).filter(Boolean))).slice(0, MAX_QUERIES);
   if (!queries.length) { return []; }
+  const provider: SearchProvider = o.provider === "bocha" ? "bocha" : "tavily";
   const scope = o.scope === "web" ? "web" : "academic";
+  const mode = o.mode === "restrict" ? "restrict" : "prefer";
   const maxResults = Math.max(1, Math.min(20, Number(o.maxResults) || 8));
   const started = Date.now();
-  const results = await Promise.allSettled(queries.map((q) => tavilySearch(apiKey, {
-    query: q,
-    search_depth: "basic",
-    max_results: maxResults,
-    topic: "general",
-    include_usage: true,
-    include_published_date: true,
-    ...(scope === "academic"
-      ? { include_domains: ACADEMIC_DOMAINS, include_domains_mode: o.mode === "restrict" ? "restrict" : "prefer" }
-      : {}),
-    ...(o.timeRange ? { time_range: o.timeRange } : {})
-  })));
+  const results = await Promise.allSettled(
+    queries.map((q) => searchOne(provider, apiKey, q, { scope, mode, timeRange: o.timeRange, maxResults }))
+  );
   const flat: PaperHit[] = [];
   let credits = 0;
   const errors: string[] = [];
@@ -253,14 +361,18 @@ export async function searchWeb(o: WebSearchOptions, apiKey: string): Promise<Pa
         return;
       }
       credits += r.value.credits;
-      const hits = r.value.results.map(toHit).filter((x): x is PaperHit => !!x);
+      const hits = r.value.hits.map(toHit).filter((x): x is PaperHit => !!x);
       logger.info("websearch", `「${queries[i].slice(0, 60)}」→ ${hits.length} 条`);
       flat.push(...hits);
     } else {
       errors.push(logger.errText(r.reason));
     }
   });
-  const merged = merge(flat)
+  // 博查没有域名限制参数：学术 + restrict 时用本地白名单兜住（Tavily 端已过滤，这里是等价操作）
+  const pool = scope === "academic" && mode === "restrict"
+    ? flat.filter((p) => ACADEMIC_DOMAINS.some((d) => p.source === d || p.source.endsWith("." + d)))
+    : flat;
+  const merged = merge(pool)
     .sort((a, b) => {
       // 1) 学术域名优先 2) 可导入（有 arXiv/DOI）优先 3) 新→旧
       const tier = (p: PaperHit): number => (siteName(p.source) ? 1 : 0) + (p.arxivId || p.doi ? 1 : 0);
@@ -268,7 +380,7 @@ export async function searchWeb(o: WebSearchOptions, apiKey: string): Promise<Pa
       if (t !== 0) { return t; }
       return (b.year || "0").localeCompare(a.year || "0");
     });
-  logger.info("websearch", `合计 ${merged.length} 条，用量 ${credits} credits，耗时 ${Date.now() - started}ms` +
+  logger.info("websearch", `${PROVIDER_NAMES[provider]} 合计 ${merged.length} 条，用量 ${credits} credits，耗时 ${Date.now() - started}ms` +
     (errors.length ? `，失败 ${errors.length} 个查询` : ""));
   if (!merged.length && errors.length) {
     throw new Error(errors[0]);
@@ -297,7 +409,8 @@ export function resultsForModel(list: PaperHit[], credits = 0): string {
 
 // ---- 读正文（fetch_url）----
 // 优先 Tavily extract（带 query 让服务端挑相关段落，1 credit / 5 个 URL）；
-// 取不到（没配 Key / 该 URL 失败）再自己抓，自己抓时做 SSRF 防护并本地挑段落。
+// 取不到（没配 Tavily Key / 该 URL 失败）再自己抓，自己抓时做 SSRF 防护并本地挑段落。
+// 博查没有 extract 接口，所以读正文固定用 Tavily 的 Key（有没有配都行，没配就本地抓）。
 
 export interface PageContent {
   url: string;
@@ -436,7 +549,7 @@ async function tavilyExtract(url: string, query: string, apiKey: string): Promis
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
   try {
-    const res = await fetch("https://api.tavily.com/extract", {
+    const res = await fetch(TAVILY_EXTRACT, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
       body: JSON.stringify({

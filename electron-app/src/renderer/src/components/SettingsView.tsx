@@ -72,7 +72,9 @@ export default function SettingsView({
         translate_model: config.translate_model, local_model: config.local_model, local_gpu_layers: config.local_gpu_layers,
         local_extra_args: config.local_extra_args,
         chat_base_url: config.chat_base_url, chat_api_key: config.chat_api_key, chat_model: config.chat_model,
-        search_enabled: config.search_enabled, search_api_key: config.search_api_key, search_scope: config.search_scope,
+        search_enabled: config.search_enabled, search_provider: config.search_provider,
+        search_key_tavily: config.search_key_tavily, search_key_bocha: config.search_key_bocha,
+        search_scope: config.search_scope,
         threads: config.threads, timeout: config.timeout, source_lang: config.source_lang, target_lang: config.target_lang
       });
     }
@@ -80,6 +82,8 @@ export default function SettingsView({
 
   const set = <K extends keyof AppConfig>(k: K, v: AppConfig[K]): void => setForm((f) => ({ ...f, [k]: v }));
   const cur = SECTIONS.find((s) => s.id === section) || SECTIONS[0];
+  const searchProvider: "tavily" | "bocha" = form.search_provider === "bocha" ? "bocha" : "tavily";
+  const searchKeyValue = (searchProvider === "bocha" ? form.search_key_bocha : form.search_key_tavily) || "";
   const inputStyle = { height: 34, minWidth: 240, background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", color: "var(--text)", padding: "0 10px", outline: "none" } as const;
 
   async function save(): Promise<void> {
@@ -274,20 +278,32 @@ export default function SettingsView({
                   </div>
                 </Group>
                 <Group title="联网搜索">
-                  <Row label="启用联网搜索" desc="允许 AI 用 Tavily 搜索文库外的论文与资料；只发送检索式，不上传本地文献内容。默认关闭">
+                  <Row label="启用联网搜索" desc="允许 AI 搜索文库外的论文与资料；只发送检索式，不上传本地文献内容。默认关闭">
                     <Switch on={!!form.search_enabled} onToggle={() => set("search_enabled", !form.search_enabled)} />
                   </Row>
-                  <Row label="Tavily API Key" desc="在 tavily.com 注册后获取；每次提问约消耗 3~6 credits（免费额度 1000/月）">
-                    <input type="password" style={inputStyle} value={form.search_api_key || ""} onChange={(e) => set("search_api_key", e.target.value)} />
+                  <Row label="搜索服务商" desc="Tavily：学术结果稳、域名加权更细；博查：国内网络友好、返回摘要更完整（可在两家之间随时切换对比）">
+                    <select value={searchProvider} onChange={(e) => set("search_provider", e.target.value as AppConfig["search_provider"])} disabled={!form.search_enabled}>
+                      <option value="tavily">Tavily</option>
+                      <option value="bocha">博查（Bocha）</option>
+                    </select>
                   </Row>
+                  {searchProvider === "bocha" ? (
+                    <Row label="博查 API Key" desc="在 open.bochaai.com 控制台获取（Bearer sk-…）">
+                      <input type="password" style={inputStyle} value={form.search_key_bocha || ""} onChange={(e) => set("search_key_bocha", e.target.value)} />
+                    </Row>
+                  ) : (
+                    <Row label="Tavily API Key" desc="在 tavily.com 注册后获取；每次提问约消耗 3~6 credits（免费额度 1000/月）。读正文用的也是它">
+                      <input type="password" style={inputStyle} value={form.search_key_tavily || ""} onChange={(e) => set("search_key_tavily", e.target.value)} />
+                    </Row>
+                  )}
                   <Row label="检索范围" desc="学术优先会对 arXiv / 会议 / 期刊等域名加权（不排他），也可切换到全网">
                     <select value={form.search_scope || "academic"} onChange={(e) => set("search_scope", e.target.value as AppConfig["search_scope"])} disabled={!form.search_enabled}>
                       <option value="academic">学术优先</option>
                       <option value="web">全网</option>
                     </select>
                   </Row>
-                  {form.search_enabled && !form.search_api_key ? (
-                    <div style={{ color: "var(--danger)", fontSize: 12 }}>还没填 Tavily API Key，联网搜索不会生效。</div>
+                  {form.search_enabled && !searchKeyValue ? (
+                    <div style={{ color: "var(--danger)", fontSize: 12 }}>还没填 {searchProvider === "bocha" ? "博查" : "Tavily"} API Key，联网搜索不会生效。</div>
                   ) : null}
                   <div className="modal-foot" style={{ border: 0, padding: "4px 0" }}>
                     <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>

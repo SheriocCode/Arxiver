@@ -16,9 +16,11 @@ export interface AppConfig {
   chat_base_url: string;
   chat_api_key: string;
   chat_model: string;
-  // 联网搜索（AI 助手，默认关闭）：Tavily
+  // 联网搜索（AI 助手，默认关闭）：可选服务商，两家 Key 各自保存，方便切换对比
   search_enabled: boolean;
-  search_api_key: string;
+  search_provider: "tavily" | "bocha";
+  search_key_tavily: string;
+  search_key_bocha: string;
   search_scope: "academic" | "web";
   source_lang: string;
   target_lang: string;
@@ -44,7 +46,9 @@ const DEFAULT_CONFIG: AppConfig = {
   chat_api_key: "",
   chat_model: "deepseek-chat",
   search_enabled: false,
-  search_api_key: "",
+  search_provider: "tavily",
+  search_key_tavily: "",
+  search_key_bocha: "",
   search_scope: "academic",
   source_lang: "en",
   target_lang: "zh-CN",
@@ -88,6 +92,20 @@ function save(): void {
 
 export function get(): AppConfig {
   return { ...load() };
+}
+
+// 联网搜索当前服务商的 Key
+export function searchKey(c: AppConfig = get()): string {
+  return String((c.search_provider === "bocha" ? c.search_key_bocha : c.search_key_tavily) || "");
+}
+
+// 读正文（fetch_url）用的 Key：只有 Tavily 提供 extract 接口，所以固定用它的 Key（没有就本地抓）
+export function extractKey(c: AppConfig = get()): string {
+  return String(c.search_key_tavily || "");
+}
+
+export function searchProvider(c: AppConfig = get()): "tavily" | "bocha" {
+  return c.search_provider === "bocha" ? "bocha" : "tavily";
 }
 
 export function update(patch: Partial<AppConfig>): AppConfig {
