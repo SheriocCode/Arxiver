@@ -14,6 +14,8 @@
   <a href="https://sherioccode.github.io/Arxiver/changelog.html">更新日志</a>
 </p>
 
+![1791875330821](assets/README/1791875330821.png)
+
 ## 快速开始
 
 1. 从 [Releases](https://github.com/SheriocCode/Arxiver/releases/latest) 下载并运行安装包。
