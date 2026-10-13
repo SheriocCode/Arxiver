@@ -1,5 +1,14 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { PaperHit } from "../shared/types";
 import * as logger from "./logger";
+import { engineDir, pythonExe } from "./paths";
+import { tokenize } from "./agent/text";
+
+const execFileAsync = promisify(execFile);
 
 // 联网搜索：Tavily（AI Agent 友好的搜索 API）。
 // 不再调用 arXiv 的查询接口（本机 IP 被限流）；论文类结果靠"受控查询 + 学术域名偏好"拿到，
@@ -8,6 +17,7 @@ import * as logger from "./logger";
 
 const ENDPOINT = "https://api.tavily.com/search";
 const TIMEOUT = 20000;
+const UA = "Arxiver/0.8 (+https://github.com/SheriocCode/Arxiver)";
 const MAX_QUERIES = 4;
 
 // 学术优先白名单：用 prefer 模式（提升权重但不排他），避免把项目主页 / 博客直接过滤掉
@@ -283,4 +293,207 @@ export function resultsForModel(list: PaperHit[], credits = 0): string {
     const site = p.venue && p.venue !== p.source ? `${p.venue}（${p.source}）` : p.source;
     return `${p.idx ?? i + 1}. ${p.title}\n   ${site}${p.year ? ` · ${p.year}` : ""}${ids ? ` · ${ids}` : ""}\n   ${clip(p.abstract, 260)}\n   ${p.url}`;
   }).join("\n\n");
+}
+
+// ---- 读正文（fetch_url）----
+// 优先 Tavily extract（带 query 让服务端挑相关段落，1 credit / 5 个 URL）；
+// 取不到（没配 Key / 该 URL 失败）再自己抓，自己抓时做 SSRF 防护并本地挑段落。
+
+export interface PageContent {
+  url: string;
+  title: string;
+  domain: string;
+  text: string;
+  via: string;
+}
+
+const MAX_BYTES = 3 * 1024 * 1024;
+const PRIVATE_V4 = /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.|100\.(6[4-9]|[7-9]\d|1[0-2]\d)\.)/;
+function isPrivateHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h.endsWith(".local") || h.endsWith(".internal")) { return true; }
+  if (PRIVATE_V4.test(h) || h === "::1" || h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80")) { return true; }
+  return false;
+}
+
+async function assertPublicUrl(raw: string): Promise<URL> {
+  let u: URL;
+  try { u = new URL(raw); } catch { throw new Error("不是合法的网址"); }
+  if (u.protocol !== "http:" && u.protocol !== "https:") { throw new Error("只允许 http / https 链接"); }
+  if (isPrivateHost(u.hostname)) { throw new Error("不允许访问内网 / 本机地址"); }
+  // DNS 解析后再确认一次（防内网域名 / 重绑定）
+  try {
+    const dns = await import("node:dns/promises");
+    const addrs = await dns.lookup(u.hostname, { all: true });
+    if (addrs.some((a) => isPrivateHost(a.address))) { throw new Error("不允许访问内网 / 本机地址"); }
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("不允许")) { throw e; }
+    /* 解析失败就让 fetch 去报错 */
+  }
+  return u;
+}
+
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr)[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, "&")
+    .replace(/[ \t\u00a0]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function titleOf(html: string, url: string): string {
+  const t = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1];
+  return t ? htmlToText(t).slice(0, 200) : hostOf(url);
+}
+
+async function pdfToText(bytes: Buffer, name: string): Promise<string> {
+  const file = path.join(os.tmpdir(), `arxiver-fetch-${Date.now()}.pdf`);
+  fs.writeFileSync(file, bytes);
+  try {
+    const { stdout } = await execFileAsync(pythonExe(), [path.join(engineDir(), "extract_text.py"), file], {
+      cwd: engineDir(),
+      maxBuffer: 64 * 1024 * 1024,
+      env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" }
+    });
+    const pages = JSON.parse(stdout) as { text?: string }[];
+    return pages.map((p) => p.text || "").join("\n\n");
+  } finally {
+    try { fs.unlinkSync(file); } catch { /* ignore */ }
+  }
+}
+
+// 自己抓：手动跟随跳转并逐跳校验，限体积 3MB
+async function fetchPageText(raw: string): Promise<{ title: string; text: string; finalUrl: string }> {
+  let url = raw;
+  for (let hop = 0; hop < 4; hop++) {
+    const u = await assertPublicUrl(url);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 20000);
+    let res: Response;
+    try {
+      res = await fetch(u, { headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,application/pdf,text/plain,*/*" }, redirect: "manual", signal: ctrl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("location");
+      if (!loc) { throw new Error(`HTTP ${res.status}（没有跳转地址）`); }
+      url = new URL(loc, u).toString();
+      continue;
+    }
+    if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+    const type = String(res.headers.get("content-type") || "").toLowerCase();
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > MAX_BYTES) { throw new Error("页面太大，已放弃读取"); }
+    const finalUrl = res.url || u.toString();
+    if (type.includes("application/pdf")) {
+      return { title: hostOf(finalUrl), text: await pdfToText(buf, "fetched.pdf"), finalUrl };
+    }
+    const body = buf.toString("utf8");
+    if (type.includes("html") || /<html|<!doctype/i.test(body.slice(0, 800))) {
+      return { title: titleOf(body, finalUrl), text: htmlToText(body), finalUrl };
+    }
+    return { title: hostOf(finalUrl), text: body.trim(), finalUrl };
+  }
+  throw new Error("跳转次数过多");
+}
+
+// 本地挑段落：把正文按空行切块，按与 query 的词重合度打分，拼到预算为止
+function pickPassages(text: string, query: string, budget: number): string {
+  const clean = String(text || "").replace(/\r/g, "").trim();
+  if (!clean) { return ""; }
+  const paras = clean.split(/\n{2,}/).map((p) => p.trim()).filter((p) => p.length > 40);
+  const terms = tokenize(query || "");
+  if (!paras.length) { return clean.slice(0, budget); }
+  if (!terms.length) { return paras.join("\n\n").slice(0, budget); }
+  const scored = paras.map((p, i) => {
+    const set = new Set(tokenize(p));
+    let hit = 0;
+    for (const t of new Set(terms)) { if (set.has(t)) { hit += 1; } }
+    // 轻微偏好靠前的段落
+    return { p, i, score: hit / Math.max(1, new Set(terms).size) + (i < 3 ? 0.15 : 0) };
+  }).sort((a, b) => b.score - a.score || a.i - b.i);
+  const out: string[] = [];
+  let used = 0;
+  for (const s of scored) {
+    if (s.score <= 0.15 && out.length) { break; }
+    if (used + s.p.length > budget) { continue; }
+    out.push(s.p);
+    used += s.p.length;
+    if (used > budget * 0.9 || out.length >= 6) { break; }
+  }
+  return (out.length ? out : [paras[0]]).join("\n\n---\n\n");
+}
+
+async function tavilyExtract(url: string, query: string, apiKey: string): Promise<{ text: string; credits: number } | { error: string }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    const res = await fetch("https://api.tavily.com/extract", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+      body: JSON.stringify({
+        urls: url,
+        ...(query ? { query, chunks_per_source: 4 } : {}),
+        extract_depth: "basic",
+        format: "text",
+        include_usage: true,
+        timeout: 25
+      }),
+      signal: ctrl.signal
+    });
+    const text = await res.text();
+    if (!res.ok) { return { error: `Tavily extract HTTP ${res.status}：${text.slice(0, 160)}` }; }
+    const json = JSON.parse(text) as { results?: { url: string; raw_content?: string }[]; failed_results?: { error?: string }[]; usage?: { credits?: number } };
+    const first = (json.results || [])[0];
+    if (!first || !first.raw_content) {
+      return { error: String(json.failed_results?.[0]?.error || "Tavily 没取到内容") };
+    }
+    return { text: first.raw_content, credits: Number(json.usage?.credits || 0) };
+  } catch (e) {
+    return { error: logger.errText(e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function readPage(url: string, opts: { query?: string; apiKey?: string; maxChars?: number } = {}): Promise<PageContent> {
+  const budget = Math.max(2000, Math.min(20000, Number(opts.maxChars) || 8000));
+  const query = String(opts.query || "").trim();
+  const key = String(opts.apiKey || "");
+  const started = Date.now();
+  let text = "";
+  let title = "";
+  let via = "";
+  let finalUrl = url;
+  if (key) {
+    const r = await tavilyExtract(url, query, key);
+    if ("text" in r) {
+      text = r.text;
+      via = `Tavily extract${r.credits ? `（${r.credits} credits）` : ""}`;
+    } else {
+      logger.warn("websearch", `Tavily extract 失败，改用直接抓取：${r.error}`);
+    }
+  }
+  if (!text) {
+    const r = await fetchPageText(url);
+    title = r.title;
+    finalUrl = r.finalUrl;
+    text = pickPassages(r.text, query, budget);
+    via = "直接抓取";
+  } else {
+    // Tavily 已按 query 重排过，这里只做长度与格式收敛
+    text = text.replace(/\s*\n\s*/g, "\n").trim().slice(0, budget);
+    title = hostOf(finalUrl);
+  }
+  if (!title) { title = hostOf(finalUrl); }
+  logger.info("websearch", `读取 ${hostOf(finalUrl)}（${via}，${text.length} 字，${Date.now() - started}ms）`);
+  return { url: finalUrl, title, domain: hostOf(finalUrl), text, via };
 }

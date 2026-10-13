@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX, type MutableRefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type JSX, type MutableRefObject } from "react";
 import type { LibraryDoc, Conversation, ConversationSummary, PaperHit, ConvBlock } from "../../../shared/types";
 import { Icon } from "./Icons";
 import { formatDate } from "../lib/format";
@@ -66,16 +66,23 @@ export default function DetailPanel({
             <h3>未选择文献</h3>
             <p>从中间列表选择一篇文献以查看信息、PDF 预览、笔记与标签。</p>
           </div>
-        ) : (
-          <div className={"tab-panel" + (lib.tab === "ai" ? " ai-tab" : "")}>
+        ) : null}
+        {/* 其它标签：只在不是 AI 时渲染（避免空包装层占满高度把 AI 面板挤出视口） */}
+        {doc && lib.tab !== "ai" ? (
+          <div className="tab-panel">
             {lib.tab === "info" && (lib.editMode
               ? <InfoEdit lib={lib} doc={doc} />
               : <InfoDisplay lib={lib} doc={doc} onOpenView={openDoc} citeDoi={settings.citeDoi} />)}
             {lib.tab === "notes" && <NotesPanel lib={lib} doc={doc} />}
             {lib.tab === "tags" && <TagsPanel lib={lib} doc={doc} />}
-            {lib.tab === "ai" && settings.aiEnabled && <AiPanel lib={lib} doc={doc} settings={settings} selection={aiSelection} onCite={onCite || (() => {})} onClearSelection={onClearSelection || (() => {})} openDocs={openDocs || []} resolveDocTitle={(id) => lib.documents.find((d) => d.id === id)?.title || id} />}
           </div>
-        )}
+        ) : null}
+        {/* AI 面板常驻挂载（切到别的标签只是隐藏），否则切一次标签会话就被卸载重建，上下文全丢 */}
+        {settings.aiEnabled && doc ? (
+          <div className="tab-panel ai-tab" hidden={lib.tab !== "ai"}>
+            <AiPanel lib={lib} doc={doc} settings={settings} active={lib.tab === "ai"} selection={aiSelection} onCite={onCite || (() => {})} onClearSelection={onClearSelection || (() => {})} openDocs={openDocs || []} resolveDocTitle={(id) => lib.documents.find((d) => d.id === id)?.title || id} />
+          </div>
+        ) : null}
       </div>
     </aside>
   );
@@ -246,7 +253,7 @@ function TagsPanel({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Elem
   );
 }
 
-interface AiToolTrace { name: string; args?: string; content?: string; ms?: number; at?: number }
+interface AiToolTrace { name: string; args?: string; content?: string; ms?: number; at?: number; progress?: string }
 interface AiConfirm { confirmId: string; name: string; args: string; status: "pending" | "approved" | "rejected" }
 // 按到达顺序渲染：模型可能"检索 → 分析 → 再检索 → 作答"，界面要还原这个顺序
 type AiBlock = ConvBlock | { kind: "confirm"; items: AiConfirm[] };
@@ -491,8 +498,9 @@ function PaperCards({ papers, jumped, state, inLibrary, onImport, onOpen }: {
   );
 }
 
-function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, openDocs, resolveDocTitle }: {
+function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, openDocs, resolveDocTitle, active }: {
   lib: LibraryApi;
+  active?: boolean;
   doc: LibraryDoc;
   settings: AppSettings;
   selection?: { text: string; page: number } | null;
@@ -511,6 +519,15 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
   const [atOpen, setAtOpen] = useState(false);
   const [histQuery, setHistQuery] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // 输入框随内容长高（最多 120px，超过就内部滚动）。
+  // 注意：面板隐藏时 scrollHeight=0，不能把 0 写进 height，否则输入框变成 0 高、没法点击。
+  const growComposer = useCallback((): void => {
+    const el = inputRef.current;
+    if (!el || el.clientWidth === 0) { return; }
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+  }, []);
+  useEffect(() => { growComposer(); }, [input, active, growComposer]);
   const turnRef = useRef("");
   const turnsRef = useRef<AiTurn[]>([]);
   const convIdRef = useRef("");
@@ -520,6 +537,13 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
   const [paperOpen, setPaperOpen] = useState<Record<string, boolean>>({});
   const [jumped, setJumped] = useState("");
   const [pendingJump, setPendingJump] = useState(0);
+  // 长耗时工具运行时每秒推进一次，让"已 Ns"和进度看起来是活的
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!turns.some((t) => toolsOf(t.blocks || []).some((x) => x.content === undefined))) { return; }
+    const id = window.setInterval(() => setTick((v) => v + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [turns]);
 
   // [[card:N]] → 展开那一批（等 React 提交后再滚动，避免被重渲染打断）
   const jumpToCard = (n: number): void => {
@@ -681,6 +705,25 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
           else { blocks.push({ kind: "tools", items: [item] }); }
           cur.blocks = blocks;
         }
+        else if (e.type === "progress") {
+          // 长耗时工具的进度：挂到最近一个还没返回的调用上，界面就能看到它在动
+          const blocks = (cur.blocks || []).slice();
+          let done = false;
+          for (let bi = blocks.length - 1; bi >= 0 && !done; bi--) {
+            const b = blocks[bi];
+            if (b.kind !== "tools") { continue; }
+            const items = b.items.slice();
+            for (let j = items.length - 1; j >= 0; j--) {
+              if (items[j].content === undefined && (!e.name || items[j].name === e.name)) {
+                items[j] = { ...items[j], progress: e.text || "" };
+                blocks[bi] = { kind: "tools", items };
+                done = true;
+                break;
+              }
+            }
+          }
+          cur.blocks = blocks;
+        }
         else if (e.type === "tool_result") {
           const blocks = (cur.blocks || []).slice();
           let done = false;
@@ -711,6 +754,14 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
           // 每次检索单独成块（保留"哪一批是第几次搜的"），块内按 key 去重
           const add = e.papers.filter((p) => p && p.title);
           if (add.length) { cur.blocks = [...(cur.blocks || []), { kind: "papers", items: add }]; }
+        }
+        else if (e.type === "read" && e.read) {
+          const item = e.read;
+          const blocks = (cur.blocks || []).slice();
+          const last = blocks[blocks.length - 1];
+          if (last && last.kind === "read") { blocks[blocks.length - 1] = { kind: "read", items: [...last.items, item] }; }
+          else { blocks.push({ kind: "read", items: [item] }); }
+          cur.blocks = blocks;
         }
         else if (e.type === "usage") { cur.usage = e.usage; }
         else if (e.type === "error") { cur.error = e.error || "出错了"; cur.streaming = false; }
@@ -748,7 +799,8 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
         if (!cards.length) { return { role: t.role, content: t.text }; }
         let digest = "";
         for (const p of cards.slice(0, 40)) {
-          const line = `#${p.idx} ${p.title}（${[p.venue || p.source, p.year].filter(Boolean).join(" · ")}）\n`;
+          const ids = [p.arxivId ? `arXiv:${p.arxivId}` : "", p.doi ? `doi:${p.doi}` : ""].filter(Boolean).join(" ");
+          const line = `#${p.idx} ${p.title}（${[p.venue || p.source, p.year].filter(Boolean).join(" · ")}${ids ? `，${ids}` : ""}｜${p.url}）\n`;
           if (digest.length + line.length > 3000) { break; }
           digest += line;
         }
@@ -883,12 +935,34 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
                         if (b.kind === "confirm") {
                           return b.items.map((c) => <ConfirmCard key={c.confirmId} item={c} onDecide={decide} />);
                         }
+                        if (b.kind === "read") {
+                          return (
+                            <div key={bi} className="read-block">
+                              {b.items.map((r, j) => (
+                                <div key={j} className="read-line" title={`${r.title || ""}${r.title ? " · " : ""}${r.url}${r.via ? ` · ${r.via}` : ""}`}>
+                                  <Icon name="book" small />
+                                  <span className="read-label">已读正文</span>
+                                  <span className="read-title">{r.title || r.domain}</span>
+                                  <span className="read-meta">{r.domain}{r.chars ? ` · ${(r.chars / 1000).toFixed(1)}k 字` : ""}</span>
+                                  <div className="od-fill" />
+                                  <button type="button" className="read-open" title="在浏览器打开" onClick={() => { void window.api.openExternal(r.url); }}><Icon name="external" small /></button>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        }
                         if (b.kind === "tools") {
+                          const pending = b.items.filter((x) => x.content === undefined).length;
                           return (
                             <details key={bi} className="ai-tools">
-                              <summary>工具调用（{b.items.length}）</summary>
+                              <summary>工具调用（{b.items.length}）{pending > 0 ? <span className="ai-tool-run">运行中…</span> : null}</summary>
                               {b.items.map((tool, j) => (
-                                <div key={j} className="ai-tool"><span className="ai-tool-name">{tool.name}</span>{tool.args ? <span className="ai-tool-args">{tool.args}</span> : null}</div>
+                                <div key={j} className="ai-tool">
+                                  {tool.content === undefined ? <span className="spinner" /> : null}
+                                  <span className="ai-tool-name">{tool.name}</span>
+                                  {tool.content === undefined && tool.progress ? <span className="ai-tool-progress">{tool.progress}</span> : null}
+                                  {tool.args ? <span className="ai-tool-args">{tool.args}</span> : null}
+                                </div>
                               ))}
                             </details>
                           );
@@ -913,6 +987,21 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
                       });
                     })()}
                     {t.error ? <div className="ai-error">{t.error}</div> : null}
+                    {(() => {
+                      const pend = toolsOf(t.blocks || []).filter((x) => x.content === undefined);
+                      if (!pend.length) { return null; }
+                      const last = pend[pend.length - 1];
+                      const secs = Math.max(0, Math.round((Date.now() - (last.at || Date.now())) / 1000));
+                      return (
+                        <div className="ai-running">
+                          <span className="spinner" />
+                          <span className="ai-running-name">正在执行 {last.name}…</span>
+                          {last.progress ? <span className="ai-running-hint">{last.progress}</span> : null}
+                          <div className="od-fill" />
+                          <span className="ai-running-time">已 {secs}s</span>
+                        </div>
+                      );
+                    })()}
                     {t.streaming && !t.text ? <span className="typing"><i /><i /><i /></span> : null}
                     {t.usage ? <div className="ai-usage">tokens: {t.usage.prompt_tokens}+{t.usage.completion_tokens}</div> : null}
                   </>
@@ -950,7 +1039,17 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
             ))}
           </div>
         ) : null}
-        <form className="composer-box" onSubmit={(e) => { e.preventDefault(); send(); }}>
+        <form
+          className="composer-box"
+          onSubmit={(e) => { e.preventDefault(); send(); }}
+          onMouseDown={(e) => {
+            // 点输入框区域的空白处也聚焦到输入框（按钮/引用胶囊等仍走各自逻辑）
+            const t = e.target as HTMLElement | null;
+            if (t && t.closest && t.closest("button, textarea, a, select, input")) { return; }
+            e.preventDefault();
+            inputRef.current?.focus();
+          }}
+        >
           <textarea
             ref={inputRef}
             placeholder="随心输入，@ 引用已打开的文献"

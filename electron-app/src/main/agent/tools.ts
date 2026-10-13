@@ -1,9 +1,10 @@
 import * as library from "../library";
 import * as text from "./text";
 import * as websearch from "../websearch";
+import { importPaper } from "../importPaper";
 import { get as getConfig } from "../config";
 import type { ToolDef } from "./model";
-import type { PaperHit } from "../../shared/types";
+import type { PaperHit, PageRead } from "../../shared/types";
 
 export interface ToolImpl {
   def: ToolDef;
@@ -13,11 +14,16 @@ export interface ToolImpl {
 
 // 工具可以把结构化结果额外推给界面（如检索到的论文卡片），并把本轮已发出卡片的编号传进来
 export interface ToolContext {
-  emit?: (event: { type: "papers"; papers: PaperHit[] }) => void;
+  emit?: (event: { type: "papers"; papers: PaperHit[] } | { type: "read"; read: PageRead }) => void;
   cardBase?: number;
+  // 长耗时工具（如 import_paper）用它在界面上报进度，避免看起来像卡死
+  progress?: (text: string) => void;
 }
 
-// 「联网搜索」开关与 API Key 来自 设置 → AI 助手（config.json）
+// 「联网搜索」总开关（读正文只需开关，不必有 Search Key）/ 有 Key 才可用搜索
+export function webEnabled(): boolean {
+  return !!getConfig().search_enabled;
+}
 export function webSearchEnabled(): boolean {
   const c = getConfig();
   return !!(c.search_enabled && c.search_api_key);
@@ -36,6 +42,45 @@ function aliveDocs(): DocMeta[] {
 
 function findDoc(id: string): DocMeta | undefined {
   return aliveDocs().find((d) => d.id === id);
+}
+
+// 分类支持按名称或 id 指定（模型通常只知道名字）
+function findCollection(nameOrId: string): { id: string; name: string } | undefined {
+  const s = String(nameOrId || "").trim();
+  if (!s) { return undefined; }
+  const cols = library.list().collections;
+  return cols.find((c) => c.id === s) || cols.find((c) => c.name === s);
+}
+
+// 名称对不上时，别让用户自己去核对：把最接近的候选直接列出来
+function nearCollections(nameOrId: string): string {
+  const s = String(nameOrId || "").trim();
+  const cols = library.list().collections;
+  if (!cols.length) { return `（当前没有任何分类）`; }
+  const lower = s.toLowerCase();
+  const scored = cols.map((c) => {
+    const n = c.name.toLowerCase();
+    let score = 0;
+    if (n.includes(lower) || lower.includes(n)) { score = 2; }
+    else {
+      // 共同字符比例（对 123124 vs 124124 这类只差一位的名字很有效）
+      const set = new Set(n);
+      const common = Array.from(new Set(lower)).filter((ch) => set.has(ch)).length;
+      score = common / Math.max(1, Math.max(set.size, new Set(lower).size));
+    }
+    return { c, score };
+  }).sort((a, b) => b.score - a.score);
+  const top = scored.slice(0, 3).filter((x) => x.score > 0.4).map((x) => `「${x.c.name}」(id: ${x.c.id})`);
+  const all = cols.map((c) => `「${c.name}」`).join("、");
+  return `没找到分类「${s}」。${top.length ? `最接近的是 ${top.join("、")}，是它吗？` : ""}现有分类：${all}。` +
+    `请不要让用户自己去核对拼写——上面就是全部候选，直接问用户确认要操作哪一个。`;
+}
+
+function nearTags(name: string): string {
+  const tags = library.list().tag_names || [];
+  const s = String(name || "").trim().toLowerCase();
+  const near = tags.filter((t) => t.toLowerCase().includes(s) || s.includes(t.toLowerCase())).slice(0, 5);
+  return near.length ? `（相近的标签：${near.map((t) => `「${t}」`).join("、")}）` : "";
 }
 
 export const TOOLS: ToolImpl[] = [
@@ -97,8 +142,45 @@ export const TOOLS: ToolImpl[] = [
   },
   {
     def: {
+      name: "fetch_url",
+      description: "读取一个网页或 PDF 的**正文**（优先 Tavily extract，取不到就自己抓），用来深入了解某篇论文的方法/实验/结论，" +
+        "或者读用户给出的链接。返回与 query 最相关的若干段落。" +
+        "用法：在 search_web 找到候选后，挑最相关的 1~3 个（优先 arXiv abs/PDF、OpenReview、会议 proceedings 页）读进来再回答；" +
+        "**不要凭搜索片段臆断具体数字、方法细节**。每轮最多读 3 个页面，读不动的链接就如实说明。" +
+        "引用读到的内容时给出链接，不要用 [[cite:…]]。",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "要读的网址（http/https；PDF 链接也行）" },
+          query: { type: "string", description: "可选：你想从这一页了解什么（英文或中文皆可），用于挑出最相关的段落" },
+          max_chars: { type: "number", description: "可选：返回文本上限，默认 8000 字" }
+        },
+        required: ["url"]
+      }
+    },
+    async run(args, ctx) {
+      const url = String(args.url || "").trim();
+      if (!url) { return "url 不能为空"; }
+      ctx?.progress?.("正在读取页面…");
+      const page = await websearch.readPage(url, {
+        query: String(args.query || "").trim(),
+        apiKey: getConfig().search_api_key,
+        maxChars: Number(args.max_chars) || 8000
+      });
+      ctx?.emit?.({
+        type: "read",
+        read: { url: page.url, title: page.title, domain: page.domain, chars: page.text.length, via: page.via }
+      });
+      if (!page.text) {
+        return `已打开 ${page.url}，但没有取到可用正文（可能是动态页面或需要登录）。可以换个链接（如 arXiv abs 页 / PDF）再试。`;
+      }
+      return `【已读取】${page.title}\n来源：${page.url}（${page.via}，正文约 ${page.text.length} 字）\n\n${page.text}`;
+    }
+  },
+  {
+    def: {
       name: "list_library",
-      description: "列出文库中的文献（可选按关键词过滤标题/作者）。返回 id、标题、年份、作者。",
+      description: "列出文库中的文献（可选按关键词过滤标题/作者）。返回 id、标题、年份、作者、分类与标签。",
       parameters: {
         type: "object",
         properties: {
@@ -110,10 +192,36 @@ export const TOOLS: ToolImpl[] = [
     async run(args) {
       const q = String(args.query || "").toLowerCase();
       const limit = Number(args.limit) || 30;
+      const cols = library.list().collections;
+      const colName = (id: string): string => cols.find((c) => c.id === id)?.name || "";
       let docs = aliveDocs();
       if (q) { docs = docs.filter((d) => (d.title + " " + d.authors).toLowerCase().includes(q)); }
-      const lines = docs.slice(0, limit).map((d) => `${d.id} | ${d.title} | ${d.year} | ${d.authors}`);
+      const lines = docs.slice(0, limit).map((d) => {
+        const doc = library.getDocument(d.id);
+        const c = (doc?.collections || []).map(colName).filter(Boolean);
+        const t = doc?.tags || [];
+        return `${d.id} | ${d.title} | ${d.year} | ${d.authors}` +
+          `${c.length ? ` | 分类: ${c.join("、")}` : ""}${t.length ? ` | 标签: ${t.join("、")}` : ""}`;
+      });
       return lines.length ? lines.join("\n") : "（文库为空或没有匹配的文献）";
+    }
+  },
+  {
+    def: {
+      name: "list_collections",
+      description: "列出文库的所有分类（含 id、名称、父分类、文献数）。用户提到的分类名对不上时，先用它查清楚再纠正/确认。",
+      parameters: { type: "object", properties: {} }
+    },
+    async run() {
+      const state = library.list();
+      const cols = state.collections;
+      if (!cols.length) { return "（还没有任何分类）"; }
+      const count = (id: string): number => state.documents.filter((d) => !d.trash && (d.collections || []).includes(id)).length;
+      const lines = cols.map((c) => {
+        const parent = c.parent ? (cols.find((x) => x.id === c.parent)?.name || c.parent) : "";
+        return `- ${c.name}（id: ${c.id}${parent ? `，父分类: ${parent}` : ""}，${count(c.id)} 篇）`;
+      });
+      return `共 ${cols.length} 个分类：\n${lines.join("\n")}`;
     }
   },
   {
@@ -218,6 +326,150 @@ export const TOOLS: ToolImpl[] = [
   {
     write: true,
     def: {
+      name: "import_paper",
+      description: "把一篇**外部论文**导入本地文库（会下载 PDF、补全标题/作者等元信息，耗时可能十几秒）。" +
+        "用于用户说“把这篇下下来/存进文库/导入这篇”时——卡片上的链接、arXiv 编号、DOI、arXiv abs 页链接、PDF 直链都行。" +
+        "属于写入操作，需用户批准。导入后返回新的文献 id，可接着用 apply_tags / add_to_collection 等继续处理。",
+      parameters: {
+        type: "object",
+        properties: {
+          identifier: { type: "string", description: "arXiv 编号（如 2502.01866）或 DOI；与 url 二选一" },
+          url: { type: "string", description: "论文链接（arXiv abs 页 / PDF 直链 / 会议页，会在页面里找 citation_pdf_url）" },
+          collections: { type: "array", items: { type: "string" }, description: "可选：直接放入这些分类（分类不存在会新建）" }
+        }
+      }
+    },
+    async run(args, ctx) {
+      const res = await importPaper({
+        identifier: args.identifier ? String(args.identifier) : "",
+        url: args.url ? String(args.url) : "",
+        collections: Array.isArray(args.collections) ? (args.collections as unknown[]).map(String) : [],
+        onProgress: (t) => ctx?.progress?.(t)
+      });
+      if (!res.ok || !res.doc) { return `导入失败：${res.error || "未知原因"}`; }
+      const d = res.doc;
+      return `已导入《${d.title}》\nid: ${d.id}\n作者：${d.authors || "—"} · 年份：${d.year || "—"} · 来源：${d.venue || "—"}` +
+        `${d.doi ? `\nDOI: ${d.doi}` : ""}${d.sourceUrl ? `\n链接: ${d.sourceUrl}` : ""}`;
+    }
+  },
+  {
+    write: true,
+    def: {
+      name: "add_note",
+      description: "给某篇文献追加一条笔记。属于写入操作，需用户批准。",
+      parameters: {
+        type: "object",
+        properties: {
+          docId: { type: "string", description: "文献 id" },
+          text: { type: "string", description: "笔记内容" }
+        },
+        required: ["docId", "text"]
+      }
+    },
+    async run(args) {
+      const doc = library.getDocument(String(args.docId || ""));
+      if (!doc) { return "未找到该文献"; }
+      const text = String(args.text || "").trim();
+      if (!text) { return "笔记内容不能为空"; }
+      const note = { id: "n" + Date.now(), text, date: new Date().toISOString().slice(0, 10) };
+      library.updateDocument(doc.id, { notes: [note, ...(doc.notes || [])] });
+      return `已给《${doc.title}》加了一条笔记（现在共 ${(doc.notes || []).length + 1} 条）`;
+    }
+  },
+  {
+    write: true,
+    def: {
+      name: "delete_note",
+      description: "删除某篇文献的笔记（按笔记 id 或按内容片段匹配；两者都给时以 id 为准）。属于写入操作，需用户批准。",
+      parameters: {
+        type: "object",
+        properties: {
+          docId: { type: "string", description: "文献 id" },
+          noteId: { type: "string", description: "笔记 id（可先用 list_notes 或从上下文里取）" },
+          textContains: { type: "string", description: "按内容片段匹配要删的那条" }
+        },
+        required: ["docId"]
+      }
+    },
+    async run(args) {
+      const doc = library.getDocument(String(args.docId || ""));
+      if (!doc) { return "未找到该文献"; }
+      const notes = doc.notes || [];
+      const id = String(args.noteId || "").trim();
+      const frag = String(args.textContains || "").trim();
+      let target = id ? notes.find((n) => n.id === id) : undefined;
+      if (!target && frag) { target = notes.find((n) => n.text.includes(frag)); }
+      if (!target) { return `没找到要删的笔记。当前笔记：\n${notes.map((n) => `- [${n.id}] ${n.text.slice(0, 60)}`).join("\n") || "（无）"}`; }
+      library.updateDocument(doc.id, { notes: notes.filter((n) => n.id !== target.id) });
+      return `已删除《${doc.title}》的一条笔记：${target.text.slice(0, 60)}`;
+    }
+  },
+  {
+    write: true,
+    def: {
+      name: "rename_collection",
+      description: "重命名某个分类（名称或 id 指定）。属于写入操作，需用户批准。",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "现有分类名（或 id）" },
+          newName: { type: "string", description: "新名称" }
+        },
+        required: ["name", "newName"]
+      }
+    },
+    async run(args) {
+      const cur = findCollection(String(args.name || ""));
+      if (!cur) { return nearCollections(String(args.name || "")); }
+      const ok = library.renameCollection(cur.id, String(args.newName || "").trim());
+      return ok ? `分类「${cur.name}」已重命名为「${args.newName}」` : "重命名失败（可能重名）";
+    }
+  },
+  {
+    write: true,
+    def: {
+      name: "delete_collection",
+      description: "删除某个分类（名称或 id 指定；只删分类本身，里面的文献不会被删除）。属于写入操作，需用户批准。",
+      parameters: {
+        type: "object",
+        properties: { name: { type: "string", description: "要删除的分类名（或 id）" } },
+        required: ["name"]
+      }
+    },
+    async run(args) {
+      const cur = findCollection(String(args.name || ""));
+      if (!cur) { return nearCollections(String(args.name || "")); }
+      const ok = library.removeCollection(cur.id);
+      return ok ? `已删除分类「${cur.name}」` : "删除失败";
+    }
+  },
+  {
+    write: true,
+    def: {
+      name: "remove_from_collection",
+      description: "把某篇文献从某个分类里移出（分类本身保留）。属于写入操作，需用户批准。",
+      parameters: {
+        type: "object",
+        properties: {
+          docId: { type: "string", description: "文献 id" },
+          name: { type: "string", description: "分类名（或 id）" }
+        },
+        required: ["docId", "name"]
+      }
+    },
+    async run(args) {
+      const doc = library.getDocument(String(args.docId || ""));
+      if (!doc) { return "未找到该文献"; }
+      const cur = findCollection(String(args.name || ""));
+      if (!cur) { return nearCollections(String(args.name || "")); }
+      const cols = (doc.collections || []).filter((c) => c !== cur.id);
+      library.updateDocument(doc.id, { collections: cols });
+      return `已把《${doc.title}》从分类「${cur.name}」移出`;
+    }
+  },
+  {
+    write: true,
+    def: {
       name: "apply_tags",
       description: "为某篇文献添加/移除标签。属于写入操作，需用户批准。",
       parameters: {
@@ -312,7 +564,11 @@ export function isWriteTool(name: string): boolean {
 }
 
 export function toolDefs(): ToolDef[] {
-  return TOOLS.filter((t) => t.def.name !== "search_web" || webSearchEnabled()).map((t) => t.def);
+  return TOOLS.filter((t) => {
+    if (t.def.name === "search_web") { return webSearchEnabled(); }
+    if (t.def.name === "fetch_url") { return webEnabled(); }
+    return true;
+  }).map((t) => t.def);
 }
 
 export async function runTool(name: string, argsJson: string, ctx?: ToolContext): Promise<string> {
@@ -320,6 +576,9 @@ export async function runTool(name: string, argsJson: string, ctx?: ToolContext)
   if (!tool) { return `未知工具：${name}`; }
   if (name === "search_web" && !webSearchEnabled()) {
     return "「联网搜索」未开启或没填 Tavily API Key：请让用户在 设置 → AI 助手 → 联网搜索 里开启并保存，然后再试（在此之前不要猜测外部论文）。";
+  }
+  if (name === "fetch_url" && !webEnabled()) {
+    return "「联网搜索」未开启：联网功能在 设置 → AI 助手 → 联网搜索 里，请让用户开启后再试。";
   }
   let args: Record<string, unknown> = {};
   try { args = argsJson ? JSON.parse(argsJson) : {}; } catch { args = {}; }

@@ -135,27 +135,38 @@ export interface PaperHit {
   abstract: string;
 }
 
+// 一次"读正文"（fetch_url）的元信息，用来在对话里显示"已读了什么"
+export interface PageRead {
+  url: string;
+  title: string;
+  domain: string;
+  chars: number;
+  via: string;
+}
+
 export interface AgentEvent {
   turnId: string;
-  type: "delta" | "reasoning" | "tool_call" | "tool_result" | "confirmation" | "library_changed" | "papers" | "usage" | "done" | "error";
+  type: "delta" | "reasoning" | "tool_call" | "tool_result" | "progress" | "confirmation" | "library_changed" | "papers" | "read" | "usage" | "done" | "error";
   text?: string;
   name?: string;
   args?: string;
   content?: string;
   confirmId?: string;
   papers?: PaperHit[];
+  read?: PageRead;
   error?: string;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
-export interface ConvTool { name: string; args?: string; content?: string; ms?: number; at?: number }
+export interface ConvTool { name: string; args?: string; content?: string; ms?: number; at?: number; progress?: string }
 // 一轮回答里按**到达顺序**排布的内容块（文本 / 工具 / 检索卡片），
 // 这样界面可以按时间顺序还原"先检索、后作答"的过程，而不是固定把卡片堆在最后。
 export type ConvBlock =
   | { kind: "text"; text: string }
   | { kind: "reasoning"; text: string }
   | { kind: "tools"; items: ConvTool[] }
-  | { kind: "papers"; items: PaperHit[] };
+  | { kind: "papers"; items: PaperHit[] }
+  | { kind: "read"; items: PageRead[] };
 
 export interface ConvMessage {
   role: "user" | "assistant";

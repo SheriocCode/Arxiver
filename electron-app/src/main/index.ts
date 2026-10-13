@@ -12,8 +12,8 @@ import * as localModel from "./localmodel";
 import { AgentService, type AgentChatRequest } from "./agent/agent";
 import * as conversations from "./agent/conversations";
 import { getOutline } from "./outline";
-import { resolveIdentifier, parseIdentifier } from "./metadata";
-import { probePdf } from "./pdfmeta";
+import { importPaper, fetchPdf } from "./importPaper";
+import { enrichDocMeta } from "./enrich";
 import * as logger from "./logger";
 import { Updater } from "./updater";
 import type { TranslationLogEntry } from "../shared/types";
@@ -203,36 +203,6 @@ engine.on("blocks", (id: string, blocks: unknown) => send("job:blocks", { id, bl
 agent.on("event", (event: unknown) => send("agent:event", event));
 updater.on("status", (status: unknown) => send("update:status", status));
 
-function arxivToPdf(url: string): string {
-  const match = /^https?:\/\/(?:www\.|export\.)?arxiv\.org\/abs\/([^?#\s]+)/i.exec(url);
-  if (match) {
-    return "https://arxiv.org/pdf/" + match[1].replace(/v\d+$/, "") + ".pdf";
-  }
-  return url;
-}
-
-async function fetchPdf(url: string): Promise<{ bytes: Buffer; name: string; sourceUrl: string }> {
-  const target = arxivToPdf(url);
-  const response = await fetch(target, {
-    redirect: "follow",
-    headers: { "User-Agent": "Mozilla/5.0 Arxiver" }
-  });
-  if (!response.ok) {
-    throw new Error(`下载失败：HTTP ${response.status}`);
-  }
-  const buffer = Buffer.from(await response.arrayBuffer());
-  let name = "paper.pdf";
-  try {
-    const parsed = new URL(response.url || target);
-    name = path.basename(decodeURIComponent(parsed.pathname)) || name;
-  } catch {
-    // keep default
-  }
-  if (!/\.pdf$/i.test(name)) {
-    name += ".pdf";
-  }
-  return { bytes: buffer, name, sourceUrl: target };
-}
 
 function resolveParams(overrides?: Partial<TransParams>): TransParams {
   const base = config.get() as unknown as Record<string, unknown>;
@@ -547,105 +517,12 @@ function registerIpc(): void {
     abstract: payload.abstract
   }));
 
-  // 本地导入后补全元数据：优先文件名里的 arXiv 编号，其次 PDF 自带元信息 / 首页里的 arXiv、DOI
-  async function enrichDocMeta(docId: string): Promise<ReturnType<typeof library.getDocument>> {
-    const doc = library.getDocument(docId);
-    if (!doc) { return null; }
-    try {
-      const nameHit = parseIdentifier(doc.sourceName || "");
-      let meta = nameHit ? await resolveIdentifier(doc.sourceName || "") : null;
-      if (!meta) {
-        const probe = await probePdf(docId);
-        if (probe) {
-          const id = probe.arxivId || probe.doi;
-          if (id) { meta = await resolveIdentifier(id); }
-          if (!meta) {
-            // 只有 PDF 自带的 title/author 也要用上
-            const patch: Partial<typeof doc> = {};
-            if (probe.title && probe.title.length > 3 && probe.title.length < 300) { patch.title = probe.title; }
-            if (probe.author) { patch.authors = probe.author; }
-            if (Object.keys(patch).length) { library.updateDocument(docId, patch); }
-            return library.getDocument(docId);
-          }
-        }
-      }
-      if (meta) {
-        library.updateDocument(docId, {
-          title: meta.title || doc.title,
-          authors: meta.authors || doc.authors,
-          year: meta.year || doc.year,
-          venue: meta.venue || doc.venue,
-          doi: meta.doi || doc.doi,
-          abstract: meta.abstract || doc.abstract,
-          summary: meta.abstract || doc.summary,
-          type: meta.kind === "arxiv" ? "预印本" : doc.type
-        });
-        logger.info("library", `已补全元信息：${meta.title || docId}`);
-      }
-      return library.getDocument(docId);
-    } catch (e) {
-      logger.warn("library", "补全元信息失败：" + logger.errText(e));
-      return doc;
-    }
-  }
-
+  // 本地导入后补全元数据 → enrich.ts
   ipcMain.handle("library:enrichMetadata", async (_event, docId: string) => enrichDocMeta(docId));
 
-  // 按标识符导入（粘贴 arXiv 链接/编号或 DOI）：走官方接口取元信息，arXiv 顺带下载 PDF
-  ipcMain.handle("library:importByIdentifier", async (_event, input: string, collections: string[]) => {
-    try {
-      const parsed = parseIdentifier(input);
-      let meta = await resolveIdentifier(input);
-      const probeFallback = !meta && parsed?.kind === "arxiv";
-      if (probeFallback && parsed) {
-        // arXiv 元信息接口不可用（限流 / 离线）时兜底：直接下 PDF，元信息交给 PDF 探测
-        meta = {
-          kind: "arxiv", id: parsed.id, title: parsed.id, authors: "", year: "",
-          venue: "arXiv 预印本", doi: "", abstract: "",
-          pdfUrl: `https://arxiv.org/pdf/${parsed.id}`,
-          pageUrl: `https://arxiv.org/abs/${parsed.id}`
-        };
-        logger.warn("library", `arXiv 元信息接口不可用，改用 PDF 兜底导入：${parsed.id}`);
-      }
-      if (!meta) {
-        return { ok: false, error: "没识别出 arXiv 编号或 DOI（可直接粘贴链接）" };
-      }
-      let bytes: Buffer | undefined;
-      let name = meta.id.replace(/[\\/:*?"<>|]/g, "_") + ".pdf";
-      if (meta.pdfUrl) {
-        try {
-          const loaded = await fetchPdf(meta.pdfUrl);
-          bytes = loaded.bytes;
-          if (loaded.name) { name = loaded.name; }
-        } catch (e) {
-          logger.warn("library", "下载 PDF 失败（仍导入元信息）：" + logger.errText(e));
-        }
-      }
-      const doc = library.addDocument({
-        bytes,
-        name,
-        sourceUrl: meta.pageUrl,
-        title: meta.title || meta.id,
-        type: meta.kind === "arxiv" ? "预印本" : "期刊论文",
-        collections
-      });
-      library.updateDocument(doc.id, {
-        authors: meta.authors,
-        year: meta.year,
-        venue: meta.venue,
-        doi: meta.doi,
-        abstract: meta.abstract,
-        summary: meta.abstract
-      });
-      logger.info("library", `按标识符导入：${meta.title || meta.id}（${meta.kind}）`);
-      // 兜底导入（arXiv 接口不可用）时，用 PDF 自带的标题/作者 + 首页里的编号再补一次
-      const finalDoc = probeFallback ? await enrichDocMeta(doc.id) : library.getDocument(doc.id);
-      return { ok: true, doc: finalDoc };
-    } catch (e) {
-      logger.warn("library", "按标识符导入失败：" + logger.errText(e));
-      return { ok: false, error: logger.errText(e, 200) };
-    }
-  });
+  // 按标识符导入（粘贴 arXiv 链接/编号或 DOI）：逻辑在 importPaper.ts（agent 的 import_paper 工具共用）
+  ipcMain.handle("library:importByIdentifier", async (_event, input: string, collections: string[]) =>
+    importPaper({ identifier: input, collections }));
   ipcMain.handle("library:update", (_event, id: string, patch) => library.updateDocument(id, patch));
   ipcMain.handle("library:setTrash", (_event, id: string, trashed: boolean) => library.setTrash(id, trashed));
   ipcMain.handle("library:purge", (_event, id: string) => library.purge(id));

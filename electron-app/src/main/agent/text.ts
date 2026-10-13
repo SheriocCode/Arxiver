@@ -75,7 +75,7 @@ export async function loadChunks(docId: string): Promise<Chunk[]> {
   return chunks;
 }
 
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   const out: string[] = [];
   const latin = /[a-z0-9]+/g;
   let m: RegExpExecArray | null;
