@@ -28,18 +28,18 @@ interface Props {
   docId: string;
   visible: boolean;
   config: AppConfig | null;
-  onClose: () => void;
   translations: TranslationRef[];
   activeKey: string;
   showBlocksTranslating: boolean;
   showBlocksTranslation: boolean;
+  onToggleBlocks: (which: "translating" | "viewing") => void;
   onSelectTranslation: (key: string) => void;
   onAskSelection?: (text: string, page: number) => void;
   onTranslationDone?: (info: TranslationDoneInfo) => void;
 }
 
 const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
-  { docId, visible, config, onClose, translations, activeKey, showBlocksTranslating, showBlocksTranslation, onSelectTranslation, onAskSelection, onTranslationDone }, ref
+  { docId, visible, config, translations, activeKey, showBlocksTranslating, showBlocksTranslation, onToggleBlocks, onSelectTranslation, onAskSelection, onTranslationDone }, ref
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
   const doneRef = useRef(onTranslationDone);
@@ -135,6 +135,11 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   useEffect(() => {
     engineRef.current?.setBlockPrefs({ translating: showBlocksTranslating, viewing: showBlocksTranslation });
   }, [showBlocksTranslating, showBlocksTranslation]);
+
+  // The pinned 块框 panel lives in this viewer's DOM, but drop it when the tab is hidden.
+  useEffect(() => {
+    if (!visible) { engineRef.current?.hideBlockTip(); }
+  }, [visible]);
 
   // A jump requested before the document finished loading is applied once ready.
   useEffect(() => {
@@ -340,6 +345,11 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const pct = s?.phase === "done" ? 100 : (s?.progress || 0);
   const showOverlay = !!s && s.phase === "error";
   const canView = (v: string): boolean => v === "source" || hasTranslation || running;
+  // The toolbar toggle drives the switch that applies right now: the live preview while
+  // translating, the finished translation otherwise. Without any translation there is
+  // nothing to overlay, so the button stays disabled.
+  const canShowBlocks = hasTranslation || running;
+  const blocksOn = canShowBlocks && (running ? showBlocksTranslating : showBlocksTranslation);
 
   function start(): void {
     setMenuOpen(false);
@@ -402,6 +412,18 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
             )}
           </div>
 
+          {/* 块框：直接在阅读界面切换（对应 设置 → 外观 里的两个开关） */}
+          <button
+            type="button"
+            className={"panel-btn" + (blocksOn ? " active" : "")}
+            aria-pressed={blocksOn}
+            disabled={!canShowBlocks}
+            title={!canShowBlocks ? "暂无译文，没有可显示的块框" : (running ? "翻译时显示块框" : "查看译文时显示块框") + "（点击块框查看原文 / 译文）"}
+            onClick={() => onToggleBlocks(running ? "translating" : "viewing")}
+          >
+            <Icon name="layers" small />
+          </button>
+
           <div className="translate-menu" ref={menuRef}>
             <div className="split">
               <button className="primary split-main" disabled={running} onClick={onMainClick}>{hasTranslation ? "已翻译" : "翻译"}</button>
@@ -450,7 +472,13 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
                 </div>
 
                 {hasTranslation && (
-                  <button type="button" className="primary menu-action" disabled={running} onClick={start}>重新翻译</button>
+                  <>
+                    <button type="button" className="menu-item" disabled={running} onClick={() => { setMenuOpen(false); void engineRef.current?.save(variant); }}>
+                      <Icon name="file" small />
+                      <span className="menu-item-name">导出译文文件…</span>
+                    </button>
+                    <button type="button" className="primary menu-action" disabled={running} onClick={start}>重新翻译</button>
+                  </>
                 )}
               </div>
             )}
@@ -485,9 +513,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
             </div>
           )}
 
-          {hasTranslation && <button type="button" className="primary" onClick={() => engineRef.current?.save(variant)}>保存</button>}
           {running && <button type="button" className="danger" onClick={() => engineRef.current?.cancel()}>取消</button>}
-          <button type="button" className="primary" onClick={onClose}>关闭</button>
         </div>
       </header>
 

@@ -957,11 +957,22 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 .reader-overlay .workspace[data-page-theme="dark"] .citation-body { background: #1a1a1a; }
 .reader-overlay .workspace[data-page-theme="dark"] .citation-body canvas { filter: invert(1) hue-rotate(180deg); }
 .reader-overlay .block-layer.hidden { display: none; }
-.reader-overlay .block-rect { position: absolute; border: 1px solid rgba(16,163,127,.85); background: rgba(16,163,127,.12); border-radius: 2px; pointer-events: auto; }
+.reader-overlay .block-rect { position: absolute; border: 1px solid rgba(16,163,127,.85); background: rgba(16,163,127,.12); border-radius: 2px; pointer-events: auto; cursor: pointer; }
 .reader-overlay .block-rect:hover { background: rgba(16,163,127,.28); }
+.reader-overlay .block-rect.is-active { background: rgba(16,163,127,.28); border-color: rgba(16,163,127,1); box-shadow: 0 0 0 1px rgba(16,163,127,.55); }
 .reader-overlay .block-rect.block-formula { border-color: rgba(150,150,150,.55); background: rgba(150,150,150,.08); }
-.block-tip { position: fixed; z-index: 95; max-width: 360px; max-height: 240px; overflow: auto; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: 12px; box-shadow: var(--shadow); }
-.block-tip .tip-src { color: var(--muted); margin-bottom: 5px; white-space: pre-wrap; word-break: break-word; }
+/* 块框面板：点击块框后贴在块框旁边显示，随页面滚动跟随，再点一次 / 点别处 / × 关闭 */
+.block-tip {
+  position: absolute; z-index: 95;
+  width: min(380px, 42vw); max-height: 45vh; overflow: auto;
+  padding: 8px 10px; background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); font-size: 12px; box-shadow: var(--shadow);
+}
+.block-tip .tip-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.block-tip .tip-title { flex: 1; font-size: 11px; color: var(--muted); }
+.block-tip .tip-close { flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: var(--radius-sm); color: var(--muted); }
+.block-tip .tip-close:hover { background: var(--hover); color: var(--text); }
+.block-tip .tip-src { color: var(--muted); margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); white-space: pre-wrap; word-break: break-word; }
 .block-tip .tip-dst { color: var(--text); white-space: pre-wrap; word-break: break-word; }
 .reader-overlay .page-placeholder { display: flex; align-items: center; justify-content: center; width: var(--page-w, 100%); background: #f4f4f4; color: #aaa; border: 1px dashed #666; border-radius: 2px; font-size: 14px; }
 .reader-overlay .page-skip { background: #ececec; color: #999; }

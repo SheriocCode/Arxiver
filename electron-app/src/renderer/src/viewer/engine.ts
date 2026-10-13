@@ -108,7 +108,7 @@ export class ViewerEngine {
   private basePageW = 0;
   private zoom = 1;
   private view: View = "source";
-  private layout: Layout = "double";
+  private layout: Layout = "single";
   private blockPrefs = { translating: true, viewing: true };
   private totalPages = 0;
   // scrollTop we set ourselves during a jump; the matching scroll event must not
@@ -118,7 +118,9 @@ export class ViewerEngine {
 
   private status: ViewerStatus;
   private blockTipEl: HTMLElement | null = null;
-  private blockTipTimer = 0;
+  private blockTipRect: HTMLElement | null = null;
+  private blockTipKey: { page: number; index: number } | null = null;
+  private blockTipOutside: ((e: MouseEvent) => void) | null = null;
   private renderInFlight = false;
   private renderTimer = 0;
 
@@ -137,10 +139,11 @@ export class ViewerEngine {
     let raf = 0;
     this.root.addEventListener("scroll", () => {
       if (raf) { return; }
-      raf = requestAnimationFrame(() => { raf = 0; this.updateCurrentPage(); this.scheduleRender(120); });
+      raf = requestAnimationFrame(() => { raf = 0; this.updateCurrentPage(); this.followBlockTip(); this.scheduleRender(120); });
     });
     if (typeof ResizeObserver !== "undefined") {
       new ResizeObserver(() => {
+        this.followBlockTip();
         if (!this.leftDoc) { return; }
         const cw = this.root.clientWidth;
         if (cw <= 0) { return; }
@@ -249,8 +252,11 @@ export class ViewerEngine {
   private resetDom(): void {
     if (this.leftDoc) { try { this.leftDoc.destroy(); } catch { /* */ } this.leftDoc = null; }
     if (this.rightDoc) { try { this.rightDoc.destroy(); } catch { /* */ } this.rightDoc = null; }
+    this.hideBlockTip();
     this.leftSlots = {}; this.rightSlots = {}; this.pageWrap = {}; this.blockLayer = {}; this.linkLayer = {}; this.rightLayer = {};
-    this.pageSize = {}; this.renderedW = {}; this.renderedWR = {}; this.blocksByPage = {}; this.linksByPage = {};
+    // blocksByPage belongs to the document, not to the DOM: keep it across rebuilds
+    // (view/layout switches) so the block overlays can be re-rendered.
+    this.pageSize = {}; this.renderedW = {}; this.renderedWR = {}; this.linksByPage = {};
     this.rows = []; this.rowFirstPage = []; this.currentPageIndex = 0; this.totalPages = 0;
     this.root.innerHTML = "";
     this.root.hidden = true;
@@ -446,6 +452,7 @@ export class ViewerEngine {
   // which applies.
   setBlockPrefs(p: { translating: boolean; viewing: boolean }): void {
     this.blockPrefs = p;
+    this.hideBlockTip();
     this.renderAllBlocks();
   }
   private showBlocks(): boolean {
@@ -453,26 +460,88 @@ export class ViewerEngine {
   }
 
   // ---- block overlays ----
-  private hideBlockTip(): void { if (this.blockTipEl) { this.blockTipEl.hidden = true; } }
-  private scheduleHideBlockTip(): void { clearTimeout(this.blockTipTimer); this.blockTipTimer = window.setTimeout(() => this.hideBlockTip(), 250); }
-  private showBlockTip(ev: MouseEvent, src: string, dst: string): void {
-    clearTimeout(this.blockTipTimer);
-    if (!this.blockTipEl) {
-      this.blockTipEl = document.createElement("div");
-      this.blockTipEl.className = "block-tip";
-      this.blockTipEl.hidden = true;
-      this.blockTipEl.addEventListener("mouseenter", () => clearTimeout(this.blockTipTimer));
-      this.blockTipEl.addEventListener("mouseleave", () => this.scheduleHideBlockTip());
-      document.body.appendChild(this.blockTipEl);
+  // The 原文 / 译文 panel is pinned by clicking a block (not hovered): it stays put while
+  // you read, and it does not chase the pointer. Clicking the same block again, clicking
+  // elsewhere, or closing it with × dismisses it.
+  hideBlockTip(): void {
+    if (this.blockTipEl && !this.blockTipEl.hidden) { this.blockTipEl.hidden = true; }
+    if (this.blockTipRect) { this.blockTipRect.classList.remove("is-active"); this.blockTipRect = null; }
+    this.blockTipKey = null;
+  }
+  private ensureBlockTip(): HTMLElement {
+    if (this.blockTipEl) { return this.blockTipEl; }
+    const el = document.createElement("div");
+    el.className = "block-tip";
+    el.hidden = true;
+    // Only the shell goes through innerHTML; the block text itself is set with textContent.
+    el.innerHTML =
+      '<div class="tip-head"><span class="tip-title">块框 · 原文 / 译文</span>' +
+      '<button type="button" class="tip-close" title="关闭"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg></button></div>' +
+      '<div class="tip-src"></div><div class="tip-dst"></div>';
+    el.querySelector<HTMLElement>(".tip-close")?.addEventListener("click", () => this.hideBlockTip());
+    (this.host.parentElement || document.body).appendChild(el);
+    this.blockTipEl = el;
+    this.blockTipOutside = (e: MouseEvent) => {
+      const t = e.target as Element | null;
+      if (t && t.closest && (t.closest(".block-tip") || t.closest(".block-rect"))) { return; }
+      this.hideBlockTip();
+    };
+    document.addEventListener("mousedown", this.blockTipOutside);
+    return el;
+  }
+  // Anchors the panel next to its block: right of it if that fits, else left, else below
+  // (or above when there is no room below), always clamped inside the reading area.
+  private positionBlockTip(rectEl: HTMLElement, rr?: DOMRect, ar?: DOMRect): void {
+    const el = this.blockTipEl;
+    if (!el || el.hidden) { return; }
+    const area = ar || this.root.getBoundingClientRect();
+    const r = rr || rectEl.getBoundingClientRect();
+    const w = el.offsetWidth, h = el.offsetHeight;
+    const GAP = 8, PAD = 8;
+    let left = r.right + GAP;
+    let top = r.top;
+    if (left + w > area.right - PAD) {
+      left = r.left - GAP - w;
+      if (left < area.left + PAD) {
+        left = r.left;
+        top = r.bottom + GAP;
+        if (top + h > area.bottom - PAD) { top = r.top - GAP - h; }
+      }
     }
-    this.blockTipEl.innerHTML = "";
-    const a = document.createElement("div"); a.className = "tip-src"; a.textContent = src || "(空)";
-    const b = document.createElement("div"); b.className = "tip-dst"; b.textContent = dst || "(空)";
-    this.blockTipEl.appendChild(a); this.blockTipEl.appendChild(b);
-    this.blockTipEl.hidden = false;
-    const left = Math.max(6, Math.min(window.innerWidth - 372, ev.clientX + 12));
-    const top = Math.max(48, Math.min(window.innerHeight - 120, ev.clientY + 12));
-    this.blockTipEl.style.left = left + "px"; this.blockTipEl.style.top = top + "px";
+    left = Math.min(Math.max(left, area.left + PAD), Math.max(area.left + PAD, area.right - PAD - w));
+    top = Math.min(Math.max(top, area.top + PAD), Math.max(area.top + PAD, area.bottom - PAD - h));
+    el.style.left = Math.round(left - area.left) + "px";
+    el.style.top = Math.round(top - area.top) + "px";
+  }
+  // Keeps the pinned panel glued to its block while scrolling (the current rect element
+  // is still valid until the next render pass swaps it out).
+  private followBlockTip(): void {
+    const el = this.blockTipRect;
+    if (!this.blockTipKey || !el || !el.isConnected) { return; }
+    const rr = el.getBoundingClientRect();
+    const ar = this.root.getBoundingClientRect();
+    if (rr.bottom < ar.top - 8 || rr.top > ar.bottom + 8) { this.hideBlockTip(); return; }
+    this.positionBlockTip(el, rr, ar);
+  }
+  private toggleBlockTip(rectEl: HTMLElement, page: number, index: number, src: string, dst: string): void {
+    const pinned = this.blockTipKey && this.blockTipKey.page === page && this.blockTipKey.index === index;
+    if (this.blockTipEl && !this.blockTipEl.hidden && pinned) { this.hideBlockTip(); return; }
+    const el = this.ensureBlockTip();
+    const s = el.querySelector(".tip-src"); if (s) { s.textContent = src || "(空)"; }
+    const d = el.querySelector(".tip-dst"); if (d) { d.textContent = dst || "(空)"; }
+    el.scrollTop = 0;
+    el.hidden = false;
+    if (this.blockTipRect && this.blockTipRect !== rectEl) { this.blockTipRect.classList.remove("is-active"); }
+    this.blockTipRect = rectEl;
+    this.blockTipKey = { page, index };
+    rectEl.classList.add("is-active");
+    this.positionBlockTip(rectEl);
+  }
+  private disposeBlockTip(): void {
+    if (this.blockTipOutside) { document.removeEventListener("mousedown", this.blockTipOutside); this.blockTipOutside = null; }
+    if (this.blockTipEl) { this.blockTipEl.remove(); this.blockTipEl = null; }
+    this.blockTipRect = null;
+    this.blockTipKey = null;
   }
   private clearLayer(l?: HTMLElement): void { if (l) { while (l.firstChild) { l.removeChild(l.firstChild); } } }
   private renderPageBlocks(page: number): void {
@@ -485,7 +554,9 @@ export class ViewerEngine {
     const cssW = wrap.clientWidth, cssH = wrap.clientHeight;
     if (!cssW || !cssH) { return; }
     const sx = cssW / size.w, sy = cssH / size.h;
-    for (const item of this.blocksByPage[page] || []) {
+    const items = this.blocksByPage[page] || [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
       const bb = item.bbox || [0, 0, 0, 0];
       const x0 = Math.max(0, bb[0]), y0 = Math.max(0, bb[1]), x1 = Math.min(size.w, bb[2]), y1 = Math.min(size.h, bb[3]);
       if (x1 <= x0 || y1 <= y0) { continue; }
@@ -493,10 +564,19 @@ export class ViewerEngine {
       rect.className = "block-rect";
       rect.style.left = x0 * sx + "px"; rect.style.top = (size.h - y1) * sy + "px";
       rect.style.width = (x1 - x0) * sx + "px"; rect.style.height = (y1 - y0) * sy + "px";
-      const src = item.src || "", dst = item.dst || "";
-      rect.addEventListener("mouseenter", (ev) => this.showBlockTip(ev, src, dst));
-      rect.addEventListener("mousemove", (ev) => this.showBlockTip(ev, src, dst));
-      rect.addEventListener("mouseleave", () => this.scheduleHideBlockTip());
+      rect.addEventListener("click", () => this.toggleBlockTip(rect, page, i, item.src || "", item.dst || ""));
+      // rects are recreated on every render pass; re-mark and re-anchor the pinned one,
+      // and drop the panel once its block has scrolled out of sight
+      if (this.blockTipKey && this.blockTipKey.page === page && this.blockTipKey.index === i) {
+        const rr = rect.getBoundingClientRect();
+        const ar = this.root.getBoundingClientRect();
+        if (rr.bottom < ar.top - 8 || rr.top > ar.bottom + 8) { this.hideBlockTip(); }
+        else {
+          rect.classList.add("is-active");
+          this.blockTipRect = rect;
+          this.positionBlockTip(rect, rr, ar);
+        }
+      }
       layerL.appendChild(rect);
     }
     layerL.classList.toggle("hidden", !this.showBlocks());
@@ -632,12 +712,10 @@ export class ViewerEngine {
     this.active = s;
     this.rightBytes = s ? (s.result || s.partial) : null;
     this.blocksByPage = s ? s.blocksByPage : {};
-    if (s && (s.state === "running" || s.result || s.partial)) {
-      this.view = "compare";
-      this.layout = "single";
-    } else {
-      this.view = "source";
-    }
+    // Always open a document as 原文 + 单页; 对照 / 译文 / 双页 are opt-in (toolbar or
+    // starting a translation), so having a translation never hijacks the first paint.
+    this.view = "source";
+    this.layout = "single";
   }
 
   async openSource(payload: OpenPayload, opts: { auto?: boolean; params?: Partial<TransParams> } = {}): Promise<void> {
@@ -662,7 +740,6 @@ export class ViewerEngine {
   async loadTranslation(bytes: Uint8Array): Promise<void> {
     if (this.active && this.active.state === "running") { return; }
     this.rightBytes = toU8(bytes);
-    if (this.view !== "compare") { this.view = "compare"; this.layout = "single"; }
     await this.build();
     this.emit({ hasTranslation: true, view: this.view, layout: this.layout, phase: "done" });
   }
@@ -873,6 +950,8 @@ export class ViewerEngine {
     this.sessions.clear();
     this.active = null;
     this.sourceBytes = null; this.rightBytes = null; this.sourceName = ""; this.sourceUrl = ""; this.docId = "";
+    this.blocksByPage = {};
+    this.disposeBlockTip();
     this.resetDom();
     this.emit(this.blank());
   }

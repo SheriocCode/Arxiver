@@ -207,7 +207,7 @@ export default function SettingsView({
                   </Row>
                 </Group>
                 <Group title="译文块框">
-                  <Row label="翻译时显示块框" desc="翻译过程中在对照视图标出文本块（悬停可查看原文 / 译文）">
+                  <Row label="翻译时显示块框" desc="翻译过程中在对照视图标出文本块（点击块框查看原文 / 译文）">
                     <Switch on={settings.showBlocksTranslating} onToggle={() => updateSettings({ showBlocksTranslating: !settings.showBlocksTranslating })} />
                   </Row>
                   <Row label="查看译文时显示块框" desc="打开已翻译文件时是否标出文本块">

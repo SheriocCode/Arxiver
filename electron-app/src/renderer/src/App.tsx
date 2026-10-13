@@ -267,8 +267,6 @@ export default function App(): JSX.Element {
     });
   }, []);
 
-  const closeReader = useCallback(() => { if (activeDocId) { closeDoc(activeDocId); } }, [activeDocId, closeDoc]);
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (document.activeElement?.tagName || "").toLowerCase();
@@ -287,7 +285,7 @@ export default function App(): JSX.Element {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [settingsOpen, newOpen, activeTab, lib, closeReader]);
+  }, [settingsOpen, newOpen, activeTab, lib]);
 
   return (
     <>
@@ -392,11 +390,13 @@ export default function App(): JSX.Element {
                     docId={d.id}
                     visible={activeDocId === d.id}
                     config={config}
-                    onClose={closeReader}
                     translations={lib.documents.find((x) => x.id === d.id)?.translations || []}
                     activeKey={d.activeKey}
                     showBlocksTranslating={settings.showBlocksTranslating}
                     showBlocksTranslation={settings.showBlocksTranslation}
+                    onToggleBlocks={(which) => updateSettings(which === "translating"
+                      ? { showBlocksTranslating: !settings.showBlocksTranslating }
+                      : { showBlocksTranslation: !settings.showBlocksTranslation })}
                     onSelectTranslation={selectTranslation}
                     onAskSelection={askSelection}
                     onTranslationDone={onTranslationDone}
