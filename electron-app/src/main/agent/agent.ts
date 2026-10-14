@@ -38,11 +38,17 @@ export class AgentService extends EventEmitter {
   private confirmations = new Map<string, (decision: { approved: boolean; args?: string }) => void>();
 
   run(req: AgentChatRequest): { turnId: string } {
-    const turnId = crypto.randomBytes(8).toString("hex");
+    // 渲染端可以指定 turnId（它会在发起请求前就记下来）。否则：未配置模型这类"立刻失败"的 run
+    // 会在 invoke 返回之前就把 error 事件发出去，渲染端还没拿到 turnId → 事件被丢弃、界面一直转圈。
+    const turnId = req.turnId || crypto.randomBytes(8).toString("hex");
     const controller = new AbortController();
     this.controllers.set(turnId, controller);
     void this.execute(turnId, req, controller.signal)
-      .catch((err) => this.emitEvent({ turnId, type: "error", error: (err as Error)?.message || String(err) }))
+      .catch((err) => {
+        // 用户主动取消：安静收尾（保留已经流出来的内容），不要弹一条红色的报错
+        if (controller.signal.aborted) { this.emitEvent({ turnId, type: "done" }); return; }
+        this.emitEvent({ turnId, type: "error", error: (err as Error)?.message || String(err) });
+      })
       .finally(() => { this.controllers.delete(turnId); });
     return { turnId };
   }

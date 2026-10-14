@@ -109,6 +109,8 @@ export interface DocOutline {
 }
 
 export interface AgentChatRequest {
+  // 由渲染端生成并先于请求设定：这样"零延迟报错"（如未配置模型）的事件不会赶在 turnId 之前到达而被丢掉
+  turnId?: string;
   scope: "paper" | "library";
   docId?: string;
   selection?: { text: string; page: number };

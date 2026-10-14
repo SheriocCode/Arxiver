@@ -941,7 +941,13 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
   position: absolute; white-space: pre; color: transparent; cursor: text; transform-origin: 0% 0%;
 }
 .reader-overlay .text-layer span.markedContent { top: 0; height: 0; }
-.reader-overlay .text-layer ::selection { background: rgba(16,163,127,.35); }
+/* 选区高亮改成自己画（见 viewer/engine.ts 的 paintSelection）：
+   浏览器原生高亮是按"字体内容区"画的，比行距还高 → 相邻行会重叠；而且 pdf.js 塞在文本层里的
+   <br>（换行标记）会被画成页面左边的一小条。所以把原生高亮设为透明，高的那层用行内文字的高度来画。
+   （只对页面里的文本层生效；输入框、对话区等其它地方的选区不受影响。） */
+.reader-overlay .page-wrap .text-layer ::selection { background: transparent; }
+.reader-overlay .sel-layer { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.reader-overlay .sel-highlight { position: absolute; background: rgba(16,163,127,.35); border-radius: 1px; }
 .reader-overlay .block-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .reader-overlay .link-layer { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
 .reader-overlay .link-rect { position: absolute; pointer-events: auto; cursor: pointer; border-radius: 2px; }
@@ -1272,7 +1278,7 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 
 /* ---- AI agent ---- */
 .reader-overlay .sel-ask {
-  position: absolute; transform: translate(-50%, calc(-100% - 6px)); z-index: 60;
+  position: absolute; transform: translate(-100%, 0); z-index: 60;
   display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px;
   background: var(--accent-strong); color: #fff; border: 0; border-radius: 999px;
   box-shadow: var(--shadow); cursor: pointer; font-size: 12px; white-space: nowrap;
@@ -1309,6 +1315,17 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 .ai-tool-name { color: var(--accent); flex: none; }
 .ai-tool-args { color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-error { margin-top: 6px; color: #f0857b; font-size: 12px; }
+/* 未配置对话模型时的引导：不发起请求，直接把用户送去「设置 → AI 助手」 */
+.ai-setup-note {
+  display: flex; align-items: center; gap: 8px; text-align: left; margin: 16px 0 0;
+  padding: 8px 8px 8px 10px; border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--border-strong);
+  font-size: 12.5px; color: var(--muted);
+}
+.ai-setup-note span { min-width: 0; }
+.ai-setup-note .btn { flex: none; margin-left: auto; height: 28px; padding: 0 10px; font-size: 12.5px; }
+.ai-setup { margin-top: 8px; }
+.ai-setup .btn { height: 28px; padding: 0 12px; font-size: 12.5px; }
 .ai-usage { margin-top: 4px; color: var(--faint); font-size: 11px; }
 /* 长耗时工具的运行中状态（避免看起来像卡死） */
 .spinner {

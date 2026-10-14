@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type JSX, type MutableRefObject } from "react";
-import type { LibraryDoc, Conversation, ConversationSummary, PaperHit, ConvBlock } from "../../../shared/types";
+import type { LibraryDoc, Conversation, ConversationSummary, PaperHit, ConvBlock, AppConfig } from "../../../shared/types";
 import { Icon } from "./Icons";
 import { formatDate } from "../lib/format";
 import { getPdfjs } from "../lib/pdf";
@@ -38,18 +38,22 @@ export default function DetailPanel({
   lib,
   onOpen,
   settings,
+  config,
   aiSelection,
   onCite,
   onClearSelection,
-  openDocs
+  openDocs,
+  onOpenSettings
 }: {
   lib: LibraryApi;
   onOpen: (doc: LibraryDoc) => void;
   settings: AppSettings;
+  config?: AppConfig | null;
   aiSelection?: { text: string; page: number } | null;
   onCite?: (docId: string, page: number) => void;
   onClearSelection?: () => void;
   openDocs?: { id: string; name: string }[];
+  onOpenSettings?: (section?: string) => void;
 }): JSX.Element {
   const doc = lib.selected;
 
@@ -80,7 +84,7 @@ export default function DetailPanel({
         {/* AI 面板常驻挂载（切到别的标签只是隐藏），否则切一次标签会话就被卸载重建，上下文全丢 */}
         {settings.aiEnabled && doc ? (
           <div className="tab-panel ai-tab" hidden={lib.tab !== "ai"}>
-            <AiPanel lib={lib} doc={doc} settings={settings} active={lib.tab === "ai"} selection={aiSelection} onCite={onCite || (() => {})} onClearSelection={onClearSelection || (() => {})} openDocs={openDocs || []} resolveDocTitle={(id) => lib.documents.find((d) => d.id === id)?.title || id} />
+            <AiPanel lib={lib} doc={doc} settings={settings} config={config} onOpenSettings={onOpenSettings} active={lib.tab === "ai"} selection={aiSelection} onCite={onCite || (() => {})} onClearSelection={onClearSelection || (() => {})} openDocs={openDocs || []} resolveDocTitle={(id) => lib.documents.find((d) => d.id === id)?.title || id} />
           </div>
         ) : null}
       </div>
@@ -262,6 +266,8 @@ interface AiTurn {
   text: string;
   blocks?: AiBlock[];
   error?: string;
+  // 未配置模型时的引导轮：不发起请求，只给一句说明 + 「去设置」按钮
+  setup?: boolean;
   streaming?: boolean;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
@@ -498,11 +504,13 @@ function PaperCards({ papers, jumped, state, inLibrary, onImport, onOpen }: {
   );
 }
 
-function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, openDocs, resolveDocTitle, active }: {
+function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite, onClearSelection, openDocs, resolveDocTitle, active }: {
   lib: LibraryApi;
   active?: boolean;
   doc: LibraryDoc;
   settings: AppSettings;
+  config?: AppConfig | null;
+  onOpenSettings?: (section?: string) => void;
   selection?: { text: string; page: number } | null;
   onCite: (docId: string, page: number) => void;
   onClearSelection: () => void;
@@ -537,6 +545,9 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
   const [paperOpen, setPaperOpen] = useState<Record<string, boolean>>({});
   const [jumped, setJumped] = useState("");
   const [pendingJump, setPendingJump] = useState(0);
+  // 对话模型是否已配置（基础地址 + 密钥 + 模型）：没配就别真的发起请求，直接引导去设置
+  const aiReady = !!(config && config.chat_base_url && config.chat_api_key && config.chat_model);
+  const openAiSettings = (): void => onOpenSettings?.("ai");
   // 长耗时工具运行时每秒推进一次，让"已 Ns"和进度看起来是活的
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -776,12 +787,22 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
       }
     });
     return off;
+    // 只在挂载时订阅一次：原来跟着 convId 重订阅，会在"发问 → 主进程立刻报错"时丢掉第一个事件
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [convId]);
+  }, []);
 
   const send = (preset?: string): void => {
     const q = (preset !== undefined ? preset : input).trim();
     if (!q || sending) { return; }
+    // 没配置对话模型：不要真的发起请求（主进程只能回一句冷冰冰的报错，界面还会一直转圈），
+    // 直接把问题记下来并引导用户去「设置 → AI 助手」。
+    if (!aiReady) {
+      setInput("");
+      atBottomRef.current = true;
+      setShowJump(false);
+      setTurns((prev) => [...prev, { role: "user", text: q }, { role: "assistant", text: "", setup: true, error: "AI 助手还没配置对话模型：请在「设置 → AI 助手」里填写基础地址、API 密钥与模型。" }]);
+      return;
+    }
     if (!convIdRef.current) {
       const id = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       convIdRef.current = id;
@@ -813,8 +834,10 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
     const cardBase = turnsRef.current.reduce((n, t) => n + papersOf(t.blocks || []).length, 0);
     setRefs([]);
     setAtOpen(false);
-    void window.api.agentChat({ scope: "library", docId: doc.id, selection: sel, refs: refIds, message: q, history, cardBase })
-      .then(({ turnId }) => { turnRef.current = turnId; })
+    // turnId 自己先生成、先记下，再发起请求：主进程可能在我们拿到返回值之前就发事件
+    const turnId = "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    turnRef.current = turnId;
+    void window.api.agentChat({ turnId, scope: "library", docId: doc.id, selection: sel, refs: refIds, message: q, history, cardBase })
       .catch((err) => {
         setSending(false);
         setTurns((prev) => {
@@ -827,7 +850,11 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
     onClearSelection();
   };
 
-  const stop = (): void => { if (turnRef.current) { void window.api.agentCancel(turnRef.current); } };
+  const stop = (): void => {
+    if (turnRef.current) { void window.api.agentCancel(turnRef.current); }
+    // 兜底：即使这一轮已经结束（没来得及收到 done/error），也别让按钮永远停在"停止"
+    setSending(false);
+  };
 
   const atOptions = openDocs.filter((d) => d.id !== doc.id);
   const anchors = convAnchors(turns);
@@ -903,6 +930,13 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
             <div className="ai-mark"><Icon name="arxiver" /></div>
             <h3>向 Arxiver 提问</h3>
             <p>会自动判断该读《{doc.title}》还是检索整库，需要时跨文献查找或反问你；回答带可点击引用。涉及修改（如标签、元数据）会先请你批准。</p>
+            {!aiReady ? (
+              <div className="ai-setup-note">
+                <Icon name="settings" small />
+                <span>还没配置对话模型：先填好基础地址、API 密钥与模型才能提问。</span>
+                <button type="button" className="btn btn-primary" onClick={openAiSettings}>去设置</button>
+              </div>
+            ) : null}
             <div className="ai-suggest">
               <button onClick={() => send("总结核心贡献")}>总结核心贡献</button>
               <button onClick={() => send("解释主要方法")}>解释主要方法</button>
@@ -987,6 +1021,11 @@ function AiPanel({ lib, doc, settings, selection, onCite, onClearSelection, open
                       });
                     })()}
                     {t.error ? <div className="ai-error">{t.error}</div> : null}
+                    {t.setup ? (
+                      <div className="ai-setup">
+                        <button type="button" className="btn btn-primary" onClick={openAiSettings}><Icon name="settings" small /> 打开设置</button>
+                      </div>
+                    ) : null}
                     {(() => {
                       const pend = toolsOf(t.blocks || []).filter((x) => x.content === undefined);
                       if (!pend.length) { return null; }

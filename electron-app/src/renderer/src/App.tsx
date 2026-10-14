@@ -376,10 +376,12 @@ export default function App(): JSX.Element {
                 lib={lib}
                 onOpen={openDoc}
                 settings={settings}
+                config={config}
                 aiSelection={aiSelection}
                 onCite={citeJump}
                 onClearSelection={() => setAiSelection(null)}
                 openDocs={docs.map((d) => ({ id: d.id, name: d.name }))}
+                onOpenSettings={openSettings}
               />
               {lib.section === "logs" && <LogsView logKey={logCat} logStatus={logStatus} onClose={() => lib.setSection("collections")} />}
               <div className="reader-overlay" hidden={activeTab !== "doc"}>

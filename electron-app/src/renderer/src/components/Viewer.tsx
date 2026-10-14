@@ -70,6 +70,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const [themePos, setThemePos] = useState<{ left: number; top: number } | null>(null);
   const themeRef = useRef<HTMLDivElement>(null);
   const [selPop, setSelPop] = useState<{ x: number; y: number; text: string; page: number } | null>(null);
+  const selPopRef = useRef<{ x: number; y: number; text: string; page: number } | null>(null);
   const statusRef = useRef<ViewerStatus | null>(null);
   const [citation, setCitation] = useState<{ page: number; x: number; y: number; anchor: number } | null>(null);
   const showTimer = useRef(0);
@@ -81,6 +82,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const citationCanvasRef = useRef<HTMLCanvasElement>(null);
   const citationBodyRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  selPopRef.current = selPop;
 
   useEffect(() => { citationShown.current = !!citation; }, [citation]);
 
@@ -99,7 +101,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
       (info) => doneRef.current?.(info)
     );
     engineRef.current = engine;
-    return () => { engine.reset(); engineRef.current = null; };
+    return () => { engine.dispose(); engineRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -198,19 +200,34 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
     };
   }, [scheduleHide]);
 
+  // 选区按钮的位置：贴在选区最后一行的右下角（相对 viewer-stage）。
+  // 每次都按"当前选区"重算，所以滚动、缩放时都能跟着走。
+  const computeSelPop = useCallback((): { x: number; y: number; text: string; page: number } | null => {
+    if (!visibleRef.current) { return null; }
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !sel.toString().trim()) { return null; }
+    const node = sel.anchorNode;
+    const el = node ? (node.nodeType === 1 ? (node as Element) : node.parentElement) : null;
+    if (!el || !el.closest || !el.closest(".text-layer")) { return null; }
+    const stage = stageRef.current;
+    if (!stage) { return null; }
+    const range = sel.getRangeAt(0);
+    // 只认"一行文字"大小的矩形：跨页/跨图时浏览器会多报整页大小的容器矩形，别拿它定位
+    const rects = Array.from(range.getClientRects()).filter((r) => r.width > 1 && r.height > 1 && r.height < 60);
+    const last = rects[rects.length - 1];
+    if (!last) { return null; }
+    const sr = stage.getBoundingClientRect();
+    return {
+      x: Math.min(Math.max(120, last.right - sr.left), Math.max(120, sr.width - 4)),
+      y: Math.min(Math.max(4, last.bottom - sr.top + 4), Math.max(4, sr.height - 34)),
+      text: sel.toString().trim(),
+      page: statusRef.current?.displayPage || 1
+    };
+  }, []);
+
   useEffect(() => {
     function onUp(): void {
-      if (!visibleRef.current) { return; }
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed || !sel.toString().trim()) { setSelPop(null); return; }
-      const node = sel.anchorNode;
-      const el = node ? (node.nodeType === 1 ? (node as Element) : node.parentElement) : null;
-      if (!el || !el.closest || !el.closest(".text-layer")) { setSelPop(null); return; }
-      const stage = stageRef.current;
-      if (!stage) { return; }
-      const sr = stage.getBoundingClientRect();
-      const rect = sel.getRangeAt(0).getBoundingClientRect();
-      setSelPop({ x: rect.left - sr.left + rect.width / 2, y: rect.top - sr.top, text: sel.toString().trim(), page: statusRef.current?.displayPage || 1 });
+      setSelPop(computeSelPop());
     }
     function onDown(e: MouseEvent): void {
       if (!visibleRef.current) { return; }
@@ -221,7 +238,28 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
     document.addEventListener("mouseup", onUp);
     document.addEventListener("mousedown", onDown);
     return () => { document.removeEventListener("mouseup", onUp); document.removeEventListener("mousedown", onDown); };
-  }, []);
+  }, [computeSelPop]);
+
+  // 滚动时让按钮跟着选区走（滚动发生在舞台内部的 .compare 上，事件不冒泡，所以用捕获阶段听）
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) { return; }
+    let raf = 0;
+    const onScroll = (): void => {
+      if (raf) { return; }
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (!selPopRef.current) { return; }
+        const next = computeSelPop();
+        const cur = selPopRef.current;
+        if (!next) { setSelPop(null); return; }
+        if (next.x === cur.x && next.y === cur.y && next.text === cur.text) { return; }
+        setSelPop(next);
+      });
+    };
+    stage.addEventListener("scroll", onScroll, true);
+    return () => { if (raf) { window.cancelAnimationFrame(raf); } stage.removeEventListener("scroll", onScroll, true); };
+  }, [computeSelPop]);
 
   useEffect(() => {
     const canvas = citationCanvasRef.current;

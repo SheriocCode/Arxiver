@@ -123,6 +123,14 @@ export class ViewerEngine {
   private blockTipOutside: ((e: MouseEvent) => void) | null = null;
   private renderInFlight = false;
   private renderTimer = 0;
+  private selRaf = 0;
+  private settling = false;
+  private inkCtx: CanvasRenderingContext2D | null = null;
+  private inkCache = new WeakMap<HTMLElement, { lead: number; width: number }>();
+  private spanCache = new WeakMap<HTMLElement, HTMLElement[]>();
+  private sizeCache = new WeakMap<HTMLElement, number>();
+  private bodyCache = new WeakMap<HTMLElement, number>();
+  private smallCache = new WeakMap<HTMLElement, boolean>();
 
 
 
@@ -136,6 +144,8 @@ export class ViewerEngine {
     host.appendChild(this.root);
     this.status = this.blank();
     this.root.addEventListener("wheel", (e) => { if (e.ctrlKey) { e.preventDefault(); this.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1); } }, { passive: false });
+    document.addEventListener("selectionchange", this.onSelectionChange);
+    document.addEventListener("mouseup", this.onSelectionSettle);
     let raf = 0;
     this.root.addEventListener("scroll", () => {
       if (raf) { return; }
@@ -188,6 +198,8 @@ export class ViewerEngine {
     this.root.style.setProperty("--page-w", this.pageWidth() + "px");
     this.root.style.setProperty("--cols", String(this.perRow() * this.colsPerPage()));
     this.updateTextLayers();
+    // 缩放/换宽度后，已经画好的高亮是按旧的显示尺寸画的，重画一次
+    this.paintSelection();
   }
 
   private blankCanvas(): HTMLCanvasElement { const c = document.createElement("canvas"); c.className = "pdf-canvas"; return c; }
@@ -223,6 +235,252 @@ export class ViewerEngine {
   private updateTextLayers(): void {
     const scale = String(this.zoom);
     this.root.querySelectorAll<HTMLElement>(".text-layer").forEach((layer) => { layer.style.transform = `scale(${scale})`; });
+  }
+
+  // ---- 选区高亮 / 智能选区 ----------------------------------------------------
+
+  private textSpans(layer: HTMLElement): HTMLElement[] {
+    const cache = this.spanCache.get(layer);
+    if (cache) { return cache; }
+    const out: HTMLElement[] = [];
+    layer.querySelectorAll<HTMLElement>("span").forEach((s) => {
+      // 只认真正有字的：跳过 pdf.js 的标记/换行元素，也跳过竖排的（arXiv 水印等）
+      if (!s.textContent || !s.textContent.trim()) { return; }
+      if (/rotate/i.test(s.style.transform || "")) { return; }
+      out.push(s);
+    });
+    this.spanCache.set(layer, out);
+    return out;
+  }
+
+  private fontSizeOf(el: HTMLElement): number {
+    const cached = this.sizeCache.get(el);
+    if (cached !== undefined) { return cached; }
+    const size = parseFloat(window.getComputedStyle(el).fontSize) || 0;
+    this.sizeCache.set(el, size);
+    return size;
+  }
+
+  // 该页的"正文字号"：占字符最多的那个字号。脚注、图注、图表里的标签、页眉页脚页码都比它小。
+  private bodySize(layer: HTMLElement): number {
+    const cached = this.bodyCache.get(layer);
+    if (cached !== undefined) { return cached; }
+    const counts = new Map<number, number>();
+    for (const s of this.textSpans(layer)) {
+      const size = this.fontSizeOf(s);
+      if (!size) { continue; }
+      counts.set(size, (counts.get(size) || 0) + (s.textContent || "").length);
+    }
+    let body = 0; let best = -1;
+    for (const [size, n] of counts) { if (n > best) { best = n; body = size; } }
+    this.bodyCache.set(layer, body);
+    return body;
+  }
+
+  // 这段文字是不是"小字"（脚注/图注/图表内标签/页码…）。子/上标虽然也小，但它和正文同处一行，
+  // 所以要看它所在的竖直范围里有没有正文大小的文字——有就说明它属于正文行。
+  private isSmallText(el: HTMLElement): boolean {
+    const cached = this.smallCache.get(el);
+    if (cached !== undefined) { return cached; }
+    let small = false;
+    const layer = el.closest(".text-layer") as HTMLElement | null;
+    if (layer) {
+      const body = this.bodySize(layer);
+      const size = this.fontSizeOf(el);
+      if (body > 0 && size > 0 && size < body * 0.92) {
+        const b = el.getBoundingClientRect();
+        const cy = b.top + b.height / 2;
+        let sameLine = false;
+        for (const other of this.textSpans(layer)) {
+          if (other === el || this.fontSizeOf(other) < body * 0.92) { continue; }
+          const ob = other.getBoundingClientRect();
+          if (Math.abs(ob.top + ob.height / 2 - cy) < Math.max(b.height, ob.height) * 0.7) { sameLine = true; break; }
+        }
+        small = !sameLine;
+      }
+    }
+    this.smallCache.set(el, small);
+    return small;
+  }
+
+  private spanOf(node: Node | null): HTMLElement | null {
+    if (!node) { return null; }
+    const el = node.nodeType === 1 ? (node as Element) : node.parentElement;
+    const span = el ? (el.closest("span") as HTMLElement | null) : null;
+    return span && this.root.contains(span) ? span : null;
+  }
+
+  // 阅读顺序（页 → 行）：用来把"拖过头"的那一端收回到起点那一类文字的边界
+  private readingOrder(): HTMLElement[] {
+    const out: HTMLElement[] = [];
+    this.root.querySelectorAll<HTMLElement>(".page-wrap").forEach((wrap) => {
+      const layer = wrap.querySelector<HTMLElement>(".text-layer");
+      if (!layer) { return; }
+      const spans = this.textSpans(layer).slice();
+      spans.sort((a, b) => {
+        const ab = a.getBoundingClientRect(); const bb = b.getBoundingClientRect();
+        return Math.abs(ab.top - bb.top) > 3 ? ab.top - bb.top : ab.left - bb.left;
+      });
+      out.push(...spans);
+    });
+    return out;
+  }
+
+  // 松开鼠标时：如果拖到了"另一类"文字里（正文 ↔ 小字），把那一端收回到边界上，
+  // 这样复制出来的就是用户真正要的那段（脚注/图注/页码不会被带走）。
+  private onSelectionSettle = (): void => {
+    if (this.settling) { return; }
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) { return; }
+    const range = sel.getRangeAt(0);
+    const a = this.spanOf(sel.anchorNode);
+    const f = this.spanOf(sel.focusNode);
+    if (!a || !f || a === f) { return; }
+    const aSmall = this.isSmallText(a);
+    if (this.isSmallText(f) === aSmall) { return; }
+    const order = this.readingOrder();
+    const ia = order.indexOf(a);
+    const ifi = order.indexOf(f);
+    if (ia < 0 || ifi < 0) { return; }
+    let target: HTMLElement | null = null;
+    if (ia < ifi) {
+      for (let i = ifi - 1; i > ia; i--) { if (this.isSmallText(order[i]) === aSmall) { target = order[i]; break; } }
+    } else {
+      for (let i = ifi + 1; i < ia; i++) { if (this.isSmallText(order[i]) === aSmall) { target = order[i]; break; } }
+    }
+    if (!target || !target.firstChild) { return; }
+    // 只信"阅读顺序"和"DOM 顺序"一致的情况，别把选区搞反
+    const between = ia < ifi
+      ? (a.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+        && (target.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+      : (target.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+        && (f.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    if (!between) { return; }
+    const keep = range.cloneRange();
+    this.settling = true;
+    try {
+      if (ia < ifi) { range.setEnd(target.firstChild, (target.textContent || "").length); }
+      else { range.setStart(target.firstChild, 0); }
+      sel.removeAllRanges();
+      sel.addRange(range);
+      // 万一收窄把选区弄空了，就还原（宁可多选，也不能什么都不剩）
+      if (!sel.toString().trim()) { sel.removeAllRanges(); sel.addRange(keep); }
+    } catch { /* 特殊情况就不改了 */ }
+    this.settling = false;
+    this.paintSelection();
+  };
+
+  // 选区高亮自己画（原生高亮见 styles.css 里置为透明的原因）：
+  // 选区的每个矩形都按"最贴的那一行文字"的行框高度来画，所以高亮正好贴着字形、不会上下叠。
+  private onSelectionChange = (): void => {
+    if (this.selRaf) { return; }
+    this.selRaf = requestAnimationFrame(() => { this.selRaf = 0; this.paintSelection(); });
+  };
+
+  private paintSelection(): void {
+    const selLayers = this.root.querySelectorAll<HTMLElement>(".sel-layer");
+    for (const l of selLayers) { if (l.childElementCount) { l.innerHTML = ""; } }
+    if (this.root.hidden || this.root.clientWidth === 0) { return; }
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !sel.toString().trim()) { return; }
+    const node = sel.anchorNode;
+    const anchor = node ? (node.nodeType === 1 ? (node as Element) : node.parentElement) : null;
+    if (!anchor || !this.root.contains(anchor)) { return; }
+    // 起点落在哪一类文字里（正文 / 小字）：高亮只画同类，跨图/跨页时不会把脚注、图注、
+    // 图表里的标签、页码一起点亮（用户要选它们时会从它们里面起手）。
+    const anchorSpan = this.spanOf(sel.anchorNode);
+    const anchorSmall = anchorSpan ? this.isSmallText(anchorSpan) : false;
+    const rects = Array.from(sel.getRangeAt(0).getClientRects()).filter((r) => r.width > 1 && r.height > 1);
+    if (!rects.length) { return; }
+    let minY = Infinity; let maxY = -Infinity;
+    for (const r of rects) { minY = Math.min(minY, r.top); maxY = Math.max(maxY, r.bottom); }
+    this.root.querySelectorAll<HTMLElement>(".page-wrap").forEach((wrap) => {
+      const selLayer = wrap.querySelector<HTMLElement>(".sel-layer");
+      const textLayer = wrap.querySelector<HTMLElement>(".text-layer");
+      if (!selLayer || !textLayer) { return; }
+      const wr = wrap.getBoundingClientRect();
+      if (wr.width <= 0 || wr.height <= 0 || wr.bottom < minY || wr.top > maxY) { return; }
+      const lines: { top: number; height: number; left: number; width: number; el: HTMLElement; small: boolean }[] = [];
+      this.textSpans(textLayer).forEach((span) => {
+        const b = span.getBoundingClientRect();
+        if (b.width <= 0 || b.height <= 0) { return; }
+        lines.push({ top: b.top, height: b.height, left: b.left, width: b.width, el: span, small: this.isSmallText(span) });
+      });
+      if (!lines.length) { return; }
+      const seen = new Set<string>();
+      for (const r of rects) {
+        if (r.right < wr.left || r.left > wr.right) { continue; }
+        // 找"和这个矩形最贴的那一行"：
+        //   ① 高度最接近（正常文字行 ≈ 1em；旋转的水印/容器整行框会差很多）
+        //   ② 纵向重叠最多   ③ 横向重叠最多（同一行会被拆成多个 span，如 "1" + " " + "Introduction"，
+        //   跨页/跨图选择时浏览器还可能多报一个"整行宽"的容器矩形，靠横向重叠才能落到真正被选中的那段）
+        let line: typeof lines[number] | null = null;
+        let bestScore = Infinity;
+        for (const ln of lines) {
+          if (ln.small !== anchorSmall) { continue; }
+          const o = Math.min(r.bottom, ln.top + ln.height) - Math.max(r.top, ln.top);
+          if (o <= 0) { continue; }
+          const ox = Math.min(r.right, ln.left + ln.width) - Math.max(r.left, ln.left);
+          if (ox <= 0) { continue; }
+          // 高度差太多的不算
+          if (ln.height < r.height * 0.45 || ln.height > r.height * 1.8) { continue; }
+          const score = Math.abs(ln.height - r.height) - o * 1e-3 - ox * 1e-6;
+          if (score < bestScore) { bestScore = score; line = ln; }
+        }
+        if (!line) { continue; }
+        // 浏览器有时会给出"整行宽"的矩形（跨页 / 跨图时），而文字只占其中一段：
+        // 用这一行自己的"有墨范围"（去掉首尾空白）收窄，别让高亮横跨整页。
+        const ink = this.inkRatio(line.el);
+        const inkWidth = line.width * ink.width;
+        if (inkWidth < 1) { continue; }
+        let left = r.left;
+        let width = r.width;
+        if (width > inkWidth + 1) { left = line.left + line.width * ink.lead; width = inkWidth; }
+        // 同一行会给出多个矩形（原生多报一个"字体内容区"的矩形），按最终画出来的位置去重
+        const key = Math.round(left) + ":" + Math.round(line.top) + ":" + Math.round(width);
+        if (seen.has(key)) { continue; }
+        seen.add(key);
+        const el = document.createElement("div");
+        el.className = "sel-highlight";
+        el.style.left = (left - wr.left) + "px";
+        el.style.top = (line.top - wr.top) + "px";
+        el.style.width = width + "px";
+        el.style.height = line.height + "px";
+        selLayer.appendChild(el);
+      }
+    });
+  }
+
+  // 一段文字里"真正有墨"的那部分（去掉首尾空白），用 canvas 按它自己的字体量出比例。
+  // 结果与缩放无关（比例只跟字体/文本有关），所以按 span 缓存。
+  private inkRatio(span: HTMLElement): { lead: number; width: number } {
+    const cached = this.inkCache.get(span);
+    if (cached) { return cached; }
+    let ratio = { lead: 0, width: 1 };
+    const text = span.textContent || "";
+    if (text) {
+      const cs = window.getComputedStyle(span);
+      if (!this.inkCtx) { this.inkCtx = document.createElement("canvas").getContext("2d"); }
+      const ctx = this.inkCtx;
+      if (ctx) {
+        ctx.font = cs.fontSize + " " + cs.fontFamily;
+        const full = ctx.measureText(text).width;
+        if (full > 0) {
+          const lead = text.length - text.trimStart().length;
+          const leadW = lead > 0 ? ctx.measureText(text.slice(0, lead)).width : 0;
+          const trimmed = text.trim();
+          const inkW = trimmed ? ctx.measureText(trimmed).width : 0;
+          ratio = { lead: leadW / full, width: inkW / full };
+        }
+      }
+    }
+    this.inkCache.set(span, ratio);
+    return ratio;
+  }
+
+  private clearSelection(): void {
+    if (this.selRaf) { window.cancelAnimationFrame(this.selRaf); this.selRaf = 0; }
+    this.root.querySelectorAll<HTMLElement>(".sel-layer").forEach((l) => { if (l.childElementCount) { l.innerHTML = ""; } });
   }
 
   private async renderTextLayer(wrap: HTMLElement, page: any, baseWidth: number, refWidth: number): Promise<void> {
@@ -303,6 +561,9 @@ export class ViewerEngine {
           const canvas = this.blankCanvas();
           canvas.width = Math.floor(base.width); canvas.height = Math.floor(base.height);
           wrap.appendChild(canvas);
+          const selLayer = document.createElement("div");
+          selLayer.className = "sel-layer";
+          wrap.appendChild(selLayer);
           const layer = document.createElement("div");
           layer.className = "block-layer" + (this.showBlocks() ? "" : " hidden");
           wrap.appendChild(layer);
@@ -334,6 +595,9 @@ export class ViewerEngine {
             wrap.appendChild(ph);
             this.rightSlots[p] = null;
           }
+          const selLayer = document.createElement("div");
+          selLayer.className = "sel-layer";
+          wrap.appendChild(selLayer);
           const layer = document.createElement("div");
           layer.className = "block-layer hidden";
           wrap.appendChild(layer);
@@ -954,6 +1218,14 @@ export class ViewerEngine {
     this.disposeBlockTip();
     this.resetDom();
     this.emit(this.blank());
+  }
+
+  // 卸载（关闭标签页）时调用：除了 reset，还要摘掉 document 上的选区监听
+  dispose(): void {
+    this.clearSelection();
+    document.removeEventListener("selectionchange", this.onSelectionChange);
+    document.removeEventListener("mouseup", this.onSelectionSettle);
+    this.reset();
   }
 
   get hasTranslation(): boolean { return !!this.rightBytes; }
