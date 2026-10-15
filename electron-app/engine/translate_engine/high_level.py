@@ -249,6 +249,21 @@ def translate_patch(
     return obj_patch
 
 
+def _subset_fonts_best_effort(doc: Document) -> None:
+    """字体子集化只影响输出体积，任何失败都不该让整个翻译任务失败。
+
+    PyMuPDF 的旧实现（``fallback=True``）假定 ``/DescendantFonts`` 是 ``"N 0 R"``
+    这样的间接引用，遇到字体字典是内联对象的 PDF 会抛 ``ValueError``（见
+    ``pymupdf.utils.get_old_widths``）；此时改用 MuPDF 原生实现，仍失败就保留原字体。
+    """
+    for kwargs in ({"fallback": True}, {}):
+        try:
+            doc.subset_fonts(**kwargs)
+            return
+        except Exception as exc:  # noqa: BLE001 - 只影响体积，绝不中断翻译
+            logger.warning("font subsetting failed (%s): %s", kwargs or "mupdf", exc)
+
+
 def translate_stream(
     stream: bytes,
     pages: Optional[list[int]] = None,
@@ -337,11 +352,10 @@ def translate_stream(
             _partial_state["done"].append(pageno)
             done = len(_partial_state["done"])
             now = time.time()
-            # Writing the whole preview on every page costs O(n^2) (subset + compress
-            # all pages each time). Wait for at least 2 new pages (except the final
-            # page) and keep a 1s floor between writes.
+            # 每翻完一页就刷新一次预览（追加式写入，只补新页）；只保留 1 秒的写入下限，
+            # 避免页面很快时把磁盘写爆。最后一页一定写。
             if done < target_total and (
-                done - _partial_state["written"] < 2
+                done - _partial_state["written"] < 1
                 or now - _partial_state["last"] < 1.0
             ):
                 return
@@ -391,8 +405,8 @@ def translate_stream(
     for id in range(page_count):
         doc_en.move_page(page_count + id, id * 2 + 1)
     if not skip_subset_fonts:
-        doc_zh.subset_fonts(fallback=True)
-        doc_en.subset_fonts(fallback=True)
+        _subset_fonts_best_effort(doc_zh)
+        _subset_fonts_best_effort(doc_en)
     return (
         doc_zh.write(deflate=True, garbage=3, use_objstms=1),
         doc_en.write(deflate=True, garbage=3, use_objstms=1),

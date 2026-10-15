@@ -97,7 +97,10 @@ class OnnxModel(DocLayoutModel):
     def __init__(self, model_path: str):
         self.model_path = model_path
 
+        import time as _t
+        _t0 = _t.time()
         self.model = _create_session(model_path)
+        print(f"ENGINE_TIMING 版面模型加载 {_t.time() - _t0:.2f}s", flush=True)
         metadata = self.model.get_modelmeta().custom_metadata_map
         self._stride = ast.literal_eval(metadata["stride"])
         self._names = ast.literal_eval(metadata["names"])
@@ -187,7 +190,10 @@ class OnnxModel(DocLayoutModel):
         new_h, new_w = pix.shape[2:]
 
         # Run inference
+        import time as _t
+        _t0 = _t.time()
         preds = self.model.run(None, {"images": pix})[0]
+        print(f"ENGINE_TIMING 版面分析 {_t.time() - _t0:.2f}s", flush=True)
 
         # Postprocess predictions
         preds = preds[preds[..., 4] > 0.25]

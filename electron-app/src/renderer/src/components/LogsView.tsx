@@ -72,7 +72,7 @@ const T_STATUS: Record<string, { label: string; slug: string }> = {
   failed: { label: "失败", slug: "sys" }
 };
 
-function TranslationLog({ logStatus, onClose }: { logStatus: string; onClose: () => void }): JSX.Element {
+function TranslationLog({ logStatus, onClose, active }: { logStatus: string; onClose: () => void; active: boolean }): JSX.Element {
   const [entries, setEntries] = useState<TranslationLogEntry[]>([]);
   const [selId, setSelId] = useState("");
 
@@ -93,7 +93,7 @@ function TranslationLog({ logStatus, onClose }: { logStatus: string; onClose: ()
   const sel = filtered.find((x) => x.id === selId) || filtered[0];
 
   return (
-    <section className="history" aria-label="日志">
+    <section className="history" aria-label="日志" hidden={!active}>
       <Head
         title={TITLES.tlog}
         count={filtered.length}
@@ -165,7 +165,7 @@ const LEVELS: Record<string, { label: string; slug: string }> = {
   error: { label: "错误", slug: "sys" }
 };
 
-function SystemLog({ logStatus, onClose }: { logStatus: string; onClose: () => void }): JSX.Element {
+function SystemLog({ logStatus, onClose, active }: { logStatus: string; onClose: () => void; active: boolean }): JSX.Element {
   const [entries, setEntries] = useState<SystemLogEntry[]>([]);
   const [file, setFile] = useState("");
   const [selIdx, setSelIdx] = useState(0);
@@ -179,7 +179,7 @@ function SystemLog({ logStatus, onClose }: { logStatus: string; onClose: () => v
   const sel = filtered[Math.min(selIdx, Math.max(0, filtered.length - 1))];
 
   return (
-    <section className="history" aria-label="日志">
+    <section className="history" aria-label="日志" hidden={!active}>
       <Head
         title={TITLES.syslog}
         count={filtered.length}
@@ -264,9 +264,10 @@ function toSteps(conv: Conversation): Step[] {
   return out;
 }
 
-function AiLog({ logStatus, onClose }: { logStatus: string; onClose: () => void }): JSX.Element {
+function AiLog({ logStatus, onClose, active }: { logStatus: string; onClose: () => void; active: boolean }): JSX.Element {
   const [convs, setConvs] = useState<ConversationSummary[]>([]);
   const [conv, setConv] = useState<Conversation | null>(null);
+  const [selConvId, setSelConvId] = useState(""); // 当前选中的对话（原来只重置步骤下标，导致点哪都还是第一条）
   const [selIdx, setSelIdx] = useState(0);
   const [tab, setTab] = useState<(typeof AI_TABS)[number]>("概述");
 
@@ -282,7 +283,7 @@ function AiLog({ logStatus, onClose }: { logStatus: string; onClose: () => void 
   useEffect(load, [load]);
 
   const filtered = useMemo(() => (logStatus === "all" ? convs : convs.filter((c) => c.scope === logStatus)), [convs, logStatus]);
-  const cur = filtered.find((c) => c.id === conv?.id) || filtered[0];
+  const cur = filtered.find((c) => c.id === selConvId) || filtered[0];
 
   useEffect(() => {
     if (!cur) { setConv(null); return; }
@@ -295,7 +296,7 @@ function AiLog({ logStatus, onClose }: { logStatus: string; onClose: () => void 
   const sel = steps[Math.min(selIdx, Math.max(0, steps.length - 1))];
 
   return (
-    <section className="history" aria-label="日志">
+    <section className="history" aria-label="日志" hidden={!active}>
       <Head
         title={TITLES.ailog}
         count={filtered.length}
@@ -308,7 +309,7 @@ function AiLog({ logStatus, onClose }: { logStatus: string; onClose: () => void 
         <div className="hist-body hist-ai">
           <div className="hist-convs">
             {filtered.map((c) => (
-              <button key={c.id} className={"hist-conv" + (c.id === cur.id ? " is-selected" : "")} onClick={() => setSelIdx(0)}>
+              <button key={c.id} className={"hist-conv" + (c.id === cur.id ? " is-selected" : "")} onClick={() => { setSelConvId(c.id); setSelIdx(0); setTab("概述"); }}>
                 <span className="hist-conv-title od-truncate">{c.title || "新对话"}</span>
                 <span className="hist-conv-meta">{c.scope === "paper" ? "论文" : "文库"} · {c.count} 轮 · {fmtClock(c.updated_at * 1000)}</span>
               </button>
@@ -375,7 +376,12 @@ function AiLog({ logStatus, onClose }: { logStatus: string; onClose: () => void 
 }
 
 export default function LogsView({ logKey, logStatus, onClose }: { logKey: string; logStatus: string; onClose: () => void }): JSX.Element {
-  if (logKey === "tlog") { return <TranslationLog logStatus={logStatus} onClose={onClose} />; }
-  if (logKey === "syslog") { return <SystemLog logStatus={logStatus} onClose={onClose} />; }
-  return <AiLog logStatus={logStatus} onClose={onClose} />;
+  // 三个视图常驻挂载，只切换显示：否则每次切分类都要重新拉数据，右侧会先闪一下"暂无记录"
+  return (
+    <>
+      <TranslationLog logStatus={logStatus} onClose={onClose} active={logKey === "tlog"} />
+      <AiLog logStatus={logStatus} onClose={onClose} active={logKey === "ailog"} />
+      <SystemLog logStatus={logStatus} onClose={onClose} active={logKey === "syslog"} />
+    </>
+  );
 }

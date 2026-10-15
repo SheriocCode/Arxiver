@@ -46,6 +46,7 @@ function bucketOf(ts: number): string {
 export default function Sidebar({
   lib,
   onOpenDoc,
+  onNavigate,
   showCounts,
   logCat,
   setLogCat,
@@ -54,6 +55,7 @@ export default function Sidebar({
 }: {
   lib: LibraryApi;
   onOpenDoc: (id: string) => void;
+  onNavigate: () => void;
   showCounts: boolean;
   logCat: string;
   setLogCat: (v: string) => void;
@@ -80,7 +82,7 @@ export default function Sidebar({
         ) : lib.section === "logs" ? (
           <LogTree logCat={logCat} setLogCat={setLogCat} logStatus={logStatus} setLogStatus={setLogStatus} />
         ) : (
-          <LibraryTree lib={lib} showCounts={showCounts} />
+          <LibraryTree lib={lib} showCounts={showCounts} onNavigate={onNavigate} />
         )}
       </div>
     </aside>
@@ -115,7 +117,7 @@ function dropPos(e: React.DragEvent<HTMLElement>): "before" | "after" | "inside"
   return "inside";
 }
 
-function LibraryTree({ lib, showCounts }: { lib: LibraryApi; showCounts: boolean }): JSX.Element {
+function LibraryTree({ lib, showCounts, onNavigate }: { lib: LibraryApi; showCounts: boolean; onNavigate: () => void }): JSX.Element {
   const Count = ({ n }: { n: number }) => showCounts ? <span className="side-item-count">{n}</span> : <span />;
   const parents = lib.collections.filter((c) => !c.parent);
 
@@ -189,7 +191,7 @@ function LibraryTree({ lib, showCounts }: { lib: LibraryApi; showCounts: boolean
           <button
             key={node.id}
             className={"side-item" + (lib.collId === node.id && !lib.tag ? " is-active" : "")}
-            onClick={() => { lib.setTag(""); lib.setCollId(node.id); }}
+            onClick={() => { lib.setTag(""); lib.setCollId(node.id); onNavigate(); }}
           >
             <span className="side-item-icon"><Icon name={node.icon} small /></span>
             <span className="side-item-name">{node.name}</span>
@@ -255,7 +257,7 @@ function LibraryTree({ lib, showCounts }: { lib: LibraryApi; showCounts: boolean
                       if (colId) { void lib.moveCollection(colId, parent.id, pos); }
                     }}
                     onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, kind: "col", id: parent.id, name: parent.name }); }}
-                    onClick={() => { lib.setTag(""); lib.setCollId(parent.id); }}
+                    onClick={() => { lib.setTag(""); lib.setCollId(parent.id); onNavigate(); }}
                   >
                     <span className="side-item-icon"><Icon name="folder" small /></span>
                     <span className="side-item-name">{parent.name}</span>
@@ -292,7 +294,7 @@ function LibraryTree({ lib, showCounts }: { lib: LibraryApi; showCounts: boolean
                       if (colId) { void lib.moveCollection(colId, child.id, pos); }
                     }}
                     onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, kind: "col", id: child.id, name: child.name }); }}
-                    onClick={() => { lib.setTag(""); lib.setCollId(child.id); }}
+                    onClick={() => { lib.setTag(""); lib.setCollId(child.id); onNavigate(); }}
                   >
                     <span className="side-item-icon"><Icon name="folder" small /></span>
                     <span className="side-item-name">{child.name}</span>
@@ -359,7 +361,7 @@ function LibraryTree({ lib, showCounts }: { lib: LibraryApi; showCounts: boolean
                   key={t}
                   className={"side-item" + (lib.tag === t ? " is-active" : "")}
                   onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, kind: "tag", id: t, name: t }); }}
-                  onClick={() => { lib.setTag(t); lib.setCollId("all"); }}
+                  onClick={() => { lib.setTag(t); lib.setCollId("all"); onNavigate(); }}
                 >
                   <span
                     className="side-item-icon side-tag-dot"
@@ -463,3 +465,4 @@ function LogTree({
     </>
   );
 }
+

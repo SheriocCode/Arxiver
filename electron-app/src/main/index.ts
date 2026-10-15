@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell, nativeImage, screen, protocol } from "electron";
 import path from "node:path";
 import fs from "node:fs";
+import { execFile } from "node:child_process";
 import { Readable } from "node:stream";
 
 import * as config from "./config";
@@ -16,7 +17,7 @@ import { importPaper, fetchPdf } from "./importPaper";
 import { enrichDocMeta } from "./enrich";
 import * as logger from "./logger";
 import { Updater } from "./updater";
-import type { TranslationLogEntry } from "../shared/types";
+import type { AppChildProc, AppMetrics, AppProcessInfo, TranslationLogEntry } from "../shared/types";
 
 // 数据目录优先级：
 //   1. 显式覆盖 --user-data-dir=<path> 或环境变量 ARXIVER_USER_DATA（便于同时试跑多份构建）
@@ -144,6 +145,7 @@ function createWindow(): void {
     mainWindow.show();
     mainWindow.focus();
     logger.info("window", "主窗口已显示");
+    logProcessMap();
     perf(`main window shown (ready-to-show) maximized=${mainWindow.isMaximized()} bounds=${JSON.stringify(mainWindow.getBounds())}`);
     if (PERF) { setTimeout(() => app.exit(0), 2500); }
   };
@@ -169,6 +171,90 @@ function createWindow(): void {
       tray?.setToolTip("Arxiver — 后台运行中");
       hintToTray();
     }
+  });
+}
+
+// 任务管理器里所有子进程都叫 "Arxiver"（Windows 只按 exe 的描述显示，Chromium 那套
+// "GPU 进程 / 工具进程" 是浏览器专属的内部机制，Electron 改不了）。所以在系统日志里列一份
+// "是什么 → PID → 内存"，方便和任务管理器逐行对照（日志 → 系统运行日志）。
+function processKind(m: Electron.ProcessMetric): string {
+  const svc = (m as unknown as { serviceName?: string }).serviceName || "";
+  if (m.type === "Browser") { return "主进程（窗口 + 后端）"; }
+  if (m.type === "Tab") { return "界面渲染"; }
+  if (m.type === "GPU") { return "GPU 进程（绘制/解码）"; }
+  if (m.type === "Utility") {
+    if (/network/i.test(svc)) { return "网络服务"; }
+    if (/audio/i.test(svc)) { return "音频服务"; }
+    if (/storage/i.test(svc)) { return "存储服务"; }
+    if (/media|video|cdm|codec/i.test(svc)) { return "媒体/解码服务"; }
+    if (/crash/i.test(svc)) { return "崩溃上报"; }
+    return svc ? `工具进程 ${svc}` : "工具进程";
+  }
+  return m.type || "未知";
+}
+
+function logProcessMap(): void {
+  try {
+    const rows = collectProcs().map((p) => `${p.kind} pid=${p.pid} 工作集=${p.rssMB}MB（提交 ${p.commitMB}MB）`);
+    logger.info("app", `本应用进程（${rows.length}）：${rows.join("；")}`);
+  } catch { /* 拿不到就算了 */ }
+}
+
+// 主进程子进程（Python 引擎 / llama-server）的内存：Electron 的进程表里没有它们，
+// 只能用系统计数（tasklist）拿；异步刷新 + 缓存，绝不阻塞主进程。
+let osMemMap = new Map<number, { name: string; memMB: number }>();
+let osMemAt = 0;
+let osMemBusy = false;
+function refreshOsMem(): void {
+  if (osMemBusy || process.platform !== "win32" || Date.now() - osMemAt < 6000) { return; }
+  osMemBusy = true;
+  execFile("tasklist", ["/FO", "CSV", "/NH"], { windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+    osMemBusy = false;
+    osMemAt = Date.now();
+    if (err || !stdout) { return; }
+    const map = new Map<number, { name: string; memMB: number }>();
+    for (const line of stdout.split(/\r?\n/)) {
+      const cols = line.trim().split('","');
+      if (cols.length < 5) { continue; }
+      const name = cols[0].replace(/^"/, "");
+      const pid = Number(cols[1]);
+      const kb = parseInt(cols[4].replace(/[^\d]/g, ""), 10) || 0;
+      if (pid) { map.set(pid, { name, memMB: Math.round(kb / 1024) }); }
+    }
+    osMemMap = map;
+  });
+}
+
+// 主进程的子进程清单（翻译引擎 / 本地模型服务）——只读内存里的状态，不做系统调用
+function childProcs(): { pid: number; kind: string; name: string; detail?: string }[] {
+  const out: { pid: number; kind: string; name: string; detail?: string }[] = [];
+  const model = localModel.serverInfo();
+  if (model.pid) {
+    out.push({ pid: model.pid, kind: "本地模型服务", name: "llama-server", detail: model.port ? `端口 ${model.port}` : undefined });
+  }
+  for (const p of engine.processes()) {
+    out.push({ pid: p.pid, kind: "翻译引擎", name: "python", detail: p.name || undefined });
+  }
+  return out;
+}
+
+// 自有进程快照（供"运行状态"面板与诊断报告复用）
+function collectProcs(): AppProcessInfo[] {
+  return app.getAppMetrics().map((m) => {
+    const svc = (m as unknown as { serviceName?: string }).serviceName;
+    const mem = (m.memory || {}) as { workingSetSize?: number; peakWorkingSetSize?: number; privateBytes?: number };
+    return {
+      pid: m.pid,
+      kind: processKind(m),
+      type: m.type || "?",
+      serviceName: svc,
+      // 工作集 / 提交大小都能在任务管理器「详细信息」里加同名列对照（Electron 没有"活动的专用工作集"这个数）
+      rssMB: Math.round((mem.workingSetSize || 0) / 1024),
+      commitMB: Math.round((mem.privateBytes || 0) / 1024),
+      peakMB: Math.round((mem.peakWorkingSetSize || 0) / 1024),
+      cpuPercent: m.cpu?.percentCPUUsage || 0,
+      isMain: m.type === "Browser"
+    };
   });
 }
 
@@ -310,7 +396,11 @@ function translationLog(): TranslationLogEntry[] {
   for (const doc of library.list().documents) {
     for (const ref of doc.translations || []) { docOf.set(ref.cacheKey, doc.id); }
   }
+  const seenIds = new Set<string>();
   for (const e of library.listTranslations().entries) {
+    // 同一篇译文可能被多个文献条目引用（同一篇论文导入过两次）→ 只列一条，否则选中态会同时命中多行
+    if (seenIds.has(e.id)) { continue; }
+    seenIds.add(e.id);
     out.push({
       id: e.id,
       docId: docOf.get(e.id) || "",
@@ -506,6 +596,64 @@ function registerIpc(): void {
 
   ipcMain.handle("storage:list", () => library.listTranslations());
   ipcMain.handle("logs:system", () => ({ entries: logger.list(), file: logger.logFile() }));
+  ipcMain.handle("app:metrics", (_event, opts?: { os?: boolean }): AppMetrics => {
+    const procs = collectProcs();
+    const kids = childProcs();
+    // 只有"面板在看" + "确实有子进程（引擎/模型在跑）"时才查系统计数：tasklist 有成本，其余情况一律跳过
+    if (opts?.os !== false && kids.length) { refreshOsMem(); }
+    const children: AppChildProc[] = kids.map((k) => {
+      const info = osMemMap.get(k.pid);
+      return { ...k, name: info?.name || k.name, memMB: info?.memMB ?? null };
+    });
+    const jobs = engine.list().slice(0, 8).map((j) => ({
+      id: j.id,
+      name: j.source_name || j.result_name || j.id,
+      status: j.status,
+      pages: j.total_pages,
+      donePages: j.done_pages,
+      message: j.message
+    }));
+    return {
+      version: app.getVersion(),
+      dev: !app.isPackaged,
+      uptimeSec: Math.round(process.uptime()),
+      userData: paths.userDataDir(),
+      logFile: logger.logFile(),
+      totalRssMB: procs.reduce((n, p) => n + p.rssMB, 0),
+      totalCommitMB: procs.reduce((n, p) => n + p.commitMB, 0),
+      procs,
+      children,
+      jobs
+    };
+  });
+  // 导出诊断报告：进程快照 + 版本/环境 + 最近的系统日志（发给别人排查用）
+  ipcMain.handle("app:diagnosticsSave", async (): Promise<string | null> => {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow!, {
+      title: "导出诊断报告",
+      defaultPath: path.join(app.getPath("documents"), `arxiver-diagnostics-${stamp}.txt`),
+      filters: [{ name: "文本", extensions: ["txt"] }]
+    });
+    if (canceled || !filePath) { return null; }
+    const procs = collectProcs();
+    const lines = [
+      `Arxiver ${app.getVersion()}（${app.isPackaged ? "安装版" : "开发版"}）`,
+      `导出时间：${new Date().toLocaleString()}`,
+      `已运行：${Math.round(process.uptime())} 秒`,
+      `平台：${process.platform} ${process.arch} · Electron ${process.versions.electron} · Node ${process.versions.node}`,
+      `数据目录：${paths.userDataDir()}`,
+      `日志文件：${logger.logFile()}`,
+      "",
+      `== 进程（${procs.length}，工作集合计 ${procs.reduce((n, p) => n + p.rssMB, 0)} MB / 提交合计 ${procs.reduce((n, p) => n + p.commitMB, 0)} MB）==`,
+      ...procs.map((p) => `${p.kind}\t${p.type}${p.serviceName ? "/" + p.serviceName : ""}\tpid=${p.pid}\t工作集=${p.rssMB}MB\t提交=${p.commitMB}MB\t峰值=${p.peakMB}MB\tCPU=${p.cpuPercent}%`),
+      "",
+      "== 系统日志（最近 300 条）==",
+      ...logger.list().slice(-300).map((e) => `${new Date(e.at).toISOString()} [${e.level}] ${e.scope}: ${e.message}`)
+    ];
+    fs.writeFileSync(filePath, lines.join("\n"), "utf8");
+    logger.info("app", `已导出诊断报告：${filePath}`);
+    return filePath;
+  });
   ipcMain.handle("logs:translation", () => translationLog());
   ipcMain.handle("library:result", (_event, id: string, cacheKey: string, variant?: string) => storage.readTranslation(id, cacheKey, variant));
   ipcMain.handle("library:blocks", (_event, id: string, cacheKey: string) => storage.readBlocks(id, cacheKey));

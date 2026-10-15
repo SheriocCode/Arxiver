@@ -158,6 +158,15 @@ export async function ensureServer(): Promise<{ baseUrl: string; model: string }
   return startPromise;
 }
 
+// 本地模型服务状态（供"运行状态"面板显示 PID / 端口）
+export function serverInfo(): { pid: number | null; baseUrl: string; port: number | null } {
+  const pid = child && child.exitCode === null ? (child.pid ?? null) : null;
+  let port: number | null = null;
+  const m = /:(\d+)\//.exec(baseUrl);
+  if (m) { port = Number(m[1]); }
+  return { pid, baseUrl, port };
+}
+
 export function stopServer(): void {
   const proc = child;
   child = null;

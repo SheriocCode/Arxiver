@@ -5,6 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 
 import { pythonExe, runScript, engineDir, tmpJobsDir } from "./paths";
+import * as logger from "./logger";
 import * as storage from "./storage";
 import * as localModel from "./localmodel";
 import { LOCAL_MODEL_ALIAS } from "./localmodel";
@@ -95,6 +96,8 @@ function hyMtPrompt(langIn: string, langOut: string): string {
 }
 
 const ANSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
+const TIMING_RE = /ENGINE_TIMING ([^\n\r]+)/g;
+
 const PROGRESS_RE = /(\d{1,3})%\|/;
 const PARTIAL_RE = /ENGINE_PARTIAL\s+(\d+)\s+(\d+)/g;
 const BLOCK_RE = /ENGINE_BLOCK\s+(\d+)\s+(\d+)\s+(\d+)/g;
@@ -163,6 +166,7 @@ interface Job {
   finishedAt: number | null;
   emittedBlocks: Set<string>;
   emittedPages: Set<number>;
+  emittedTimings: Set<string>;
   timer: NodeJS.Timeout | null;
 }
 
@@ -183,7 +187,7 @@ export class EngineManager extends EventEmitter {
       block_page: 0, block_index: 0, block_total: 0,
       logTail: "", raw: "", cacheKey: null, cached: false, resultName: "", resultVariants: [],
       proc: null, cancelled: false, createdAt: Date.now() / 1000, finishedAt: null,
-      emittedBlocks: new Set(), emittedPages: new Set(), timer: null
+      emittedBlocks: new Set(), emittedPages: new Set(), emittedTimings: new Set(), timer: null
     };
     job.resultName = this.buildResultName(job);
     this.jobs.set(id, job);
@@ -222,6 +226,17 @@ export class EngineManager extends EventEmitter {
     return Array.from(this.jobs.values())
       .sort((a, b) => b.createdAt - a.createdAt)
       .map((job) => this.public(job));
+  }
+
+  // 正在跑的引擎子进程（Python），供"运行状态"面板显示
+  processes(): { pid: number; jobId: string; name: string; status: string }[] {
+    const out: { pid: number; jobId: string; name: string; status: string }[] = [];
+    for (const job of this.jobs.values()) {
+      if (job.proc && job.proc.pid && job.proc.exitCode === null) {
+        out.push({ pid: job.proc.pid, jobId: job.id, name: job.filename, status: job.status });
+      }
+    }
+    return out;
   }
 
   private pump(): void {
@@ -386,6 +401,19 @@ export class EngineManager extends EventEmitter {
     const tail = cleanLog(job.raw).slice(-64000);
     job.raw = tail;
     job.logTail = tail;
+
+    // 引擎打的 ENGINE_TIMING 分段计时（引擎就绪 / 版面模型加载 / 版面分析 / 全流程）→ 写进系统日志，
+    // 这样在应用内就能看到"这次翻译的时间花在哪一步"。
+    TIMING_RE.lastIndex = 0;
+    let timing: RegExpExecArray | null = TIMING_RE.exec(tail);
+    while (timing !== null) {
+      const line = timing[1].trim();
+      if (!job.emittedTimings.has(line)) {
+        job.emittedTimings.add(line);
+        logger.info("translate", `${job.resultName || job.filename}：${line}`);
+      }
+      timing = TIMING_RE.exec(tail);
+    }
 
     let match = PROGRESS_RE.exec(tail);
     if (match) {

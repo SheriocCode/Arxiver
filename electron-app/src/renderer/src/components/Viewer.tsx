@@ -380,7 +380,10 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
       }
     }
   }
-  const pct = s?.phase === "done" ? 100 : (s?.progress || 0);
+  // 进度条按"页"算：引擎自报的 tqdm 百分比只在单页内走动，页数才是整体进度
+  const pct = s?.phase === "done"
+    ? 100
+    : (s && s.totalPages > 0 ? Math.min(100, Math.round(((s.donePages || 0) / s.totalPages) * 100)) : (s?.progress || 0));
   const showOverlay = !!s && s.phase === "error";
   const canView = (v: string): boolean => v === "source" || hasTranslation || running;
   // The toolbar toggle drives the switch that applies right now: the live preview while
@@ -556,10 +559,13 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
       </header>
 
       {running && (
-        <div className="run-bar">
+        <div className="run-bar" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
           <div className="run-bar-fill" style={{ width: pct + "%" }} />
+          <div className="run-bar-line" style={{ width: pct + "%" }} />
           <div className="run-bar-text">
+            <span className="spinner" />
             <span className="run-bar-phase">{s?.message || "翻译中"}</span>
+            <span className="run-bar-pct">{Math.round(pct)}%</span>
             {(s?.totalPages || 0) > 0 && <span>已完成 {s?.donePages || 0}/{s?.totalPages} 页</span>}
             {(s?.blockTotal || 0) > 0 && <span>第 {s?.blockPage || s?.currentPage || "-"} 页 · 块 {s?.blockIndex || 0}/{s?.blockTotal}</span>}
           </div>

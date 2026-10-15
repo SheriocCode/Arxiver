@@ -6,7 +6,8 @@ const ITEMS: { id: Section; label: string; ic: string }[] = [
   { id: "collections", label: "文献库", ic: "folder" },
   { id: "tags", label: "标签", ic: "tag" },
   { id: "recent", label: "最近", ic: "clock" },
-  { id: "logs", label: "日志", ic: "log" }
+  { id: "logs", label: "日志", ic: "log" },
+  { id: "system", label: "运行状态", ic: "chart" }
 ];
 
 export default function Rail({

@@ -17,9 +17,9 @@ function docKind(doc: LibraryDoc): string {
   return doc.type || (/arxiv/i.test(doc.sourceUrl || "") ? "预印本" : "文档");
 }
 
-function TagChip({ tag, lib }: { tag: string; lib: LibraryApi }): JSX.Element {
+function TagChip({ tag, lib, on, title, onClick }: { tag: string; lib: LibraryApi; on?: boolean; title?: string; onClick?: () => void }): JSX.Element {
   return (
-    <button className="tag" onClick={() => lib.setTag(tag)}>
+    <button className={"tag" + (on ? " is-on" : "")} title={title} onClick={onClick || (() => lib.setTag(tag))}>
       <span className="tag-dot" style={{ background: tagColor(lib.tagColors[tag]) }} />
       {tag}
     </button>
@@ -229,6 +229,11 @@ function TagsPanel({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Elem
     if (!tags.includes(tag)) { void lib.update(doc.id, { tags: [...tags, tag] }); }
     setInput("");
   };
+  // 「所有标签」是给本文加/去标签的入口，不做左侧「我的标签」那种联动过滤
+  const toggle = (tag: string): void => {
+    const next = tags.includes(tag) ? tags.filter((t) => t !== tag) : [...tags, tag];
+    void lib.update(doc.id, { tags: next });
+  };
   return (
     <>
       <div className="section-title" style={{ marginTop: 0 }}>当前标签</div>
@@ -251,7 +256,16 @@ function TagsPanel({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Elem
       <div className="section-title">所有标签</div>
       <div className="tag-cloud">
         {all.length === 0 ? <span style={{ color: "var(--faint)", fontSize: 13 }}>无</span>
-          : all.map((t) => <TagChip key={t} tag={t} lib={lib} />)}
+          : all.map((t) => (
+            <TagChip
+              key={t}
+              tag={t}
+              lib={lib}
+              on={tags.includes(t)}
+              title={tags.includes(t) ? "点击从本文移除该标签" : "点击为本文添加该标签"}
+              onClick={() => toggle(t)}
+            />
+          ))}
       </div>
     </>
   );
@@ -268,6 +282,8 @@ interface AiTurn {
   error?: string;
   // 未配置模型时的引导轮：不发起请求，只给一句说明 + 「去设置」按钮
   setup?: boolean;
+  // 用户主动暂停：保留已生成内容，并给一个「重新编辑问题」入口
+  stopped?: boolean;
   streaming?: boolean;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
@@ -854,6 +870,23 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
     if (turnRef.current) { void window.api.agentCancel(turnRef.current); }
     // 兜底：即使这一轮已经结束（没来得及收到 done/error），也别让按钮永远停在"停止"
     setSending(false);
+    // 主动暂停：**保留已经生成的内容**，只把这一轮标成"已暂停生成"；要不要重来由用户点下面的链接决定
+    setTurns((prev) => {
+      const next = prev.slice();
+      const i = next.length - 1;
+      if (next[i] && next[i].role === "assistant") { next[i] = { ...next[i], streaming: false, stopped: true }; }
+      return next;
+    });
+  };
+
+  // 点"重新编辑问题"：把这一轮（提问 + 已暂停的回答）撤掉，问题回填输入框继续改
+  const editQuestion = (i: number): void => {
+    const list = turnsRef.current;
+    const q = list[i - 1];
+    const text = q && q.role === "user" ? q.text : "";
+    setTurns(list.slice(0, Math.max(0, i - 1)));
+    if (text) { setInput(text); }
+    inputRef.current?.focus();
   };
 
   const atOptions = openDocs.filter((d) => d.id !== doc.id);
@@ -924,7 +957,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
           )}
         </div>
       </div>
-      <div className="ai-scroll" ref={scrollRef} onScroll={onScroll}>
+      <div className={"ai-scroll" + (anchors.length >= 2 ? " has-qnav" : "")} ref={scrollRef} onScroll={onScroll}>
         {turns.length === 0 ? (
           <div className="ai-intro">
             <div className="ai-mark"><Icon name="arxiver" /></div>
@@ -946,7 +979,6 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
         ) : (
           turns.map((t, i) => (
             <div key={i} ref={(el) => { msgRefs.current[i] = el; }} className={"msg " + (t.role === "user" ? "msg-user" : "msg-assistant")}>
-              <div className="msg-avatar">{t.role === "user" ? "我" : <Icon name="arxiver" small />}</div>
               <div className="msg-body">
                 <div className="msg-role">{t.role === "user" ? "我" : "Arxiver"}</div>
                 {t.role === "user" ? (
@@ -1021,6 +1053,12 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
                       });
                     })()}
                     {t.error ? <div className="ai-error">{t.error}</div> : null}
+                    {t.stopped ? (
+                      <div className="ai-stopped">
+                        <span>已暂停生成</span>
+                        <button type="button" onClick={() => editQuestion(i)}>重新编辑问题</button>
+                      </div>
+                    ) : null}
                     {t.setup ? (
                       <div className="ai-setup">
                         <button type="button" className="btn btn-primary" onClick={openAiSettings}><Icon name="settings" small /> 打开设置</button>
@@ -1104,7 +1142,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
           <div className="composer-row">
             <span className="od-fill" />
             {sending
-              ? <button type="button" className="send-btn" title="停止" onClick={stop}><Icon name="x" small /></button>
+              ? <button type="button" className="send-btn" title="停止" onClick={(e) => { e.preventDefault(); stop(); }}><Icon name="x" small /></button>
               : <button type="submit" className="send-btn" aria-label="发送" disabled={!input.trim()}><Icon name="arrow-up" small /></button>}
           </div>
         </form>

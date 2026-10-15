@@ -148,6 +148,51 @@ export interface PageRead {
   via: string;
 }
 
+// 运行信息（设置 → 日志 → 系统运行日志 顶部的实时面板）：任务管理器只按 exe 描述显示进程名，
+// 这里给出"是什么 + PID + 内存/CPU"，方便对照。
+export interface AppProcessInfo {
+  pid: number;
+  kind: string; // 中文说明，如「界面渲染」「GPU 进程（绘制/解码）」
+  type: string; // Electron 原始类型：Browser / Tab / GPU / Utility …
+  serviceName?: string;
+  rssMB: number; // 工作集（驻留内存）—— 对应任务管理器「详细信息 → 工作集(内存)」
+  commitMB: number; // 提交大小 —— 对应任务管理器「详细信息 → 提交大小」
+  peakMB: number; // 峰值工作集
+  cpuPercent: number;
+  isMain: boolean;
+}
+
+export interface AppMetrics {
+  version: string;
+  dev: boolean;
+  uptimeSec: number;
+  userData: string;
+  logFile: string;
+  totalRssMB: number;
+  totalCommitMB: number;
+  procs: AppProcessInfo[];
+  // 主进程的子进程（翻译引擎 Python / 本地模型服务），Electron 的进程表里看不到，单独列
+  children: AppChildProc[];
+  jobs: AppJobInfo[];
+}
+
+export interface AppChildProc {
+  pid: number;
+  kind: string; // 「翻译引擎」「本地模型服务」…
+  name: string; // python.exe / llama-server.exe
+  memMB: number | null; // 由系统计数读取；非 Windows 或读不到给 null
+  detail?: string; // 端口 / 正在翻译的文件名
+}
+
+export interface AppJobInfo {
+  id: string;
+  name: string;
+  status: string; // queued / running / done / error / cancelled
+  pages: number;
+  donePages: number;
+  message: string;
+}
+
 export interface AgentEvent {
   turnId: string;
   type: "delta" | "reasoning" | "tool_call" | "tool_result" | "progress" | "confirmation" | "library_changed" | "papers" | "read" | "usage" | "done" | "error";
@@ -376,6 +421,8 @@ export interface Api {
   listStorage(): Promise<{ entries: StorageEntry[]; total: number }>;
   logsTranslation(): Promise<TranslationLogEntry[]>;
   logsSystem(): Promise<SystemLogSnapshot>;
+  appMetrics(opts?: { os?: boolean }): Promise<AppMetrics>;
+  saveDiagnostics(): Promise<string | null>;
   libraryState(): Promise<LibraryState>;
   libraryAdd(payload: SourcePayload & { type?: string; collections?: string[] }): Promise<LibraryDoc>;
   libraryAddManual(payload: {

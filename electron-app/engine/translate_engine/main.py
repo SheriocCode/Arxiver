@@ -5,6 +5,10 @@ output it to plain text, html, xml or tags.
 
 from __future__ import annotations
 
+# 进程内最早的计时点：之后的重型 import / 参数解析都算进"引擎就绪"（用于定位启动耗时）
+import time as _time
+_PROCESS_T0 = _time.time()
+
 import argparse
 import logging
 import sys
@@ -339,7 +343,11 @@ def main(args: Optional[List[str]] = None) -> int:
         translate(model=ModelInstance.value, **vars(parsed_args))
         return 0
 
+    # 分段计时（会出现在任务日志里，便于定位"启动慢在哪一步"）
+    _t_ready = _time.time()
+    print(f"ENGINE_TIMING 引擎就绪 {_t_ready - _PROCESS_T0:.2f}s", flush=True)
     translate(model=ModelInstance.value, **vars(parsed_args))
+    print(f"ENGINE_TIMING 全流程 {_time.time() - _PROCESS_T0:.2f}s", flush=True)
     return 0
 
 

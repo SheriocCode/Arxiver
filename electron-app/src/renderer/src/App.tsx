@@ -11,6 +11,8 @@ import Viewer, { type ViewerHandle } from "./components/Viewer";
 import SettingsView from "./components/SettingsView";
 import NewItemModal from "./components/NewItemModal";
 import LogsView from "./components/LogsView";
+import SystemPanel from "./components/SystemPanel";
+import { startRuntimeMonitor } from "./state/runtimeMonitor";
 import SplashScreen from "./components/SplashScreen";
 import { useLibrary, type Section } from "./state/useLibrary";
 import { useSettings } from "./state/settings";
@@ -77,6 +79,8 @@ export default function App(): JSX.Element {
   const [histIdx, setHistIdx] = useState(0);
   const navigate = useCallback((s: Section) => {
     lib.setSection(s);
+    // 从阅读视图点导航（文库/最近/日志…）时回到文库视图，否则阅读器会盖住列表
+    setActiveTab("library");
     if (s === "tags") {
       const first = Object.keys(lib.tagCounts).sort()[0];
       if (first) { lib.setTag(first); lib.setCollId("all"); }
@@ -102,6 +106,9 @@ export default function App(): JSX.Element {
       setInfo(await window.api.appInfo());
     })();
   }, []);
+
+  // 运行状态的后台采样：随应用启动，离开面板也继续（面板只负责展示）
+  useEffect(() => { startRuntimeMonitor(); }, []);
 
   // 更新状态：主进程在启动后静默检查一次，这里只做展示（右上角提示 + 设置-关于）
   useEffect(() => {
@@ -267,6 +274,14 @@ export default function App(): JSX.Element {
     });
   }, []);
 
+  // 「日志」「运行状态」是覆盖整片区域的整页视图：不渲染侧栏、把底下的列表/详情收起来（用 CSS 隐藏，
+  // 保留各自状态），这样自定义背景才不会被整片不透明面板挡住。
+  const overlayView = lib.section === "logs" || lib.section === "system";
+  const hideSidebar = lib.section === "system";
+  useEffect(() => {
+    document.documentElement.style.setProperty("--sidebar-w", hideSidebar || sidebarCollapsed ? "0px" : "268px");
+  }, [hideSidebar, sidebarCollapsed]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (document.activeElement?.tagName || "").toLowerCase();
@@ -276,16 +291,31 @@ export default function App(): JSX.Element {
         el?.focus();
       }
       if (e.key === "Escape") {
+        // Esc 只关掉弹层/整页视图，不动"打开的文章"和右侧详情面板
         if (settingsOpen) { setSettingsOpen(false); }
         else if (newOpen) { setNewOpen(false); }
-        else if (activeTab === "doc") { setActiveTab("library"); }
         else if (lib.section === "logs") { lib.setSection("collections"); }
-        else { setDetailOpen(false); }
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [settingsOpen, newOpen, activeTab, lib]);
+  }, [settingsOpen, newOpen, lib]);
+
+  // 焦点描边只跟随键盘导航：Shift+点击 等鼠标操作在 Chromium 里也会命中 :focus-visible，
+  // 这里按 Tab/方向键置位、按下鼠标清除（配合 styles.css 的 html.kb-focus）
+  useEffect(() => {
+    const KEYS = new Set(["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (KEYS.has(e.key)) { document.documentElement.classList.add("kb-focus"); }
+    };
+    const onPointerDown = (): void => { document.documentElement.classList.remove("kb-focus"); };
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("mousedown", onPointerDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("mousedown", onPointerDown, true);
+    };
+  }, []);
 
   return (
     <>
@@ -299,22 +329,26 @@ export default function App(): JSX.Element {
           onBack={goBack}
           onForward={goForward}
           onToggleSidebar={toggleSidebar}
+          canToggleSidebar={!hideSidebar}
           onNavigate={navigate}
           onSettings={() => openSettings()}
           update={badge}
           onUpdate={() => openSettings("about")}
         />
-        <div className={"app" + (detailOpen ? " detail-open" : "") + (sidebarCollapsed ? " sidebar-collapsed" : "")}>
+        <div className={"app" + (detailOpen ? " detail-open" : "") + (sidebarCollapsed || hideSidebar ? " sidebar-collapsed" : "")}>
           <Rail section={lib.section} onChange={navigate} onSettings={() => setSettingsOpen(true)} />
-          <Sidebar
-            lib={lib}
-            onOpenDoc={openDocById}
-            showCounts={settings.showCounts}
-            logCat={logCat}
-            setLogCat={setLogCat}
-            logStatus={logStatus}
-            setLogStatus={setLogStatus}
-          />
+          {!hideSidebar && (
+            <Sidebar
+              lib={lib}
+              onOpenDoc={openDocById}
+              onNavigate={() => setActiveTab("library")}
+              showCounts={settings.showCounts}
+              logCat={logCat}
+              setLogCat={setLogCat}
+              logStatus={logStatus}
+              setLogStatus={setLogStatus}
+            />
+          )}
 
           <div className="main-area">
             <div className="tabbar">
@@ -364,7 +398,7 @@ export default function App(): JSX.Element {
                 </button>
               </div>
             </div>
-            <div className="main-body">
+            <div className={"main-body" + (overlayView ? " is-overlay-view" : "")}>
               <ListPane
                 lib={lib}
                 onAddDocument={() => setNewOpen(true)}
@@ -384,6 +418,7 @@ export default function App(): JSX.Element {
                 onOpenSettings={openSettings}
               />
               {lib.section === "logs" && <LogsView logKey={logCat} logStatus={logStatus} onClose={() => lib.setSection("collections")} />}
+              {lib.section === "system" && <SystemPanel onClose={() => lib.setSection("collections")} />}
               <div className="reader-overlay" hidden={activeTab !== "doc"}>
                 {docs.map((d) => (
                   <Viewer

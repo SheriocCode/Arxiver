@@ -30,6 +30,8 @@ const api = {
   listStorage: () => ipcRenderer.invoke("storage:list"),
   logsTranslation: () => ipcRenderer.invoke("logs:translation"),
   logsSystem: () => ipcRenderer.invoke("logs:system"),
+  appMetrics: (opts?: { os?: boolean }) => ipcRenderer.invoke("app:metrics", opts),
+  saveDiagnostics: () => ipcRenderer.invoke("app:diagnosticsSave"),
 
   libraryState: () => ipcRenderer.invoke("library:state"),
   libraryAdd: (payload: unknown) => ipcRenderer.invoke("library:add", payload),

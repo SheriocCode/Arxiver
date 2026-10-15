@@ -6,7 +6,16 @@ const SECTION_LABEL: Record<Section, string> = {
   collections: "文献库",
   tags: "标签",
   recent: "最近",
-  logs: "日志"
+  logs: "日志",
+  system: "运行状态"
+};
+
+const SECTION_ICON: Record<Section, string> = {
+  collections: "folder",
+  tags: "tag",
+  recent: "clock",
+  logs: "log",
+  system: "chart"
 };
 
 export default function TitleBar({
@@ -16,6 +25,7 @@ export default function TitleBar({
   onBack,
   onForward,
   onToggleSidebar,
+  canToggleSidebar,
   onNavigate,
   onSettings,
   update,
@@ -27,6 +37,7 @@ export default function TitleBar({
   onBack: () => void;
   onForward: () => void;
   onToggleSidebar: () => void;
+  canToggleSidebar?: boolean;
   onNavigate: (s: Section) => void;
   onSettings: () => void;
   update?: { label: string; state: string } | null;
@@ -47,16 +58,18 @@ export default function TitleBar({
       <div className="tb-left">
         <button className="tb-btn" title="后退" disabled={!canBack} onClick={onBack}><Icon name="chev-left" small /></button>
         <button className="tb-btn" title="前进" disabled={!canForward} onClick={onForward}><Icon name="chev-right" small /></button>
-        <button className="tb-btn" title="折叠/展开侧栏" onClick={onToggleSidebar}><Icon name="panel-left" small /></button>
+        {canToggleSidebar === false ? null : (
+          <button className="tb-btn" title="折叠/展开侧栏" onClick={onToggleSidebar}><Icon name="panel-left" small /></button>
+        )}
         <div className="tb-menu" ref={menuRef}>
           <button className="tb-menu-btn" onClick={() => setMenuOpen((o) => !o)}>
             {SECTION_LABEL[section]} <Icon name="chev-down" small />
           </button>
           {menuOpen && (
             <div className="tb-dropdown">
-              {(["collections", "tags", "recent", "logs"] as Section[]).map((s) => (
+              {(["collections", "tags", "recent", "logs", "system"] as Section[]).map((s) => (
                 <button key={s} className={section === s ? "is-active" : ""} onClick={() => { onNavigate(s); setMenuOpen(false); }}>
-                  <Icon name={s === "collections" ? "folder" : s === "tags" ? "tag" : s === "recent" ? "clock" : "log"} small />
+                  <Icon name={SECTION_ICON[s]} small />
                   {SECTION_LABEL[s]}
                 </button>
               ))}

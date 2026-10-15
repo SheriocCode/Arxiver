@@ -151,7 +151,7 @@ export default function SettingsView({
                 {(form.translate_mode || "local") === "remote" && (
                   <Group title="在线接口">
                     <Row label="接口地址"><input style={inputStyle} value={form.translate_base_url || ""} onChange={(e) => set("translate_base_url", e.target.value)} /></Row>
-                    <Row label="API 密钥"><input type="password" style={inputStyle} value={form.translate_api_key || ""} onChange={(e) => set("translate_api_key", e.target.value)} /></Row>
+                    <Row label="API 密钥" desc={<>默认服务商是 DeepSeek：在 <ExtLink href="https://platform.deepseek.com/">DeepSeek 官网</ExtLink> 创建 API Key 并订阅额度；换别家就改上面的接口地址与模型</>}><input type="password" style={inputStyle} value={form.translate_api_key || ""} onChange={(e) => set("translate_api_key", e.target.value)} /></Row>
                     <Row label="模型"><input style={inputStyle} value={form.translate_model || ""} onChange={(e) => set("translate_model", e.target.value)} /></Row>
                     <Row label="默认服务"><input style={inputStyle} value={form.service || ""} onChange={(e) => set("service", e.target.value)} /></Row>
                   </Group>
@@ -270,7 +270,7 @@ export default function SettingsView({
               <>
                 <Group title="对话接口">
                   <Row label="接口地址" desc="AI 助手使用的 OpenAI 兼容接口，与翻译引擎相互独立"><input style={inputStyle} value={form.chat_base_url || ""} onChange={(e) => set("chat_base_url", e.target.value)} /></Row>
-                  <Row label="API 密钥"><input type="password" style={inputStyle} value={form.chat_api_key || ""} onChange={(e) => set("chat_api_key", e.target.value)} /></Row>
+                  <Row label="API 密钥" desc={<>默认用 DeepSeek（deepseek-chat）：在 <ExtLink href="https://platform.deepseek.com/">DeepSeek 官网</ExtLink> 创建 API Key 并订阅额度</>}><input type="password" style={inputStyle} value={form.chat_api_key || ""} onChange={(e) => set("chat_api_key", e.target.value)} /></Row>
                   <Row label="模型"><input style={inputStyle} value={form.chat_model || ""} onChange={(e) => set("chat_model", e.target.value)} /></Row>
                   <div className="modal-foot" style={{ border: 0, padding: "4px 0" }}>
                     <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>
@@ -288,11 +288,11 @@ export default function SettingsView({
                     </select>
                   </Row>
                   {searchProvider === "bocha" ? (
-                    <Row label="博查 API Key" desc="在 open.bochaai.com 控制台获取（Bearer sk-…）">
+                    <Row label="博查 API Key" desc={<>在 <ExtLink href="https://open.bochaai.com/">博查官网</ExtLink> 控制台获取（Bearer sk-…）</>}>
                       <input type="password" style={inputStyle} value={form.search_key_bocha || ""} onChange={(e) => set("search_key_bocha", e.target.value)} />
                     </Row>
                   ) : (
-                    <Row label="Tavily API Key" desc="在 tavily.com 注册后获取；每次提问约消耗 3~6 credits（免费额度 1000/月）。读正文用的也是它">
+                    <Row label="Tavily API Key" desc={<>在 <ExtLink href="https://app.tavily.com/">Tavily 官网</ExtLink> 注册后获取；每次提问约消耗 3~6 credits（免费额度 1000/月）。读正文用的也是它</>}>
                       <input type="password" style={inputStyle} value={form.search_key_tavily || ""} onChange={(e) => set("search_key_tavily", e.target.value)} />
                     </Row>
                   )}
@@ -386,7 +386,22 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
-function Row({ label, desc, children }: { label: string; desc?: string; children?: React.ReactNode }): JSX.Element {
+/** 说明文字里的外链（官网 / 订阅页）：统一样式，点击交给系统浏览器打开 */
+function ExtLink({ href, children }: { href: string; children: React.ReactNode }): JSX.Element {
+  return (
+    <a
+      className="set-link"
+      href={href}
+      title={`在浏览器打开 ${href}`}
+      onClick={(e) => { e.preventDefault(); void window.api.openExternal(href); }}
+    >
+      {children}
+      <Icon name="external" small />
+    </a>
+  );
+}
+
+function Row({ label, desc, children }: { label: string; desc?: React.ReactNode; children?: React.ReactNode }): JSX.Element {
   return (
     <div className="set-row">
       <span className="set-copy">
