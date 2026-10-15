@@ -33,6 +33,24 @@
 
 <p>全部版本见 <a href="https://github.com/SheriocCode/Arxiver/releases">GitHub Releases</a>。</p>
 
+<h2 id="v01002026-10-15">v0.10.0（2026-10-15）</h2>
+
+<ul>
+  <li><strong>运行状态（新）</strong>：左侧栏新增「运行状态」页——已运行时长 / 进程数 / 合计内存 / 合计 CPU、内存与 CPU 趋势图
+（每 2 秒采样、保留约 3 分钟，离开本页仍在后台继续）、可分组与排序的进程列表（名称 / 类型 / PID / 内存 / CPU / 迷你趋势）、
+可切换「工作集 / 提交大小」两种口径；底部单列主进程的子进程（Python 引擎、本地模型服务 <code class="language-plaintext highlighter-rouge">llama-server</code>：PID / 内存 / 端口 / 正在翻的文件）
+与翻译任务进度；可暂停采样、打开日志文件，并 <strong>一键导出诊断报告</strong>（进程快照 + 环境信息 + 最近日志）。</li>
+  <li><strong>进度与耗时</strong>：阅读器进度条改为 <strong>按页</strong> 计算并显示百分比与转圈；每次翻译的分段耗时（引擎就绪 / 版面模型加载 / 版面分析 / 全流程）
+写进「日志 → 系统运行日志」；翻译预览改为 <strong>每翻完一页</strong> 就刷新，更跟手（保留 1 秒写入下限）。</li>
+  <li><strong>日志视图</strong>：翻译 / AI 对话 / 系统运行三类常驻，切换不再闪「暂无记录」；修复 <strong>AI 对话日志点哪条都还停在第一条</strong>。</li>
+  <li><strong>AI 助手</strong>：点 <strong>停止不再清空内容</strong>——保留已生成部分并标为「已暂停生成」，可 <strong>「重新编辑问题」</strong> 把问题回填输入框；消息去掉头像、收紧布局。</li>
+  <li><strong>阅读与导航</strong>：从阅读视图点导航或点侧栏分类 / 标签会回到文库视图，不再被阅读器盖住；Esc 只关弹层 / 整页视图，不误关文章；
+焦点描边只跟随键盘操作；详情面板「所有标签」改为对当前文献添加 / 移除。</li>
+  <li><strong>修复</strong>：同一篇论文导入两次时翻译日志出现两条重复记录；个别 PDF 在 <strong>字体子集化</strong> 一步导致整任务失败（现改为尽力而为，失败不中断翻译）；
+设置里的 API Key 与联网搜索项补上 DeepSeek / Tavily / 博查官网链接。</li>
+  <li>引擎更新至 <strong>0.3.1</strong>：字体子集化容错、预览刷新节奏、分段耗时埋点。</li>
+</ul>
+
 <h2 id="v0902026-10-14">v0.9.0（2026-10-14）</h2>
 
 <ul>
