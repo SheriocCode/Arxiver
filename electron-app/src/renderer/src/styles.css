@@ -100,6 +100,27 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 ::-webkit-scrollbar-thumb:hover { background: #4a4a4a; background-clip: padding-box; }
 ::-webkit-scrollbar-track { background: transparent; }
 
+/* ---------- 自定义下拉弹层（Chromium base-select）----------
+   原生 <select> 的弹层由系统绘制、普通 CSS 改不动，所以用新的 base-select 把弹层暴露出来，
+   让它和其它弹层（.tb-dropdown / .ctx-menu）统一：深色底、圆角、阴影，悬停/选中跟随主题。 */
+select { appearance: base-select; align-items: center; }
+select::picker(select) {
+  appearance: base-select;
+  margin: 6px 0 0; padding: 6px;
+  min-width: anchor-size(width);
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+select option {
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-2);
+}
+select option:hover, select option:focus { background: var(--surface-2); color: var(--text); }
+select option:checked { background: var(--accent-soft); color: var(--text); }
+select option::checkmark { content: none; }
+select:disabled { opacity: .55; }
+
 /* 焦点描边只在键盘导航时出现：Chromium 下按住 Shift 再点按钮也会命中 :focus-visible，
    留下难看的原生描边。这里由 App 里维护的 html.kb-focus（按 Tab/方向键置位、按下鼠标清除）来区分。 */
 :focus-visible { outline: none; }
@@ -293,14 +314,13 @@ html.kb-focus :focus-visible { outline: 2px solid var(--accent); outline-offset:
   text-transform: uppercase;
 }
 .col-head > span { position: relative; }
-.col-head .col-year { text-align: right; }
 .col-resize {
   position: absolute; top: -7px; bottom: -7px; right: -7px; width: 14px;
   cursor: col-resize; z-index: 2; touch-action: none;
 }
 .col-resize::after {
   content: ""; position: absolute; top: 6px; bottom: 6px; left: 6px; width: 2px;
-  border-radius: 2px; background: transparent;
+  border-radius: 2px; background: var(--border-strong);
   transition: background var(--dur) var(--ease);
 }
 .col-resize:hover::after, .col-resize.is-dragging::after { background: var(--accent); }
@@ -696,11 +716,12 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .hist-chip[aria-pressed="true"] { background: var(--surface-2); border-color: var(--border-strong); color: var(--text); }
 .hist-chip .cnt { opacity: 0.85; font-size: 11px; }
 .hist-log { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 10px 16px; }
-/* 运行状态面板（自绘趋势图 + 进程表） */
-.sys-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 20px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
-/* 卡片限宽居中：宽屏下不再拉成一长条，窗口比限宽窄时自然占满（≈80% 宽的观感，但 4K 下不会过宽） */
-.sys-card { width: 100%; max-width: 1200px; }
-.sys-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+/* 运行状态（设置 → 运行状态）：自绘趋势图 + 进程表（扁平，与设置其它分区一致） */
+.sys-section { display: flex; flex-direction: column; }
+.sys-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 2px 2px; }
+.sys-meta { font-size: 11.5px; color: var(--faint); }
+.sys-card { padding: 14px 2px; border-bottom: 1px solid var(--border); }
+.sys-card:last-child { border-bottom: 0; }
 .sys-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .sys-card-head h3 { margin: 0; font-size: 13.5px; font-weight: 600; color: var(--text); }
 .sys-live { font-size: 11.5px; color: var(--accent); }
@@ -711,14 +732,13 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .sys-kv span { font-size: 11.5px; color: var(--faint); }
 .sys-kv b { font-size: 15px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
 .sys-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
-.sys-chart { background: var(--surface-2); border-radius: var(--radius-sm); padding: 8px 10px; }
+.sys-chart { padding: 4px 0; }
 .sys-chart-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .sys-chart-head b { color: var(--text); font-variant-numeric: tabular-nums; }
 .sys-trend { display: flex; flex-direction: column; gap: 2px; }
 .sys-trend svg { display: block; width: 100%; }
 .sys-grid { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 4; vector-effect: non-scaling-stroke; }
 .sys-line { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; }
-.sys-area { opacity: .12; stroke: none; }
 .sys-trend-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--faint); }
 .sys-trend-empty { display: grid; place-items: center; color: var(--faint); font-size: 11.5px; }
 .sys-filter { display: flex; gap: 4px; }
@@ -726,7 +746,9 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .sys-filter button:hover { background: var(--surface-3); color: var(--text); }
 .sys-filter button.is-active { background: var(--accent-strong); color: #fff; }
 .sys-filter em { font-style: normal; opacity: .75; font-size: 11px; }
-.sys-row { display: grid; grid-template-columns: minmax(120px, 0.9fr) 190px 74px minmax(150px, 1fr) 56px 96px; align-items: center; gap: 10px; padding: 5px 4px; font-size: 12.5px; color: var(--text-2); border-bottom: 1px solid var(--border); }
+.sys-row { display: grid; grid-template-columns: minmax(96px, 1fr) 92px 54px minmax(118px, 1.05fr) 50px 66px; align-items: center; gap: 8px; padding: 5px 4px; font-size: 12.5px; color: var(--text-2); border-bottom: 1px solid var(--border); }
+/* 子进程表：5 列（进程 / 程序 / PID / 内存 / 说明） */
+.sys-row-c5 { grid-template-columns: minmax(88px, 1fr) minmax(76px, 0.9fr) 54px minmax(104px, 1fr) minmax(0, 1.5fr); }
 .sys-row-head { border-bottom: 1px solid var(--border-strong); padding-bottom: 6px; }
 .sys-th, .sys-th-plain { background: none; color: var(--faint); font-size: 11.5px; text-align: left; display: inline-flex; align-items: center; gap: 2px; }
 .sys-th:hover { color: var(--text-2); }
@@ -1231,7 +1253,9 @@ html, body { background: var(--bg-panel) !important; }
 
 /* prevent accidental text selection on UI chrome (allow in inputs/editors) */
 body { -webkit-user-select: none; user-select: none; }
-input, textarea, select, [contenteditable="true"] { -webkit-user-select: text; user-select: text; }
+input, textarea, [contenteditable="true"] { -webkit-user-select: text; user-select: text; }
+/* 下拉框不是可编辑文本：不要 I-beam 光标，整块用手型 */
+select, select option { cursor: pointer; -webkit-user-select: none; user-select: none; }
 
 /* desktop-only: sidebar collapse always applies */
 .app.sidebar-collapsed .sidebar { display: none; }
@@ -1247,8 +1271,7 @@ input, textarea, select, [contenteditable="true"] { -webkit-user-select: text; u
 body.col-resizing { cursor: col-resize; -webkit-user-select: none; user-select: none; }
 .col-resize:hover::after { background: var(--accent); }
 
-/* unify column alignment (all left) */
-.col-head .col-year { text-align: left; }
+/* 年份列也左对齐（与其它列统一） */
 .item-year { text-align: left; }
 
 /* ChatGPT-style selected nav: subtle gray fill, no accent bar */
@@ -1328,20 +1351,21 @@ html.has-bg .window { background: transparent; }
 html.has-bg .titlebar { background: color-mix(in srgb, var(--bg-rail) 55%, transparent); }
 html.has-bg .sidebar { background: color-mix(in srgb, var(--bg-panel) 74%, transparent); }
 html.has-bg .list-pane { background: color-mix(in srgb, var(--bg) 68%, transparent); }
-/* 日志 / 运行状态这类整页视图（.history）也要跟着半透明，否则会整片挡住自定义背景 */
+/* 日志这类整页视图（.history）也要跟着半透明，否则会整片挡住自定义背景 */
 html.has-bg .history { background: color-mix(in srgb, var(--bg) 68%, transparent); }
-/* 整页视图（日志 / 运行状态）打开时收起身后的列表、详情与阅读器（保留挂载，不丢状态） */
+/* 整页视图（日志）打开时收起身后的列表、详情与阅读器（保留挂载，不丢状态） */
 .main-body.is-overlay-view > .list-pane,
 .main-body.is-overlay-view > .detail,
 .main-body.is-overlay-view > .reader-overlay { display: none; }
 html.has-bg .detail { background: color-mix(in srgb, var(--bg-panel) 74%, transparent); }
-/* 运行状态卡片与图表块：和文献库一样半透明（壁纸透出来，文字仍清晰） */
-html.has-bg .sys-card { background: color-mix(in srgb, var(--surface) 76%, transparent); }
 /* 日志右侧详情面板（原来是最不透明的一块）与其中的消息块 */
 html.has-bg .hist-detail { background: color-mix(in srgb, var(--bg-panel) 74%, transparent); }
 html.has-bg .hist-code { background: color-mix(in srgb, var(--surface) 82%, transparent); }
-html.has-bg .sys-chart { background: color-mix(in srgb, var(--surface-2) 72%, transparent); }
-html.has-bg .list-scroll .col-head { background: color-mix(in srgb, var(--bg) 72%, transparent); }
+/* 列头是 sticky、正文从它下面滚过：自定义背景下必须挡住（毛玻璃，避免文字透出重叠） */
+html.has-bg .list-scroll .col-head {
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
 html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, transparent); }
 
 .set-inline { display: flex; align-items: center; gap: 8px; }

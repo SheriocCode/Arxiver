@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { LibraryCollection, LibraryDoc, ReadingRecord } from "../../../shared/types";
 
-export type Section = "collections" | "tags" | "recent" | "logs" | "system";
+export type Section = "collections" | "tags" | "recent" | "logs";
 export type LibChip = "all" | "unread" | "note" | "star";
 export type LibSort = "added-desc" | "year-desc" | "title-asc";
 export type LibTab = "info" | "notes" | "tags" | "ai";

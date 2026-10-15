@@ -4,6 +4,7 @@ import { Icon } from "./Icons";
 import { LANGS } from "../lib/langs";
 import { ACCENTS, type AppSettings } from "../state/settings";
 import { Markdown } from "../lib/markdown";
+import SystemPanel from "./SystemPanel";
 
 const SECTIONS = [
   { id: "model", name: "翻译引擎", icon: "settings" },
@@ -13,6 +14,7 @@ const SECTIONS = [
   { id: "ai", name: "AI 助手", icon: "message" },
   { id: "sync", name: "同步与存储", icon: "globe" },
   { id: "shortcuts", name: "快捷键", icon: "terminal" },
+  { id: "runtime", name: "运行状态", icon: "chart" },
   { id: "about", name: "关于", icon: "book" }
 ];
 
@@ -343,6 +345,8 @@ export default function SettingsView({
                 </dl>
               </Group>
             )}
+
+            {section === "runtime" && <SystemPanel />}
 
             {section === "about" && (
               <Group title="">

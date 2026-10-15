@@ -11,7 +11,6 @@ import Viewer, { type ViewerHandle } from "./components/Viewer";
 import SettingsView from "./components/SettingsView";
 import NewItemModal from "./components/NewItemModal";
 import LogsView from "./components/LogsView";
-import SystemPanel from "./components/SystemPanel";
 import { startRuntimeMonitor } from "./state/runtimeMonitor";
 import SplashScreen from "./components/SplashScreen";
 import { useLibrary, type Section } from "./state/useLibrary";
@@ -274,13 +273,12 @@ export default function App(): JSX.Element {
     });
   }, []);
 
-  // 「日志」「运行状态」是覆盖整片区域的整页视图：不渲染侧栏、把底下的列表/详情收起来（用 CSS 隐藏，
+  // 「日志」是覆盖整片区域的整页视图：不渲染侧栏、把底下的列表/详情收起来（用 CSS 隐藏，
   // 保留各自状态），这样自定义背景才不会被整片不透明面板挡住。
-  const overlayView = lib.section === "logs" || lib.section === "system";
-  const hideSidebar = lib.section === "system";
+  const overlayView = lib.section === "logs";
   useEffect(() => {
-    document.documentElement.style.setProperty("--sidebar-w", hideSidebar || sidebarCollapsed ? "0px" : "268px");
-  }, [hideSidebar, sidebarCollapsed]);
+    document.documentElement.style.setProperty("--sidebar-w", sidebarCollapsed ? "0px" : "268px");
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -329,26 +327,23 @@ export default function App(): JSX.Element {
           onBack={goBack}
           onForward={goForward}
           onToggleSidebar={toggleSidebar}
-          canToggleSidebar={!hideSidebar}
           onNavigate={navigate}
           onSettings={() => openSettings()}
           update={badge}
           onUpdate={() => openSettings("about")}
         />
-        <div className={"app" + (detailOpen ? " detail-open" : "") + (sidebarCollapsed || hideSidebar ? " sidebar-collapsed" : "")}>
+        <div className={"app" + (detailOpen ? " detail-open" : "") + (sidebarCollapsed ? " sidebar-collapsed" : "")}>
           <Rail section={lib.section} onChange={navigate} onSettings={() => setSettingsOpen(true)} />
-          {!hideSidebar && (
-            <Sidebar
-              lib={lib}
-              onOpenDoc={openDocById}
-              onNavigate={() => setActiveTab("library")}
-              showCounts={settings.showCounts}
-              logCat={logCat}
-              setLogCat={setLogCat}
-              logStatus={logStatus}
-              setLogStatus={setLogStatus}
-            />
-          )}
+          <Sidebar
+            lib={lib}
+            onOpenDoc={openDocById}
+            onNavigate={() => setActiveTab("library")}
+            showCounts={settings.showCounts}
+            logCat={logCat}
+            setLogCat={setLogCat}
+            logStatus={logStatus}
+            setLogStatus={setLogStatus}
+          />
 
           <div className="main-area">
             <div className="tabbar">
@@ -418,7 +413,6 @@ export default function App(): JSX.Element {
                 onOpenSettings={openSettings}
               />
               {lib.section === "logs" && <LogsView logKey={logCat} logStatus={logStatus} onClose={() => lib.setSection("collections")} />}
-              {lib.section === "system" && <SystemPanel onClose={() => lib.setSection("collections")} />}
               <div className="reader-overlay" hidden={activeTab !== "doc"}>
                 {docs.map((d) => (
                   <Viewer
