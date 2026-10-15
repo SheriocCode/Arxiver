@@ -1,7 +1,7 @@
 {
   "name": "arxiver",
   "productName": "Arxiver",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Translate arXiv and local PDFs on your machine with the bundled engine and read the bilingual PDF in a built-in viewer.",
   "main": "./out/main/index.js",
   "author": "SheriocCode",
