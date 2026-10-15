@@ -43,7 +43,6 @@ const updater = new Updater();
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
-let trayHintShown = false;
 let quitting = false;
 
 // 启动耗时打点：仅当 ARXIVER_PERF=1 时输出（用于对比/调试，不影响正常使用）
@@ -165,11 +164,9 @@ function createWindow(): void {
     if (!quitting) {
       // 关闭（点 × / 任务栏右键"关闭窗口" / Alt+F4）= 收进托盘：窗口从任务栏消失，应用继续在后台跑
       // （翻译任务不受影响）。想再打开：点托盘图标，或再启动一次（单实例会唤起已有窗口）。
-      // 第一次收起时用托盘气泡提示一下，免得"关了就找不到"。
       event.preventDefault();
       win.hide();
       tray?.setToolTip("Arxiver — 后台运行中");
-      hintToTray();
     }
   });
 }
@@ -256,19 +253,6 @@ function collectProcs(): AppProcessInfo[] {
       isMain: m.type === "Browser"
     };
   });
-}
-
-// 第一次收起窗口时提示用户它去哪了（每次运行只提示一次；打包版才有通知权限，开发版可能不显示）
-function hintToTray(): void {
-  if (trayHintShown) { return; }
-  trayHintShown = true;
-  try {
-    tray?.displayBalloon({
-      iconType: "info",
-      title: "Arxiver 仍在后台运行",
-      content: "点托盘图标即可重新打开窗口；要退出请用托盘菜单里的「退出」。"
-    });
-  } catch { /* 托盘不可用就算了 */ }
 }
 
 function createTray(): void {
