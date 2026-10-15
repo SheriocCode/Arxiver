@@ -17,6 +17,9 @@ RELEASE_NOTES.md
 site/_site/
 site/.jekyll-cache/
 
+# 首页轮播图的原始大图备份（发布用的是 site/assets/index/ 里压缩后的版本）
+site/assets/index/_originals/
+
 # 本地临时文件（密钥 / 对话摘录），勿提交
 keys.txt
 talk.txt

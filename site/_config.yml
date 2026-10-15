@@ -1,5 +1,5 @@
 title: Arxiver
-description: 在桌面端翻译 arXiv 论文与本地 PDF，全程在本机完成。
+description: 把英文论文读成中文——内置本地模型在本机离线翻译，配 原文 / 对照 / 译文 三视图与内置 AI 助手。
 markdown: kramdown
 kramdown:
   input: kramdown

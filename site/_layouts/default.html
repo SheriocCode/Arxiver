@@ -16,14 +16,17 @@
 <header class="site-header">
   <div class="container">
     <a class="brand" href="index.html"><img class="mark" src="assets/img/logo.svg" alt=""><img class="word" src="assets/img/arxiver_black.svg" alt="Arxiver"></a>
-    <nav class="site-nav">
+    <nav class="site-nav" id="site-nav">
       <a href="index.html"{% if page.nav == 'home' %} class="active"{% endif %}>首页</a>
       <a href="guide.html"{% if page.nav == 'guide' %} class="active"{% endif %}>文档</a>
       <a href="reference.html"{% if page.nav == 'reference' %} class="active"{% endif %}>参考</a>
       <a href="changelog.html"{% if page.nav == 'changelog' %} class="active"{% endif %}>更新日志</a>
       <a href="https://github.com/SheriocCode/Arxiver" target="_blank" rel="noopener">GitHub</a>
-      <a class="btn primary" href="https://github.com/SheriocCode/Arxiver/releases/latest" target="_blank" rel="noopener">Download</a>
     </nav>
+    <a class="btn primary nav-download" href="https://github.com/SheriocCode/Arxiver/releases/latest" target="_blank" rel="noopener">Download</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="展开导航">
+      <span>菜单</span><b class="nav-toggle-mark"></b>
+    </button>
   </div>
 </header>
 
@@ -33,7 +36,7 @@
 
 <footer class="site-footer">
   <div class="container">
-    <div>©2026 Arxiver · 本机翻译，用你自己的模型</div>
+    <div>©2026 Arxiver · 本机离线翻译，开箱即用</div>
     <div>
       <a href="https://github.com/SheriocCode/Arxiver" target="_blank" rel="noopener">GitHub</a> ·
       <a href="guide.html">文档</a> ·
@@ -43,6 +46,7 @@
 </footer>
 
 <script src="assets/carousel.js" defer></script>
+<script src="assets/nav.js" defer></script>
 
 </body>
 </html>

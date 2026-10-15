@@ -1,6 +1,7 @@
 ---
 layout: default
 ---
+{% include icons.html %}
 <section class="hero container">
   <span class="badge">{{ page.badge }}</span>
   <h1>{{ page.hero }}</h1>
@@ -36,6 +37,47 @@ layout: default
     {% endif %}
   </div>
 </section>
+
+{% if page.compare %}
+<section class="home-sec container" id="compare">
+  <div class="sec-head">
+    <h2>{{ page.compare_title | default: "和 Zotero 比一比" }}</h2>
+    {% if page.compare_lead %}<p>{{ page.compare_lead }}</p>{% endif %}
+  </div>
+  <div class="cmp-card">
+    <table class="cmp">
+      <thead>
+        <tr>
+          <th class="cmp-cap-head">能力</th>
+          <th class="cmp-a">
+            <span class="cmp-brand">
+              <img class="mark" src="assets/img/logo.svg" alt="">
+              <img class="word" src="assets/img/arxiver_black.svg" alt="Arxiver">
+            </span>
+          </th>
+          <th class="cmp-z">
+            <span class="cmp-brand"><img class="logo" src="assets/img/zotero-logo.svg" alt="Zotero"></span>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in page.compare %}
+        <tr>
+          <td class="cmp-cap">
+            <svg class="ic" aria-hidden="true"><use href="#i-{{ row.icon }}"></use></svg><span class="cmp-label">{{ row.label }}</span>{% if row.more %}<button type="button" class="help" aria-label="更多说明">?<span class="help-pop">{{ row.more }}</span></button>{% endif %}
+          </td>
+          <td class="cmp-a"><span class="m {{ row.arxiver.mark }}"></span>{{ row.arxiver.text }}</td>
+          <td class="cmp-z"><span class="m {{ row.zotero.mark }}"></span>{{ row.zotero.text }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="cmp-note">
+    {% for line in page.compare_note %}<p>{{ line }}</p>{% endfor %}
+  </div>
+</section>
+{% endif %}
 
 <div class="container home-content">
 {{ content }}
