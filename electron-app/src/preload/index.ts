@@ -64,7 +64,6 @@ const api = {
 
   openPath: (target: string) => ipcRenderer.invoke("shell:open", target),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
-  hideWindow: () => ipcRenderer.invoke("window:hide"),
   windowMinimize: () => ipcRenderer.invoke("window:minimize"),
   windowMaximize: () => ipcRenderer.invoke("window:maximize"),
   windowClose: () => ipcRenderer.invoke("window:close"),
