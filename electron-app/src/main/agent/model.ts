@@ -6,9 +6,14 @@ export interface ToolCall {
   arguments: string;
 }
 
+export type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } };
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  // 纯文本用 string；带图片时是 OpenAI 兼容的内容块数组（图片只能出现在 user 消息里）
+  content: string | null | ChatContentPart[];
   tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
   tool_call_id?: string;
 }
@@ -47,6 +52,16 @@ export async function runChat(opts: {
   if (!config.chat_base_url || !config.chat_api_key || !config.chat_model) {
     throw new Error("未配置对话模型：请在设置中填写 AI 助手的基础地址 / 密钥 / 模型");
   }
+  const hasImages = opts.messages.some((m) => Array.isArray(m.content) && m.content.some((p) => p.type === "image_url"));
+  // DeepSeek 的 deepseek-chat / reasoner 不支持图片：它们不会报错，而是当作没传（模型会说"没有图片"），
+  // 所以这里直接拦下来，免得用户以为是自己截图的问题。
+  if (hasImages) {
+    let host = "";
+    try { host = new URL(config.chat_base_url).hostname.toLowerCase(); } catch { /* 非标准地址就交给服务端判断 */ }
+    if (/(^|\.)deepseek\.com$/.test(host) && /^deepseek-(chat|reasoner|coder)/.test(String(config.chat_model).toLowerCase())) {
+      throw new Error(`当前对话模型 ${config.chat_model} 不支持图片输入：请在 设置 → AI 助手 → 模型 改为 deepseek-flash 后重试。`);
+    }
+  }
   const body: Record<string, unknown> = {
     model: config.chat_model,
     messages: opts.messages,
@@ -66,7 +81,10 @@ export async function runChat(opts: {
   });
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => "");
-    throw new Error(`模型请求失败 HTTP ${res.status}: ${text.slice(0, 500)}`);
+    const hint = hasImages && res.status === 400
+      ? "（图片输入可能不被当前对话模型支持：请确认模型具备视觉能力，例如 DeepSeek 的 deepseek-flash）"
+      : "";
+    throw new Error(`模型请求失败 HTTP ${res.status}: ${text.slice(0, 500)}${hint}`);
   }
 
   const reader = res.body.getReader();

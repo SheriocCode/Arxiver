@@ -2,12 +2,21 @@ import { EventEmitter } from "node:events";
 import crypto from "node:crypto";
 import type { AgentEvent, AgentChatRequest } from "../../shared/types";
 import * as library from "../library";
-import { runChat, modelConfigured, type ChatMessage } from "./model";
+import { runChat, modelConfigured, type ChatMessage, type ChatContentPart } from "./model";
 import { toolDefs, runTool, isWriteTool, webSearchState, type ToolContext } from "./tools";
 
 export type { AgentChatRequest };
 
 const MAX_ROUNDS = 8;
+
+// 历史消息带图时也要拼成内容块数组（图片只能出现在 user 消息里）
+function contentWithImages(text: string, images?: string[]): string | ChatContentPart[] {
+  if (!images || !images.length) { return text; }
+  return [
+    { type: "text", text: text || "(见下图)" },
+    ...images.map((url): ChatContentPart => ({ type: "image_url", image_url: { url } }))
+  ];
+}
 
 const SYSTEM_PROMPT = [
   "你是一个严谨的文献研究助手，帮助用户在本地文献库中检索、阅读并回答问题。",
@@ -25,6 +34,7 @@ const SYSTEM_PROMPT = [
   "  · 用户问的是“上一轮那篇 XX 具体怎么做的”，可以直接 fetch_url 去读它的页面（不必要求用户先导入本地文库）；如果这篇值得长期用，再建议用户点卡片上的「导入到文库」。",
   "当信息不足、指代不清或需要用户决策时，主动向用户追问澄清，而不是臆测。",
   "用户可能用 @ 额外引用其它已打开的文献；这些文献会出现在【用户用 @ 额外引用的已打开文献】里，涉及它们时请用 read_document / search_in_document 读取并纳入分析。",
+  "用户也可能随问题附上**图片**（PDF 区域截图或粘贴的图片）：直接依据图片内容回答，公式 / 图表 / 表格以图为准；不要声称看不到图片，也不要让用户重新输入图里的文字。",
   "写入操作（更新元数据、标签、星标/已读、移入回收站/恢复、加入或移出分类、改名/删除分类、增删笔记、把外部论文导入文库 import_paper）请直接调用对应工具：系统会先请用户批准，你无需再口头征询，直接调用即可。**不要声称自己没有这些能力**——用户让你导入论文、归类、加笔记、删分类，都用工具去做。",
   "导入与整理流水线：import_paper 拿到新文献 id 后，可继续 apply_tags / add_to_collection / add_note 等，完成「下载 → 归类 → 打标签 → 记笔记」这类多步操作；每一步都会单独请用户批准。",
   "  · 用户给出的**分类名 / 标签名对不上**时（拼写差一点、记错了），先自己查：list_collections / list_library 看现有分类与标签，然后把最接近的候选直接摆出来让用户确认（如「库里没有 123124，最接近的是 124124，要删它吗？」）。**不要反过来要求用户去核对拼写**，也不要说「分类列表我这边没列出来」——你有 list_collections 工具。",
@@ -72,7 +82,7 @@ export class AgentService extends EventEmitter {
     }
     const messages: ChatMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
     for (const m of req.history || []) {
-      messages.push({ role: m.role, content: m.content });
+      messages.push({ role: m.role, content: contentWithImages(m.content, m.images) });
     }
 
     const ctx: string[] = [];
@@ -98,8 +108,22 @@ export class AgentService extends EventEmitter {
     } else {
       ctx.push(`【联网搜索】已开启（服务商：${web.provider}）：search_web 与 fetch_url 均可用。`);
     }
+    const images = (req.images || []).filter((i) => i && i.dataUrl);
+    if (images.length) {
+      const lines = images.map((img, i) => {
+        const where = img.page ? `PDF 第 ${img.page} 页` : "用户粘贴的图片";
+        const pos = typeof img.anchor === "number"
+          ? `，页面纵向约 ${Math.round(Math.max(0, Math.min(1, img.anchor)) * 100)}%`
+          : "";
+        const t = String(img.text || "").trim();
+        return `- 图 ${i + 1}：${where}${pos}${t ? `\n  区域内文字（自动提取，可能有误差）：${t.slice(0, 600)}` : ""}`;
+      });
+      ctx.push(`【附加图片】用户附上了 ${images.length} 张图片，是 PDF 页面局部截图或用户粘贴的图片，可能包含公式、图表、表格：\n${lines.join("\n")}\n` +
+        "优先依据图片本身回答；需要精确定位或核对小字时，用上面的页码 / 纵向位置 / 区域文字去对照（必要时 read_document 读该页上下文）。" +
+        "不要声称看不到图片；引用图片里的内容时说明是「截图中的…」。");
+    }
     ctx.push(`【用户问题】${req.message}`);
-    messages.push({ role: "user", content: ctx.join("\n") });
+    messages.push({ role: "user", content: contentWithImages(ctx.join("\n"), images.map((i) => i.dataUrl)) });
     return messages;
   }
 

@@ -46,6 +46,23 @@ export interface TranslationDoneInfo {
   resultName: string;
 }
 
+// 区域截图：除了图片本身，还带上页码 / 页面纵向位置 / 区域内的文字，
+// 让模型即使在图里认不出小字，也能靠这些上下文定位到原文。
+export interface RegionCapture {
+  dataUrl: string;
+  page: number;
+  anchor: number;
+  text: string;
+}
+
+// 文本层里按行聚合后的一行文字（client 坐标）：用于判断起手点是否在文字上
+interface TextLine {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
 // 译文里保留的公式 / 富文本占位符（{v0} / {{v0}} / {v*}）：不并进正文，单独渲染成带颜色的 chip
 const BLOCK_PLACEHOLDER = /\{\{?\s*v\s*[\d*]+(?:\s*[\d*]+)*\s*\}?\}/gi;
 
@@ -151,6 +168,11 @@ export class ViewerEngine {
   private blockTipOutside: ((e: MouseEvent) => void) | null = null;
   // 用户拖动过面板之后就不再跟随块框（否则一滚动就被拽回去）
   private blockTipMoved = false;
+  // 区域截图（自动模式：文字上选文字、其它地方拖框截图）
+  // Viewer 设置回调；为 null 时（AI 助手未启用）不启用区域截图
+  onCapture: ((capture: RegionCapture) => void) | null = null;
+  private regionEl: HTMLElement | null = null;
+  private regionCancel: (() => void) | null = null;
   private renderInFlight = false;
   private renderTimer = 0;
   private selRaf = 0;
@@ -174,6 +196,7 @@ export class ViewerEngine {
     host.appendChild(this.root);
     this.status = this.blank();
     this.root.addEventListener("wheel", (e) => { if (e.ctrlKey) { e.preventDefault(); this.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1); } }, { passive: false });
+    this.root.addEventListener("pointerdown", this.onPagePointerDown);
     document.addEventListener("selectionchange", this.onSelectionChange);
     document.addEventListener("mouseup", this.onSelectionSettle);
     let raf = 0;
@@ -588,6 +611,7 @@ export class ViewerEngine {
           cell.className = "compare-cell";
           const wrap = document.createElement("div");
           wrap.className = "page-wrap";
+          wrap.dataset.page = String(p);
           const canvas = this.blankCanvas();
           canvas.width = Math.floor(base.width); canvas.height = Math.floor(base.height);
           wrap.appendChild(canvas);
@@ -611,6 +635,7 @@ export class ViewerEngine {
           cell.className = "compare-cell";
           const wrap = document.createElement("div");
           wrap.className = "page-wrap";
+          wrap.dataset.page = String(p);
           const hasRight = this.rightDoc && p <= this.rightDoc.numPages;
           if (hasRight) {
             const canvas = this.blankCanvas();
@@ -940,6 +965,305 @@ export class ViewerEngine {
     const keys = new Set<number>();
     Object.keys(this.blockLayer).forEach((k) => keys.add(parseInt(k, 10)));
     keys.forEach((p) => { this.renderPageBlocks(p); this.renderPageLinks(p); });
+  }
+
+  // ---- 区域截图（发给 AI 助手）----
+  // 自动模式：按下时如果指针在文字上，就交给浏览器正常选词；否则视为要截图，
+  // 直接拖框选中一块，松开后从该页渲染 canvas 裁出来（类似 WPS，不需要先点按钮）。
+  // 按住 Alt 可以在文字上强制截图。
+  private onPagePointerDown = (e: PointerEvent): void => {
+    if (e.button !== 0 || !this.onCapture) { return; }
+    // 上一次框选没收尾（指针在窗口外松开等）：先取消，再开始新的
+    if (this.regionEl) { this.regionCancel?.(); }
+    const target = e.target as Element | null;
+    if (!target || !target.closest(".page-wrap")) { return; }
+    // 块框 / 内部链接有各自的点击行为
+    if (target.closest(".block-rect, .link-rect, .block-tip")) { return; }
+    if (!e.altKey && this.isTextAt(e.clientX, e.clientY)) { return; }
+    this.beginRegionDrag(e);
+  };
+
+  // 该点是否压着有内容的文字（pdf.js 的文本层整页都可选，只有 span 才是字）。
+  // 按“行”判断：行内的词距/标点之间也算文字区域，行外用 2px 容差即可。
+  // 不额外放大——放大会让“在文字旁边起手”变成选字，反而不符合原生选区的直觉。
+  private isTextAt(x: number, y: number): boolean {
+    const wrap = document.elementsFromPoint(x, y)
+      .map((el) => el.closest(".page-wrap"))
+      .find((el): el is HTMLElement => el instanceof HTMLElement);
+    if (!wrap) { return false; }
+    const layer = wrap.querySelector<HTMLElement>(".text-layer");
+    if (!layer) { return false; }
+    const PAD = 2;
+    for (const ln of this.textLines(layer)) {
+      if (x >= ln.left - PAD && x <= ln.right + PAD && y >= ln.top - PAD && y <= ln.bottom + PAD) { return true; }
+    }
+    return false;
+  }
+
+  // 把一页的文字 span 按“行”聚起来（用于判断起手点是否在文字上）
+  private textLines(layer: HTMLElement): TextLine[] {
+    const lines: TextLine[] = [];
+    for (const span of this.textSpans(layer)) {
+      const r = span.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) { continue; }
+      const cy = r.top + r.height / 2;
+      let line = lines.find((ln) => cy >= ln.top - 2 && cy <= ln.bottom + 2);
+      if (!line) {
+        line = { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+        lines.push(line);
+      } else {
+        line.top = Math.min(line.top, r.top);
+        line.bottom = Math.max(line.bottom, r.bottom);
+        line.left = Math.min(line.left, r.left);
+        line.right = Math.max(line.right, r.right);
+      }
+    }
+    return lines;
+  }
+
+  private beginRegionDrag(e: PointerEvent): void {
+    e.preventDefault();
+    document.getSelection()?.removeAllRanges();
+    const host = this.host.parentElement || this.root;
+    const start = { x: e.clientX, y: e.clientY };
+    let rect = { left: start.x, top: start.y, right: start.x, bottom: start.y };
+    let overlay: HTMLElement | null = null;
+    let box: HTMLElement | null = null;
+    let menu: HTMLElement | null = null;
+    let area: DOMRect | null = null;
+    let phase: "drag" | "selected" = "drag";
+    let handle = "";
+    let base: { left: number; top: number; right: number; bottom: number } | null = null;
+    let basePoint = { x: 0, y: 0 };
+
+    const cleanup = (): void => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      document.removeEventListener("keydown", onKey, true);
+      overlay?.remove();
+      overlay = null; box = null; menu = null;
+      this.regionEl = null;
+      this.regionCancel = null;
+    };
+
+    const normalize = (): { left: number; top: number; right: number; bottom: number } => ({
+      left: Math.min(rect.left, rect.right), top: Math.min(rect.top, rect.bottom),
+      right: Math.max(rect.left, rect.right), bottom: Math.max(rect.top, rect.bottom)
+    });
+
+    const render = (): void => {
+      if (!box || !area) { return; }
+      const r = normalize();
+      box.style.left = r.left - area.left + "px";
+      box.style.top = r.top - area.top + "px";
+      box.style.width = Math.max(0, r.right - r.left) + "px";
+      box.style.height = Math.max(0, r.bottom - r.top) + "px";
+      if (menu) {
+        menu.hidden = phase !== "selected";
+        if (phase === "selected") {
+          // 操作条贴在选区外侧：优先下方右对齐，放不下就翻到上方，再不行贴底
+          const mw = menu.offsetWidth, mh = menu.offsetHeight;
+          let top = r.bottom + 6;
+          if (top + mh > area.bottom - 6) { top = r.top - mh - 6; }
+          if (top < area.top + 6) { top = Math.min(area.bottom - mh - 6, r.bottom + 6); }
+          const left = Math.min(Math.max(r.right - mw, area.left + 6), Math.max(area.left + 6, area.right - 6 - mw));
+          menu.style.left = left - area.left + "px";
+          menu.style.top = Math.max(area.top + 6, top) - area.top + "px";
+        }
+      }
+    };
+
+    const commit = (): void => {
+      const captured = this.cropRegion(normalize());
+      cleanup();
+      if (!captured) { return; }
+      this.onCapture?.(captured);
+      this.toast("已添加到对话");
+    };
+
+    // 首次移动超过阈值才创建遮罩：单纯点一下图区不会闪一下
+    const ensure = (): void => {
+      if (overlay) { return; }
+      area = host.getBoundingClientRect();
+      overlay = document.createElement("div");
+      overlay.className = "region-capture";
+      const handles = ["nw", "n", "ne", "e", "se", "s", "sw", "w"]
+        .map((h) => `<span class="region-handle" data-h="${h}"></span>`).join("");
+      overlay.innerHTML =
+        `<div class="region-box">${handles}</div>` +
+        '<div class="region-menu" hidden>' +
+        '<button type="button" class="region-add" title="添加到对话"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-arxiver"></use></svg></button>' +
+        '<button type="button" class="region-close" title="取消（Esc）"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg></button>' +
+        "</div>";
+      host.appendChild(overlay);
+      this.regionEl = overlay;
+      box = overlay.querySelector<HTMLElement>(".region-box");
+      menu = overlay.querySelector<HTMLElement>(".region-menu");
+      overlay.querySelector<HTMLElement>(".region-add")?.addEventListener("click", (ev) => {
+        ev.preventDefault(); ev.stopPropagation(); commit();
+      });
+      overlay.querySelector<HTMLElement>(".region-close")?.addEventListener("click", (ev) => {
+        ev.preventDefault(); ev.stopPropagation(); cleanup();
+      });
+      // 选中后：拖手柄改大小、拖框内移动、点空白取消
+      overlay.addEventListener("pointerdown", (ev) => {
+        if (phase !== "selected") { return; }
+        const t = ev.target as Element | null;
+        if (!t || t.closest(".region-menu")) { return; }
+        ev.preventDefault();
+        if (t.closest(".region-handle")) {
+          handle = (t.closest(".region-handle") as HTMLElement).dataset.h || "";
+        } else if (t.closest(".region-box")) {
+          handle = "move";
+        } else {
+          cleanup();
+          return;
+        }
+        base = normalize();
+        basePoint = { x: ev.clientX, y: ev.clientY };
+      });
+    };
+
+    const onMove = (ev: PointerEvent): void => {
+      if (phase === "drag") {
+        if (!overlay && Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) <= 4) { return; }
+        ensure();
+        rect = { left: start.x, top: start.y, right: ev.clientX, bottom: ev.clientY };
+        render();
+        return;
+      }
+      if (!handle || !base) { return; }
+      const dx = ev.clientX - basePoint.x, dy = ev.clientY - basePoint.y;
+      if (handle === "move") {
+        rect = { left: base.left + dx, top: base.top + dy, right: base.right + dx, bottom: base.bottom + dy };
+      } else {
+        let { left, top, right, bottom } = base;
+        if (handle.includes("w")) { left += dx; }
+        if (handle.includes("e")) { right += dx; }
+        if (handle.includes("n")) { top += dy; }
+        if (handle.includes("s")) { bottom += dy; }
+        if (right - left < 8) { if (handle.includes("w")) { left = right - 8; } else { right = left + 8; } }
+        if (bottom - top < 8) { if (handle.includes("n")) { top = bottom - 8; } else { bottom = top + 8; } }
+        rect = { left, top, right, bottom };
+      }
+      render();
+    };
+
+    const onUp = (): void => {
+      if (phase === "drag") {
+        if (!overlay) { cleanup(); return; } // 只是点了一下：什么都不做
+        phase = "selected";
+        handle = "";
+        render();
+        return;
+      }
+      handle = "";
+      base = null;
+      render();
+    };
+
+    const onCancel = (): void => {
+      if (phase === "drag") { cleanup(); return; }
+      handle = "";
+      base = null;
+    };
+
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); cleanup(); }
+    };
+
+    this.regionCancel = cleanup;
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    document.addEventListener("keydown", onKey, true);
+  }
+
+  // 截图入队后的小提示（不打断阅读，也不自动跳走）
+  private toast(text: string): void {
+    const host = this.host.parentElement || this.root;
+    host.querySelectorAll(".region-toast").forEach((el) => el.remove());
+    const el = document.createElement("div");
+    el.className = "region-toast";
+    el.textContent = text;
+    host.appendChild(el);
+    window.setTimeout(() => el.remove(), 1800);
+  }
+
+  private cropRegion(sel: { left: number; top: number; right: number; bottom: number }): RegionCapture | null {
+    if (sel.right - sel.left < 6 || sel.bottom - sel.top < 6) { return null; }
+    const wrap = document.elementsFromPoint((sel.left + sel.right) / 2, (sel.top + sel.bottom) / 2)
+      .map((el) => el.closest(".page-wrap"))
+      .find((el): el is HTMLElement => el instanceof HTMLElement) || null;
+    const canvas = wrap?.querySelector<HTMLCanvasElement>("canvas.pdf-canvas") || null;
+    if (!wrap || !canvas || !canvas.width || !canvas.height) { return null; }
+    const cr = canvas.getBoundingClientRect();
+    if (!cr.width || !cr.height) { return null; }
+    const left = Math.max(sel.left, cr.left), top = Math.max(sel.top, cr.top);
+    const right = Math.min(sel.right, cr.right), bottom = Math.min(sel.bottom, cr.bottom);
+    if (right - left < 4 || bottom - top < 4) { return null; }
+    const kx = canvas.width / cr.width, ky = canvas.height / cr.height;
+    const sx = Math.max(0, Math.floor((left - cr.left) * kx));
+    const sy = Math.max(0, Math.floor((top - cr.top) * ky));
+    const sw = Math.max(1, Math.min(canvas.width - sx, Math.round((right - left) * kx)));
+    const sh = Math.max(1, Math.min(canvas.height - sy, Math.round((bottom - top) * ky)));
+    const out = document.createElement("canvas");
+    out.width = sw; out.height = sh;
+    const ctx = out.getContext("2d");
+    if (!ctx) { return null; }
+    ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+    try {
+      return {
+        dataUrl: out.toDataURL("image/jpeg", 0.92),
+        page: Number(wrap.dataset.page || 0),
+        // 页面纵向位置（0 = 顶部）：模型据此知道选的是页面上半/中间/下半
+        anchor: Math.min(1, Math.max(0, (top - cr.top) / cr.height)),
+        text: this.regionText(wrap, sel)
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  // 选区里的文字：截图里的公式/小字经常认不准，把文本层对应 span 的原文一起带上；
+  // 若选区几乎没有文字（纯图），再补上与选区相交的段落（图注通常在单独的块里）。
+  private regionText(wrap: HTMLElement, sel: { left: number; top: number; right: number; bottom: number }): string {
+    const parts: string[] = [];
+    const layer = wrap.querySelector<HTMLElement>(".text-layer");
+    if (layer) {
+      for (const span of Array.from(layer.querySelectorAll<HTMLElement>("span"))) {
+        const t = (span.textContent || "").replace(/\s+/g, " ").trim();
+        if (!t) { continue; }
+        const r = span.getBoundingClientRect();
+        if (r.right < sel.left || r.left > sel.right || r.bottom < sel.top || r.top > sel.bottom) { continue; }
+        parts.push(t);
+        if (parts.join(" ").length > 900) { break; }
+      }
+    }
+    let text = parts.join(" ").replace(/\s+/g, " ").trim();
+    if (text.length < 24) {
+      const page = Number(wrap.dataset.page || 0);
+      const size = this.pageSize[page];
+      const cssW = wrap.clientWidth, cssH = wrap.clientHeight;
+      if (page && size && cssW && cssH) {
+        const wr = wrap.getBoundingClientRect();
+        const sx = cssW / size.w, sy = cssH / size.h;
+        const near: string[] = [];
+        for (const b of this.blocksByPage[page] || []) {
+          const bb = b.bbox || [];
+          if (bb.length < 4) { continue; }
+          const bl = wr.left + bb[0] * sx, br = wr.left + bb[2] * sx;
+          const bt = wr.top + (size.h - bb[3]) * sy, bb2 = wr.top + (size.h - bb[1]) * sy;
+          if (br < sel.left || bl > sel.right || bb2 < sel.top || bt > sel.bottom) { continue; }
+          const s = String(b.dst || b.src || "").replace(/\s+/g, " ").trim();
+          if (s) { near.push(s); }
+          if (near.join(" ").length > 600) { break; }
+        }
+        text = [text, ...near].filter(Boolean).join(" ");
+      }
+    }
+    return text.slice(0, 600);
   }
 
   private async loadPageLinks(doc: any, pageProxy: any, page: number): Promise<void> {
@@ -1316,6 +1640,9 @@ export class ViewerEngine {
     this.clearSelection();
     document.removeEventListener("selectionchange", this.onSelectionChange);
     document.removeEventListener("mouseup", this.onSelectionSettle);
+    this.root.removeEventListener("pointerdown", this.onPagePointerDown);
+    this.regionCancel?.();
+    if (this.regionEl) { this.regionEl.remove(); this.regionEl = null; }
     this.reset();
   }
 

@@ -97,6 +97,10 @@
   <li><strong>引用跳转</strong>：引用文库内容时给出 <code class="language-plaintext highlighter-rouge">第 N 页</code> 胶囊，点击跳转到原文。</li>
   <li><strong><code class="language-plaintext highlighter-rouge">@</code> 引用</strong>：在输入框输入 <code class="language-plaintext highlighter-rouge">@</code> 选择其它已打开文献作为额外上下文（跨文献对比）。</li>
   <li><strong>选中文本提问</strong>：在 PDF 里选中文字 → 点「问 Arxiver」。</li>
+  <li><strong>截图 / 图片提问</strong>：在 PDF 的<strong>图 / 空白</strong>处拖框选区（文字上仍是正常选词，按住 <code class="language-plaintext highlighter-rouge">Alt</code> 可在文字上强制框选）。松开后选区保留（不压暗页面），选框外侧出现小操作条：点 <strong>Arxiver 图标</strong>把选区加进对话，点 <strong>×</strong> 取消；也可以拖 8 个手柄改大小、拖框内移动，点菜单外或按 <code class="language-plaintext highlighter-rouge">Esc</code> 取消。<strong>不会离开 PDF</strong>（底部提示「已添加到对话」）。
+也可以在对话框里直接 <strong>Ctrl+V 粘贴图片</strong>，或点输入框左侧的图片按钮选文件。
+图片发送前会压缩到最长边 1600px 的 JPEG，随会话存在本机；<strong>截图还会带上页码、页面纵向位置和选区内的文字</strong>一起发给模型（图里的小字/公式认不准时，模型可以靠这些定位）。对话模型需要<strong>支持视觉输入</strong>（如 DeepSeek 的 <code class="language-plaintext highlighter-rouge">deepseek-flash</code>，<code class="language-plaintext highlighter-rouge">deepseek-chat</code> 不行）；选了不支持的模型时，输入框上方会立刻提示并给出「去设置」。
+一次框选只取鼠标所在的那一页，跨页区域请分两次截。</li>
   <li><strong>写操作需确认</strong>：改元数据 / 标签 / 星标 / 回收站 / 分类、导入论文、增删笔记等，都会先弹出确认卡片（批准 / 修改 / 拒绝）。</li>
   <li><strong>长任务有反馈</strong>：搜索、读正文、导入下载会显示「正在执行 …」、当前阶段与已用时间；回答按到达顺序显示，中间的过程结果可折叠。</li>
   <li>会话自动保存；右上角可查看历史（含关联论文，可搜索）。切换详情标签页不会丢会话。</li>

@@ -7,6 +7,7 @@ import type { LibraryApi } from "../state/useLibrary";
 import { tagColor } from "../state/tagColors";
 import type { AppSettings } from "../state/settings";
 import { Markdown } from "../lib/markdown";
+import { normalizeImage, readImageFile } from "../lib/images";
 
 function arxivId(url: string): string {
   const match = /arxiv\.org\/(?:abs|pdf)\/([^?#\s]+?)(?:v\d+)?(?:\.pdf)?$/i.exec(String(url || ""));
@@ -40,8 +41,10 @@ export default function DetailPanel({
   settings,
   config,
   aiSelection,
+  aiImage,
   onCite,
   onClearSelection,
+  onClearAiImage,
   openDocs,
   onOpenSettings
 }: {
@@ -50,8 +53,10 @@ export default function DetailPanel({
   settings: AppSettings;
   config?: AppConfig | null;
   aiSelection?: { text: string; page: number } | null;
+  aiImage?: { id: string; dataUrl: string; page: number; anchor?: number; text?: string } | null;
   onCite?: (docId: string, page: number) => void;
   onClearSelection?: () => void;
+  onClearAiImage?: () => void;
   openDocs?: { id: string; name: string }[];
   onOpenSettings?: (section?: string) => void;
 }): JSX.Element {
@@ -84,7 +89,7 @@ export default function DetailPanel({
         {/* AI 面板常驻挂载（切到别的标签只是隐藏），否则切一次标签会话就被卸载重建，上下文全丢 */}
         {settings.aiEnabled && doc ? (
           <div className="tab-panel ai-tab" hidden={lib.tab !== "ai"}>
-            <AiPanel lib={lib} doc={doc} settings={settings} config={config} onOpenSettings={onOpenSettings} active={lib.tab === "ai"} selection={aiSelection} onCite={onCite || (() => {})} onClearSelection={onClearSelection || (() => {})} openDocs={openDocs || []} resolveDocTitle={(id) => lib.documents.find((d) => d.id === id)?.title || id} />
+            <AiPanel lib={lib} doc={doc} settings={settings} config={config} onOpenSettings={onOpenSettings} active={lib.tab === "ai"} selection={aiSelection} image={aiImage} onCite={onCite || (() => {})} onClearSelection={onClearSelection || (() => {})} onClearImage={onClearAiImage || (() => {})} openDocs={openDocs || []} resolveDocTitle={(id) => lib.documents.find((d) => d.id === id)?.title || id} />
           </div>
         ) : null}
       </div>
@@ -278,6 +283,8 @@ type AiBlock = ConvBlock | { kind: "confirm"; items: AiConfirm[] };
 interface AiTurn {
   role: "user" | "assistant";
   text: string;
+  // 用户这一轮附带的图片（data URL）；渲染成缩略图，也随会话持久化
+  images?: string[];
   blocks?: AiBlock[];
   error?: string;
   // 未配置模型时的引导轮：不发起请求，只给一句说明 + 「去设置」按钮
@@ -520,7 +527,7 @@ function PaperCards({ papers, jumped, state, inLibrary, onImport, onOpen }: {
   );
 }
 
-function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite, onClearSelection, openDocs, resolveDocTitle, active }: {
+function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image, onCite, onClearSelection, onClearImage, openDocs, resolveDocTitle, active }: {
   lib: LibraryApi;
   active?: boolean;
   doc: LibraryDoc;
@@ -528,8 +535,10 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
   config?: AppConfig | null;
   onOpenSettings?: (section?: string) => void;
   selection?: { text: string; page: number } | null;
+  image?: { id: string; dataUrl: string; page: number; anchor?: number; text?: string } | null;
   onCite: (docId: string, page: number) => void;
   onClearSelection: () => void;
+  onClearImage: () => void;
   openDocs: { id: string; name: string }[];
   resolveDocTitle: (id: string) => string;
 }): JSX.Element {
@@ -540,6 +549,9 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
   const [convList, setConvList] = useState<ConversationSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [refs, setRefs] = useState<{ id: string; title: string }[]>([]);
+  // 待发送的图片（阅读器框选截图 / 输入框粘贴 / 选文件），发送后随这一轮清空
+  const [images, setImages] = useState<{ id: string; dataUrl: string; page?: number; anchor?: number; text?: string }[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [atOpen, setAtOpen] = useState(false);
   const [histQuery, setHistQuery] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -552,6 +564,55 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
     el.style.height = Math.min(el.scrollHeight, 120) + "px";
   }, []);
   useEffect(() => { growComposer(); }, [input, active, growComposer]);
+
+  // 从阅读器框选来的截图：归一化后加入待发送图片，并通知上层取走
+  useEffect(() => {
+    if (!image) { return; }
+    const incoming = image;
+    onClearImage();
+    void normalizeImage(incoming.dataUrl).then((dataUrl) => {
+      if (!dataUrl) { return; }
+      setImages((prev) => (prev.some((x) => x.dataUrl === dataUrl) ? prev
+        : [...prev, { id: incoming.id, dataUrl, page: incoming.page, anchor: incoming.anchor, text: incoming.text }]));
+    }).catch(() => { /* 图坏了就忽略 */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [image]);
+
+  const addImageFiles = useCallback(async (files: File[]): Promise<void> => {
+    const picked = files.filter((f) => /^image\//i.test(f.type)).slice(0, 6);
+    for (const file of picked) {
+      try {
+        const dataUrl = await normalizeImage(await readImageFile(file));
+        if (!dataUrl) { continue; }
+        setImages((prev) => (prev.length >= 8 ? prev : [...prev, {
+          id: "img" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+          dataUrl
+        }]));
+      } catch { /* 单张读失败不影响其它 */ }
+    }
+  }, []);
+
+  // Ctrl+V 粘贴图片：面板显示时全局监听，光标在输入框或消息区都能用（纯文本粘贴不拦截）
+  useEffect(() => {
+    if (!active) { return; }
+    const onPaste = (e: ClipboardEvent): void => {
+      const cd = e.clipboardData;
+      // 剪贴板里同时有文字时按普通文本粘贴处理（比如从 PDF 里复制文字），不抢输入
+      if ((cd?.getData("text/plain") || "").trim()) { return; }
+      const files = [
+        ...Array.from(cd?.files || []),
+        ...Array.from(cd?.items || [])
+          .filter((it) => it.kind === "file" && /^image\//i.test(it.type))
+          .map((it) => it.getAsFile())
+          .filter((f): f is File => !!f)
+      ].filter((f) => /^image\//i.test(f.type));
+      if (!files.length) { return; }
+      e.preventDefault();
+      void addImageFiles(files);
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [active, addImageFiles]);
   const turnRef = useRef("");
   const turnsRef = useRef<AiTurn[]>([]);
   const convIdRef = useRef("");
@@ -563,6 +624,10 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
   const [pendingJump, setPendingJump] = useState(0);
   // 对话模型是否已配置（基础地址 + 密钥 + 模型）：没配就别真的发起请求，直接引导去设置
   const aiReady = !!(config && config.chat_base_url && config.chat_api_key && config.chat_model);
+  // DeepSeek 的 deepseek-chat / reasoner 收图片不会报错、只是当没传，这里提前提示换模型
+  let chatHost = "";
+  try { chatHost = new URL(config?.chat_base_url || "").hostname; } catch { /* 非标准地址交给服务端判断 */ }
+  const visionBlocked = /(^|\.)deepseek\.com$/i.test(chatHost) && /^deepseek-(chat|reasoner|coder)/i.test(String(config?.chat_model || ""));
   const openAiSettings = (): void => onOpenSettings?.("ai");
   // 长耗时工具运行时每秒推进一次，让"已 Ns"和进度看起来是活的
   const [, setTick] = useState(0);
@@ -644,7 +709,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
     const id = convIdRef.current;
     if (!id) { return; }
     const firstUser = messages.find((m) => m.role === "user");
-    const clean = messages.filter((m) => m.text.trim() || m.error || (m.blocks && m.blocks.length > 0));
+    const clean = messages.filter((m) => m.text.trim() || (m.images && m.images.length) || m.error || (m.blocks && m.blocks.length > 0));
     const docIds = new Set<string>();
     if (doc.id) { docIds.add(doc.id); }
     for (const m of messages) {
@@ -659,11 +724,12 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
       scope: "library",
       docId: undefined,
       docIds: Array.from(docIds),
-      title: (firstUser?.text || "新对话").slice(0, 60),
+      title: (firstUser?.text || (firstUser?.images?.length ? "图片提问" : "新对话")).slice(0, 60),
       updated_at: 0,
       messages: clean.map((m) => ({
         role: m.role,
         text: m.text,
+        images: m.images,
         // 待确认的卡片不入库（重新打开时已失效）；其余块保留顺序
         blocks: (m.blocks || []).filter((b) => b.kind !== "confirm") as ConvBlock[],
         reasoning: m.blocks?.filter((b) => b.kind === "reasoning").map((b) => (b as { text: string }).text).join(""),
@@ -809,14 +875,16 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
 
   const send = (preset?: string): void => {
     const q = (preset !== undefined ? preset : input).trim();
-    if (!q || sending) { return; }
+    const imgs = images;
+    if ((!q && !imgs.length) || sending) { return; }
     // 没配置对话模型：不要真的发起请求（主进程只能回一句冷冰冰的报错，界面还会一直转圈），
     // 直接把问题记下来并引导用户去「设置 → AI 助手」。
     if (!aiReady) {
       setInput("");
+      setImages([]);
       atBottomRef.current = true;
       setShowJump(false);
-      setTurns((prev) => [...prev, { role: "user", text: q }, { role: "assistant", text: "", setup: true, error: "AI 助手还没配置对话模型：请在「设置 → AI 助手」里填写基础地址、API 密钥与模型。" }]);
+      setTurns((prev) => [...prev, { role: "user", text: q, images: imgs.map((i) => i.dataUrl) }, { role: "assistant", text: "", setup: true, error: "AI 助手还没配置对话模型：请在「设置 → AI 助手」里填写基础地址、API 密钥与模型。" }]);
       return;
     }
     if (!convIdRef.current) {
@@ -825,15 +893,25 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
       setConvId(id);
     }
     setInput("");
+    setImages([]);
     atBottomRef.current = true;
     setShowJump(false);
     // 历史消息里附上每一轮的检索结果卡片摘要：否则模型看不到上一轮检索到了什么，
     // 只能凭自己的正文猜（会顺着用户臆断"检索到了某某论文"）。
+    // 历史里只回传最近 6 张图：截图一直显示在会话里，但没必要每轮都重复上传（请求体和 token 都会涨）
+    const recentImages = new Set<string>();
+    for (let i = turnsRef.current.length - 1; i >= 0 && recentImages.size < 6; i--) {
+      const t = turnsRef.current[i];
+      if (t.role !== "user" || !t.images) { continue; }
+      for (const url of t.images) { if (recentImages.size < 6) { recentImages.add(url); } }
+    }
     const history = turnsRef.current
-      .filter((t) => t.text.trim())
+      .filter((t) => t.text.trim() || (t.images && t.images.length))
       .map((t) => {
         const cards = papersOf(t.blocks || []);
-        if (!cards.length) { return { role: t.role, content: t.text }; }
+        const kept = t.role === "user" && t.images ? t.images.filter((url) => recentImages.has(url)) : [];
+        const withImages = kept.length ? { images: kept } : {};
+        if (!cards.length) { return { role: t.role, content: t.text, ...withImages }; }
         let digest = "";
         for (const p of cards.slice(0, 40)) {
           const ids = [p.arxivId ? `arXiv:${p.arxivId}` : "", p.doi ? `doi:${p.doi}` : ""].filter(Boolean).join(" ");
@@ -841,9 +919,9 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
           if (digest.length + line.length > 3000) { break; }
           digest += line;
         }
-        return { role: t.role, content: `${t.text}\n\n[本轮外部检索结果卡片，编号即 [[card:N]] 里的 N：\n${digest}]` };
+        return { role: t.role, content: `${t.text}\n\n[本轮外部检索结果卡片，编号即 [[card:N]] 里的 N：\n${digest}]`, ...withImages };
       });
-    setTurns((prev) => [...prev, { role: "user", text: q }, { role: "assistant", text: "", streaming: true }]);
+    setTurns((prev) => [...prev, { role: "user", text: q, images: imgs.map((i) => i.dataUrl) }, { role: "assistant", text: "", streaming: true }]);
     setSending(true);
     const sel = selection ? selection : undefined;
     const refIds = refs.map((r) => r.id);
@@ -853,7 +931,10 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
     // turnId 自己先生成、先记下，再发起请求：主进程可能在我们拿到返回值之前就发事件
     const turnId = "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     turnRef.current = turnId;
-    void window.api.agentChat({ turnId, scope: "library", docId: doc.id, selection: sel, refs: refIds, message: q, history, cardBase })
+    void window.api.agentChat({
+      turnId, scope: "library", docId: doc.id, selection: sel, refs: refIds, message: q, history, cardBase,
+      images: imgs.map((i) => ({ dataUrl: i.dataUrl, page: i.page, anchor: i.anchor, text: i.text }))
+    })
       .catch((err) => {
         setSending(false);
         setTurns((prev) => {
@@ -886,6 +967,9 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
     const text = q && q.role === "user" ? q.text : "";
     setTurns(list.slice(0, Math.max(0, i - 1)));
     if (text) { setInput(text); }
+    if (q && q.role === "user" && q.images && q.images.length) {
+      setImages(q.images.map((dataUrl, k) => ({ id: "edit" + Date.now().toString(36) + k, dataUrl })));
+    }
     inputRef.current?.focus();
   };
 
@@ -916,9 +1000,11 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
     void window.api.agentConfirm(confirmId, { approved, args });
   };
 
-  const newConv = (): void => { setTurns([]); setConvId(""); convIdRef.current = ""; setShowHistory(false); };
+  const newConv = (): void => { setTurns([]); setConvId(""); convIdRef.current = ""; setShowHistory(false); setImages([]); };
   const openConv = async (id: string): Promise<void> => {
     const conv = await window.api.agentConversation(id);
+    // 切到别的会话时，没发出去的图片不该跟过去
+    setImages([]);
     if (conv) { setTurns(conv.messages.map((m) => ({ ...m, blocks: blocksOf(m) }))); setConvId(conv.id); convIdRef.current = conv.id; }
     setShowHistory(false);
   };
@@ -982,7 +1068,14 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
               <div className="msg-body">
                 <div className="msg-role">{t.role === "user" ? "我" : "Arxiver"}</div>
                 {t.role === "user" ? (
-                  <div className="msg-content">{t.text}</div>
+                  <>
+                    {t.text ? <div className="msg-content">{t.text}</div> : null}
+                    {t.images && t.images.length ? (
+                      <div className="msg-imgs">
+                        {t.images.map((src, k) => <img key={k} src={src} alt={`附图 ${k + 1}`} />)}
+                      </div>
+                    ) : null}
+                  </>
                 ) : (
                   <>
                     {(() => {
@@ -1102,7 +1195,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
               : atOptions.map((d) => <button key={d.id} type="button" className="ai-at-item" onClick={() => pickRef(d)}>@ {d.name}</button>)}
           </div>
         )}
-        {(selection && selection.text.trim()) || refs.length > 0 ? (
+        {(selection && selection.text.trim()) || refs.length > 0 || images.length > 0 ? (
           <div className="ai-refs">
             {selection && selection.text.trim() ? (
               <span className="ai-ref-chip">选文（第 {selection.page} 页）：{selection.text.trim().slice(0, 40)}
@@ -1114,6 +1207,19 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
                 <button type="button" className="ai-ref-x" title="移除" onClick={() => setRefs((prev) => prev.filter((x) => x.id !== r.id))}><Icon name="x" small /></button>
               </span>
             ))}
+            {images.map((img, k) => (
+              <span key={img.id} className="ai-img-chip" title={img.page ? `第 ${img.page} 页截图` : "粘贴 / 选择的图片"}>
+                <img src={img.dataUrl} alt="" />
+                <span className="ai-img-label">{img.page ? `第 ${img.page} 页` : `图片 ${k + 1}`}</span>
+                <button type="button" className="ai-ref-x" title="移除" onClick={() => setImages((prev) => prev.filter((x) => x.id !== img.id))}><Icon name="x" small /></button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {images.length > 0 && visionBlocked ? (
+          <div className="ai-img-warn">
+            <span>当前对话模型「{config?.chat_model}」不支持图片输入，请改为 deepseek-flash</span>
+            <button type="button" onClick={openAiSettings}>去设置</button>
           </div>
         ) : null}
         <form
@@ -1129,7 +1235,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
         >
           <textarea
             ref={inputRef}
-            placeholder="随心输入，@ 引用已打开的文献"
+            placeholder="随心输入，@ 引用已打开文献；可粘贴 / 上传图片"
             rows={1}
             value={input}
             onChange={(e) => {
@@ -1140,10 +1246,26 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, onCite
             onKeyDown={(e) => { if (e.key === "Escape") { setAtOpen(false); } if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           />
           <div className="composer-row">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: "none" }}
+              onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; void addImageFiles(files); }}
+            />
+            <button
+              type="button"
+              className="composer-icon-btn"
+              title="添加图片（也可直接 Ctrl+V 粘贴）"
+              onClick={(e) => { e.preventDefault(); fileRef.current?.click(); }}
+            >
+              <Icon name="image" small />
+            </button>
             <span className="od-fill" />
             {sending
               ? <button type="button" className="send-btn" title="停止" onClick={(e) => { e.preventDefault(); stop(); }}><Icon name="x" small /></button>
-              : <button type="submit" className="send-btn" aria-label="发送" disabled={!input.trim()}><Icon name="arrow-up" small /></button>}
+              : <button type="submit" className="send-btn" aria-label="发送" disabled={!input.trim() && images.length === 0}><Icon name="arrow-up" small /></button>}
           </div>
         </form>
       </div>

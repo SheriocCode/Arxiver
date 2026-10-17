@@ -278,7 +278,7 @@ export default function SettingsView({
                 <Group title="对话接口">
                   <Row label="接口地址" desc="AI 助手使用的 OpenAI 兼容接口，与翻译引擎相互独立"><input style={inputStyle} value={form.chat_base_url || ""} onChange={(e) => set("chat_base_url", e.target.value)} /></Row>
                   <Row label="API 密钥" desc={<>默认用 DeepSeek（deepseek-chat）：在 <ExtLink href="https://platform.deepseek.com/">DeepSeek 官网</ExtLink> 创建 API Key 并订阅额度</>}><input type="password" style={inputStyle} value={form.chat_api_key || ""} onChange={(e) => set("chat_api_key", e.target.value)} /></Row>
-                  <Row label="模型"><input style={inputStyle} value={form.chat_model || ""} onChange={(e) => set("chat_model", e.target.value)} /></Row>
+                  <Row label="模型" desc="图片提问需要模型支持视觉输入（如 DeepSeek 的 deepseek-flash）；纯文本模型收到图片会报错"><input style={inputStyle} value={form.chat_model || ""} onChange={(e) => set("chat_model", e.target.value)} /></Row>
                   <div className="modal-foot" style={{ border: 0, padding: "4px 0" }}>
                     <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>
                     <button className="btn btn-primary" onClick={save}>保存设置</button>

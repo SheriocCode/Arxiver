@@ -117,9 +117,13 @@ export interface AgentChatRequest {
   scope: "paper" | "library";
   docId?: string;
   selection?: { text: string; page: number };
+  // PDF 区域截图 / 粘贴的图片。page/anchor/text 用于把「截图来自哪一页、页面什么位置、
+  // 区域里有什么字」告诉模型（截图里的公式/小字往往 OCR 不出来，这些上下文很关键）
+  images?: { dataUrl: string; page?: number; anchor?: number; text?: string }[];
   refs?: string[];
   message: string;
-  history?: { role: "user" | "assistant"; content: string }[];
+  // 历史消息里的图片同样以 data URL 回传（仅 user 消息允许带图）
+  history?: { role: "user" | "assistant"; content: string; images?: string[] }[];
   // 该对话里已经出现过的检索卡片数：让 [[card:N]] 的编号在整个对话里保持稳定
   cardBase?: number;
 }
@@ -223,6 +227,8 @@ export type ConvBlock =
 export interface ConvMessage {
   role: "user" | "assistant";
   text: string;
+  // 用户提问时附带的图片（data URL，随会话一起存本机）
+  images?: string[];
   blocks?: ConvBlock[];
   tools?: ConvTool[];
   papers?: PaperHit[];

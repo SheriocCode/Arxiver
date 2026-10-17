@@ -39,6 +39,8 @@ export default function App(): JSX.Element {
   const [docs, setDocs] = useState<OpenDoc[]>([]);
   const [activeDocId, setActiveDocId] = useState("");
   const [aiSelection, setAiSelection] = useState<{ text: string; page: number } | null>(null);
+  // 从阅读器框选出来的截图（一次性交接给 AI 面板，面板取走后清空）
+  const [aiImage, setAiImage] = useState<{ id: string; dataUrl: string; page: number; anchor?: number; text?: string } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState("model");
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
@@ -215,6 +217,15 @@ export default function App(): JSX.Element {
     lib.setTab("ai");
     setDetailOpen(true);
     setAiSelection({ text, page });
+  }, [activeDocId, lib]);
+
+  // 阅读器截图：把图片交给 AI 面板（面板会把它加进待发送图片）；停留在 PDF，不打断阅读
+  const captureImage = useCallback((capture: { dataUrl: string; page: number; anchor?: number; text?: string }) => {
+    if (!activeDocId) { return; }
+    lib.select(activeDocId);
+    lib.setTab("ai");
+    setDetailOpen(true);
+    setAiImage({ id: "img" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), ...capture });
   }, [activeDocId, lib]);
 
   const citeJump = useCallback((docId: string, page: number) => {
@@ -407,8 +418,10 @@ export default function App(): JSX.Element {
                 settings={settings}
                 config={config}
                 aiSelection={aiSelection}
+                aiImage={aiImage}
                 onCite={citeJump}
                 onClearSelection={() => setAiSelection(null)}
+                onClearAiImage={() => setAiImage(null)}
                 openDocs={docs.map((d) => ({ id: d.id, name: d.name }))}
                 onOpenSettings={openSettings}
               />
@@ -430,6 +443,8 @@ export default function App(): JSX.Element {
                       : { showBlocksTranslation: !settings.showBlocksTranslation })}
                     onSelectTranslation={selectTranslation}
                     onAskSelection={askSelection}
+                    onCaptureImage={captureImage}
+                    captureEnabled={settings.aiEnabled}
                     onTranslationDone={onTranslationDone}
                   />
                 ))}

@@ -1089,6 +1089,24 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .block-tip .vph.is-formula { border-style: solid; background: var(--surface-3); }
+/* 区域截图：只在选框上画虚线 + 手柄，不压暗页面；操作条是贴在选区外侧的小图标条 */
+.reader-overlay .region-capture { position: absolute; inset: 0; z-index: 96; overflow: hidden; cursor: crosshair; }
+.reader-overlay .region-box { position: absolute; border: 1px dashed var(--accent); background: var(--accent-soft); border-radius: 2px; cursor: move; }
+.reader-overlay .region-handle { position: absolute; width: 8px; height: 8px; background: var(--accent); border: 1px solid var(--surface); border-radius: 2px; }
+.reader-overlay .region-handle[data-h="nw"] { left: -4px; top: -4px; cursor: nwse-resize; }
+.reader-overlay .region-handle[data-h="n"] { left: calc(50% - 4px); top: -4px; cursor: ns-resize; }
+.reader-overlay .region-handle[data-h="ne"] { right: -4px; top: -4px; cursor: nesw-resize; }
+.reader-overlay .region-handle[data-h="e"] { right: -4px; top: calc(50% - 4px); cursor: ew-resize; }
+.reader-overlay .region-handle[data-h="se"] { right: -4px; bottom: -4px; cursor: nwse-resize; }
+.reader-overlay .region-handle[data-h="s"] { left: calc(50% - 4px); bottom: -4px; cursor: ns-resize; }
+.reader-overlay .region-handle[data-h="sw"] { left: -4px; bottom: -4px; cursor: nesw-resize; }
+.reader-overlay .region-handle[data-h="w"] { left: -4px; top: calc(50% - 4px); cursor: ew-resize; }
+.reader-overlay .region-menu { position: absolute; display: flex; align-items: center; gap: 2px; padding: 2px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
+.reader-overlay .region-add { display: grid; place-items: center; width: 26px; height: 26px; border-radius: var(--radius-sm); background: transparent; color: var(--accent); }
+.reader-overlay .region-add:hover { background: var(--accent-soft-2); }
+.reader-overlay .region-close { display: grid; place-items: center; width: 24px; height: 24px; border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
+.reader-overlay .region-close:hover { background: var(--hover); color: var(--text); }
+.reader-overlay .region-toast { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); padding: 6px 14px; border-radius: var(--pill); background: var(--surface); border: 1px solid var(--border-strong); color: var(--text-2); font-size: 12px; z-index: 97; box-shadow: var(--shadow); pointer-events: none; }
 .reader-overlay .page-placeholder { display: flex; align-items: center; justify-content: center; width: var(--page-w, 100%); background: #f4f4f4; color: #aaa; border: 1px dashed #666; border-radius: 2px; font-size: 14px; }
 .reader-overlay .page-skip { background: #ececec; color: #999; }
 .reader-overlay .page-placeholder.page-active { flex-direction: column; gap: 10px; border-color: var(--accent); background: #f6fffb; }
@@ -1555,6 +1573,18 @@ textarea.ai-confirm-args { width: 100%; min-height: 96px; border: 0; outline: no
 .ai-ref-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 3px 4px 3px 8px; background: var(--surface-2); border-radius: 999px; font-size: 11.5px; color: var(--text-2); }
 .ai-ref-x { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 999px; background: transparent; border: 0; color: var(--faint); cursor: pointer; }
 .ai-ref-x:hover { background: var(--hover-strong); color: var(--text); }
+/* 待发送图片（截图 / 粘贴）：小缩略图 + 页号；消息里则显示大图 */
+.ai-img-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 4px 3px 3px; background: var(--surface-2); border-radius: var(--radius-sm); font-size: 11.5px; color: var(--text-2); }
+.ai-img-chip img { width: 28px; height: 28px; object-fit: cover; border-radius: var(--radius-sm); background: var(--surface-3); }
+.ai-img-label { white-space: nowrap; }
+.composer-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: var(--radius-sm); background: transparent; color: var(--muted); border: 0; cursor: pointer; }
+.composer-icon-btn:hover { background: var(--hover); color: var(--text); }
+.msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.msg-imgs img { max-width: 220px; max-height: 160px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); }
+/* 模型不支持图片时的即时提示（不要等发出去才发现） */
+.ai-img-warn { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--star); font-size: 11.5px; }
+.ai-img-warn button { margin-left: auto; flex: none; padding: 2px 8px; border-radius: var(--radius-sm); background: transparent; color: var(--accent); font-size: 11.5px; }
+.ai-img-warn button:hover { background: var(--hover); }
 
 /* ---- AI scroll jump + question navigator ---- */
 .ai-panel { position: relative; }

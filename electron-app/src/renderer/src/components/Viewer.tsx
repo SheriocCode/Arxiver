@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type JSX } from "react";
 import type { AppConfig, TransParams, TranslationRef } from "../../../shared/types";
-import { ViewerEngine, type ViewerStatus, type TranslationDoneInfo } from "../viewer/engine";
+import { ViewerEngine, type ViewerStatus, type TranslationDoneInfo, type RegionCapture } from "../viewer/engine";
 import { Icon } from "./Icons";
 import { LANGS } from "../lib/langs";
 
@@ -35,11 +35,13 @@ interface Props {
   onToggleBlocks: (which: "translating" | "viewing") => void;
   onSelectTranslation: (key: string) => void;
   onAskSelection?: (text: string, page: number) => void;
+  onCaptureImage?: (capture: RegionCapture) => void;
+  captureEnabled?: boolean;
   onTranslationDone?: (info: TranslationDoneInfo) => void;
 }
 
 const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
-  { docId, visible, config, translations, activeKey, showBlocksTranslating, showBlocksTranslation, onToggleBlocks, onSelectTranslation, onAskSelection, onTranslationDone }, ref
+  { docId, visible, config, translations, activeKey, showBlocksTranslating, showBlocksTranslation, onToggleBlocks, onSelectTranslation, onAskSelection, onCaptureImage, captureEnabled = true, onTranslationDone }, ref
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
   const doneRef = useRef(onTranslationDone);
@@ -51,6 +53,8 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const engineRef = useRef<ViewerEngine | null>(null);
+  const captureRef = useRef(onCaptureImage);
+  captureRef.current = onCaptureImage;
   const menuRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<ViewerStatus | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -104,6 +108,14 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
     return () => { engine.dispose(); engineRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 区域截图是自动触发的（文字上选词、其它地方拖框），只有 AI 助手启用时才接管
+  useEffect(() => {
+    if (!engineRef.current) { return; }
+    engineRef.current.onCapture = captureEnabled
+      ? (capture) => captureRef.current?.(capture)
+      : null;
+  }, [captureEnabled]);
 
   // Load this document's source once, on mount.
   useEffect(() => {
@@ -193,10 +205,11 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
       scheduleHide();
     }
     document.addEventListener("mousemove", onMove);
-    document.addEventListener("mousedown", onDown);
+    // 同样用 pointerdown：框选截图时 mousedown 可能被 pointerdown.preventDefault() 抑制
+    document.addEventListener("pointerdown", onDown, true);
     return () => {
       document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("pointerdown", onDown, true);
     };
   }, [scheduleHide]);
 
@@ -236,8 +249,10 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
       setSelPop(null);
     }
     document.addEventListener("mouseup", onUp);
-    document.addEventListener("mousedown", onDown);
-    return () => { document.removeEventListener("mouseup", onUp); document.removeEventListener("mousedown", onDown); };
+    // 用 pointerdown（而不是 mousedown）：开始区域框选时 pointerdown 会 preventDefault，
+    // 兼容的 mousedown/mouseup 可能被抑制 → 旧选区按钮会残留。pointerdown 一定先到。
+    document.addEventListener("pointerdown", onDown, true);
+    return () => { document.removeEventListener("mouseup", onUp); document.removeEventListener("pointerdown", onDown, true); };
   }, [computeSelPop]);
 
   // 滚动时让按钮跟着选区走（滚动发生在舞台内部的 .compare 上，事件不冒泡，所以用捕获阶段听）
