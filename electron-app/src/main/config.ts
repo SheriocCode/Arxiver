@@ -16,11 +16,12 @@ export interface AppConfig {
   chat_base_url: string;
   chat_api_key: string;
   chat_model: string;
-  // 联网搜索（AI 助手，默认关闭）：可选服务商，两家 Key 各自保存，方便切换对比
+  // 联网搜索（AI 助手，默认关闭）：可选服务商，各家 Key 分别保存，方便切换对比
   search_enabled: boolean;
-  search_provider: "tavily" | "bocha";
+  search_provider: "tavily" | "bocha" | "deepseek";
   search_key_tavily: string;
   search_key_bocha: string;
+  search_key_deepseek: string;
   search_scope: "academic" | "web";
   source_lang: string;
   target_lang: string;
@@ -49,6 +50,7 @@ const DEFAULT_CONFIG: AppConfig = {
   search_provider: "tavily",
   search_key_tavily: "",
   search_key_bocha: "",
+  search_key_deepseek: "",
   search_scope: "academic",
   source_lang: "en",
   target_lang: "zh-CN",
@@ -96,16 +98,22 @@ export function get(): AppConfig {
 
 // 联网搜索当前服务商的 Key
 export function searchKey(c: AppConfig = get()): string {
-  return String((c.search_provider === "bocha" ? c.search_key_bocha : c.search_key_tavily) || "");
+  switch (searchProvider(c)) {
+    case "bocha": return String(c.search_key_bocha || "");
+    case "deepseek": return String(c.search_key_deepseek || "");
+    default: return String(c.search_key_tavily || "");
+  }
 }
 
-// 读正文（fetch_url）用的 Key：只有 Tavily 提供 extract 接口，所以固定用它的 Key（没有就本地抓）
-export function extractKey(c: AppConfig = get()): string {
-  return String(c.search_key_tavily || "");
+// 读正文用的 Key：Tavily extract 优先、DeepSeek Fetch 兜底，两家都配了就都带上，都没配就本机抓
+export function readKeys(c: AppConfig = get()): { tavily: string; deepseek: string } {
+  return { tavily: String(c.search_key_tavily || ""), deepseek: String(c.search_key_deepseek || "") };
 }
 
-export function searchProvider(c: AppConfig = get()): "tavily" | "bocha" {
-  return c.search_provider === "bocha" ? "bocha" : "tavily";
+export function searchProvider(c: AppConfig = get()): "tavily" | "bocha" | "deepseek" {
+  if (c.search_provider === "bocha") { return "bocha"; }
+  if (c.search_provider === "deepseek") { return "deepseek"; }
+  return "tavily";
 }
 
 export function update(patch: Partial<AppConfig>): AppConfig {

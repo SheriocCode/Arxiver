@@ -46,6 +46,34 @@ export interface TranslationDoneInfo {
   resultName: string;
 }
 
+// 译文里保留的公式 / 富文本占位符（{v0} / {{v0}} / {v*}）：不并进正文，单独渲染成带颜色的 chip
+const BLOCK_PLACEHOLDER = /\{\{?\s*v\s*[\d*]+(?:\s*[\d*]+)*\s*\}?\}/gi;
+
+function fillBlockText(el: Element | null, text: string, empty: string, vars?: Record<string, string>): void {
+  if (!el) { return; }
+  const box = el as HTMLElement;
+  const s = String(text || "").trim();
+  box.textContent = "";
+  box.classList.toggle("is-empty", !s);
+  if (!s) { box.textContent = empty; return; }
+  let last = 0;
+  for (const m of s.matchAll(BLOCK_PLACEHOLDER)) {
+    const i = m.index ?? 0;
+    if (i > last) { box.appendChild(document.createTextNode(s.slice(last, i))); }
+    const raw = m[0].replace(/\s+/g, "");
+    const id = /\d+/.exec(raw)?.[0] || "";
+    // 引擎抽到公式文本就显示真实内容，抽不出来（数学字体没有 ToUnicode）退回 {vN}
+    const formula = id ? vars?.[id] : "";
+    const chip = document.createElement("span");
+    chip.className = formula ? "vph is-formula" : "vph";
+    chip.textContent = formula || raw;
+    chip.title = formula ? `公式 v${id}：${formula}` : "公式 / 格式占位符：PDF 里单独排版，这里只标出位置";
+    box.appendChild(chip);
+    last = i + m[0].length;
+  }
+  if (last < s.length) { box.appendChild(document.createTextNode(s.slice(last))); }
+}
+
 type SessionState = "running" | "done" | "error" | "cancelled";
 
 // A translation job lives here, keyed by docId, and keeps polling independently of
@@ -121,6 +149,8 @@ export class ViewerEngine {
   private blockTipRect: HTMLElement | null = null;
   private blockTipKey: { page: number; index: number } | null = null;
   private blockTipOutside: ((e: MouseEvent) => void) | null = null;
+  // 用户拖动过面板之后就不再跟随块框（否则一滚动就被拽回去）
+  private blockTipMoved = false;
   private renderInFlight = false;
   private renderTimer = 0;
   private selRaf = 0;
@@ -724,25 +754,38 @@ export class ViewerEngine {
   }
 
   // ---- block overlays ----
-  // The 原文 / 译文 panel is pinned by clicking a block (not hovered): it stays put while
-  // you read, and it does not chase the pointer. Clicking the same block again, clicking
-  // elsewhere, or closing it with × dismisses it.
+  // The panel is pinned by clicking a block (not hovered): it stays put while you read,
+  // follows the block while scrolling, and can be dragged by its header (then it stays
+  // where you put it). Clicking the same block again, clicking elsewhere, or × dismisses it.
+  // 译文在上、原文默认折叠：查看译文时用户主要看中文，需要对照再展开原文。
   hideBlockTip(): void {
     if (this.blockTipEl && !this.blockTipEl.hidden) { this.blockTipEl.hidden = true; }
     if (this.blockTipRect) { this.blockTipRect.classList.remove("is-active"); this.blockTipRect = null; }
     this.blockTipKey = null;
+    this.blockTipMoved = false;
   }
   private ensureBlockTip(): HTMLElement {
     if (this.blockTipEl) { return this.blockTipEl; }
     const el = document.createElement("div");
     el.className = "block-tip";
     el.hidden = true;
-    // Only the shell goes through innerHTML; the block text itself is set with textContent.
+    // Only the shell goes through innerHTML; the block text itself is rendered as nodes.
     el.innerHTML =
-      '<div class="tip-head"><span class="tip-title">块框 · 原文 / 译文</span>' +
+      '<div class="tip-head" title="按住标题栏可拖动面板">' +
+      '<span class="tip-title">块框</span>' +
       '<button type="button" class="tip-close" title="关闭"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg></button></div>' +
-      '<div class="tip-src"></div><div class="tip-dst"></div>';
+      '<div class="tip-dst"></div>' +
+      '<details class="tip-src-box"><summary><span class="tip-src-label">原文</span><span class="tip-src-hint">展开</span></summary>' +
+      '<div class="tip-src"></div></details>';
     el.querySelector<HTMLElement>(".tip-close")?.addEventListener("click", () => this.hideBlockTip());
+    this.bindBlockTipDrag(el);
+    const srcBox = el.querySelector<HTMLDetailsElement>(".tip-src-box");
+    const srcHint = el.querySelector<HTMLElement>(".tip-src-hint");
+    srcBox?.addEventListener("toggle", () => {
+      if (srcHint) { srcHint.textContent = srcBox.open ? "收起" : "展开"; }
+      // 展开后可能超出阅读区，重新夹一下位置（手动拖过的就不动）
+      if (!this.blockTipMoved && this.blockTipRect) { this.positionBlockTip(this.blockTipRect); }
+    });
     (this.host.parentElement || document.body).appendChild(el);
     this.blockTipEl = el;
     this.blockTipOutside = (e: MouseEvent) => {
@@ -752,6 +795,40 @@ export class ViewerEngine {
     };
     document.addEventListener("mousedown", this.blockTipOutside);
     return el;
+  }
+  // 标题栏拖动：坐标换算成 root 内偏移（面板是 absolute，offset parent 就是阅读区）
+  private bindBlockTipDrag(el: HTMLElement): void {
+    const head = el.querySelector<HTMLElement>(".tip-head");
+    if (!head) { return; }
+    head.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) { return; }
+      if ((e.target as Element | null)?.closest?.(".tip-close")) { return; }
+      const rect = el.getBoundingClientRect();
+      const offX = e.clientX - rect.left, offY = e.clientY - rect.top;
+      const area = this.root.getBoundingClientRect();
+      let moved = false;
+      head.setPointerCapture(e.pointerId);
+      el.classList.add("is-dragging");
+      const move = (ev: PointerEvent): void => {
+        if (!moved && Math.abs(ev.clientX - e.clientX) + Math.abs(ev.clientY - e.clientY) < 3) { return; }
+        moved = true;
+        this.blockTipMoved = true;
+        const w = el.offsetWidth, h = el.offsetHeight;
+        const left = Math.min(Math.max(ev.clientX - offX - area.left, 8), Math.max(8, area.width - 8 - w));
+        const top = Math.min(Math.max(ev.clientY - offY - area.top, 8), Math.max(8, area.height - 8 - h));
+        el.style.left = Math.round(left) + "px";
+        el.style.top = Math.round(top) + "px";
+      };
+      const end = (): void => {
+        el.classList.remove("is-dragging");
+        head.removeEventListener("pointermove", move);
+        head.removeEventListener("pointerup", end);
+        head.removeEventListener("pointercancel", end);
+      };
+      head.addEventListener("pointermove", move);
+      head.addEventListener("pointerup", end);
+      head.addEventListener("pointercancel", end);
+    });
   }
   // Anchors the panel next to its block: right of it if that fits, else left, else below
   // (or above when there is no room below), always clamped inside the reading area.
@@ -778,8 +855,9 @@ export class ViewerEngine {
     el.style.top = Math.round(top - area.top) + "px";
   }
   // Keeps the pinned panel glued to its block while scrolling (the current rect element
-  // is still valid until the next render pass swaps it out).
+  // is still valid until the next render pass swaps it out). 拖过之后就不再拽回去。
   private followBlockTip(): void {
+    if (this.blockTipMoved) { return; }
     const el = this.blockTipRect;
     if (!this.blockTipKey || !el || !el.isConnected) { return; }
     const rr = el.getBoundingClientRect();
@@ -787,25 +865,32 @@ export class ViewerEngine {
     if (rr.bottom < ar.top - 8 || rr.top > ar.bottom + 8) { this.hideBlockTip(); return; }
     this.positionBlockTip(el, rr, ar);
   }
-  private toggleBlockTip(rectEl: HTMLElement, page: number, index: number, src: string, dst: string): void {
+  private toggleBlockTip(rectEl: HTMLElement, page: number, index: number, src: string, dst: string, vars?: Record<string, string>): void {
     const pinned = this.blockTipKey && this.blockTipKey.page === page && this.blockTipKey.index === index;
     if (this.blockTipEl && !this.blockTipEl.hidden && pinned) { this.hideBlockTip(); return; }
     const el = this.ensureBlockTip();
-    const s = el.querySelector(".tip-src"); if (s) { s.textContent = src || "(空)"; }
-    const d = el.querySelector(".tip-dst"); if (d) { d.textContent = dst || "(空)"; }
+    fillBlockText(el.querySelector(".tip-dst"), dst, "(暂无译文)", vars);
+    fillBlockText(el.querySelector(".tip-src"), src, "(空)", vars);
+    // 有译文就把原文折起来；还没有译文时直接展开原文
+    const srcBox = el.querySelector<HTMLDetailsElement>(".tip-src-box");
+    if (srcBox) { srcBox.open = !dst.trim(); }
+    const srcHint = el.querySelector<HTMLElement>(".tip-src-hint");
+    if (srcHint) { srcHint.textContent = srcBox?.open ? "收起" : "展开"; }
     el.scrollTop = 0;
     el.hidden = false;
     if (this.blockTipRect && this.blockTipRect !== rectEl) { this.blockTipRect.classList.remove("is-active"); }
     this.blockTipRect = rectEl;
     this.blockTipKey = { page, index };
     rectEl.classList.add("is-active");
-    this.positionBlockTip(rectEl);
+    // 拖动过就保持用户放的位置（同一轮打开内一直粘着），没拖过才贴到当前块旁边
+    if (!this.blockTipMoved) { this.positionBlockTip(rectEl); }
   }
   private disposeBlockTip(): void {
     if (this.blockTipOutside) { document.removeEventListener("mousedown", this.blockTipOutside); this.blockTipOutside = null; }
     if (this.blockTipEl) { this.blockTipEl.remove(); this.blockTipEl = null; }
     this.blockTipRect = null;
     this.blockTipKey = null;
+    this.blockTipMoved = false;
   }
   private clearLayer(l?: HTMLElement): void { if (l) { while (l.firstChild) { l.removeChild(l.firstChild); } } }
   private renderPageBlocks(page: number): void {
@@ -828,17 +913,23 @@ export class ViewerEngine {
       rect.className = "block-rect";
       rect.style.left = x0 * sx + "px"; rect.style.top = (size.h - y1) * sy + "px";
       rect.style.width = (x1 - x0) * sx + "px"; rect.style.height = (y1 - y0) * sy + "px";
-      rect.addEventListener("click", () => this.toggleBlockTip(rect, page, i, item.src || "", item.dst || ""));
+      rect.addEventListener("click", () => this.toggleBlockTip(rect, page, i, item.src || "", item.dst || "", item.vars));
       // rects are recreated on every render pass; re-mark and re-anchor the pinned one,
       // and drop the panel once its block has scrolled out of sight
       if (this.blockTipKey && this.blockTipKey.page === page && this.blockTipKey.index === i) {
-        const rr = rect.getBoundingClientRect();
-        const ar = this.root.getBoundingClientRect();
-        if (rr.bottom < ar.top - 8 || rr.top > ar.bottom + 8) { this.hideBlockTip(); }
-        else {
+        if (this.blockTipMoved) {
+          // 手动拖过的面板不再跟随块框，只保持高亮
           rect.classList.add("is-active");
           this.blockTipRect = rect;
-          this.positionBlockTip(rect, rr, ar);
+        } else {
+          const rr = rect.getBoundingClientRect();
+          const ar = this.root.getBoundingClientRect();
+          if (rr.bottom < ar.top - 8 || rr.top > ar.bottom + 8) { this.hideBlockTip(); }
+          else {
+            rect.classList.add("is-active");
+            this.blockTipRect = rect;
+            this.positionBlockTip(rect, rr, ar);
+          }
         }
       }
       layerL.appendChild(rect);

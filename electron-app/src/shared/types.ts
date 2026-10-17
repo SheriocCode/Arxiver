@@ -11,9 +11,10 @@ export interface AppConfig {
   chat_api_key: string;
   chat_model: string;
   search_enabled: boolean;
-  search_provider: "tavily" | "bocha";
+  search_provider: "tavily" | "bocha" | "deepseek";
   search_key_tavily: string;
   search_key_bocha: string;
+  search_key_deepseek: string;
   search_scope: "academic" | "web";
   source_lang: string;
   target_lang: string;
@@ -92,6 +93,8 @@ export interface BlockEvent {
   bbox: number[];
   src: string;
   dst: string;
+  // 片段里引用到的公式占位符 {vN} → 引擎抽出的公式文本（抽不出就没有这个键）
+  vars?: Record<string, string>;
 }
 
 export interface OutlineItem {

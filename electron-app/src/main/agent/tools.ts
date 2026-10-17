@@ -2,7 +2,7 @@ import * as library from "../library";
 import * as text from "./text";
 import * as websearch from "../websearch";
 import { importPaper } from "../importPaper";
-import { get as getConfig, searchKey, searchProvider, extractKey } from "../config";
+import { get as getConfig, searchKey, searchProvider, readKeys } from "../config";
 import type { ToolDef } from "./model";
 import type { PaperHit, PageRead } from "../../shared/types";
 
@@ -27,6 +27,11 @@ export function webEnabled(): boolean {
 export function webSearchEnabled(): boolean {
   const c = getConfig();
   return !!(c.search_enabled && searchKey(c));
+}
+// 三态：开关关闭 / 已开启但当前服务商没有 Key / 可用。给模型看，避免它把「缺 Key」说成「没开启」
+export function webSearchState(): { on: boolean; key: boolean; provider: string } {
+  const c = getConfig();
+  return { on: !!c.search_enabled, key: !!searchKey(c), provider: websearch.PROVIDER_NAMES[searchProvider(c)] };
 }
 function webProvider(): websearch.SearchProvider {
   return searchProvider(getConfig());
@@ -90,10 +95,11 @@ export const TOOLS: ToolImpl[] = [
   {
     def: {
       name: "search_web",
-      description: "联网搜索（Tavily / 博查，在设置里选服务商），用于查找本地文库之外的最新论文、会议论文、项目主页、代码或任意资料。" +
+      description: "联网搜索（Tavily / 博查 / DeepSeek，在设置里选服务商），用于查找本地文库之外的最新论文、会议论文、项目主页、代码或任意资料。" +
         "结果以卡片展示给用户（标题/站点/年份/摘要片段/链接），可直接导入文库（有 arXiv 编号或 DOI 的条目）。" +
         "检索式要求：**一律用英文**；不要直接把用户的中文原句丢进来，先改写成 1~4 条**受控检索式**——" +
         "带领域词（如 computer vision / diffusion model）、带会议或年份锚点（如 NeurIPS 2025、CVPR 2024）、必要时加 site: 限定（site:arxiv.org、site:openreview.net）。" +
+        "**每条检索式控制在 60 字符以内**（部分服务商限 128 字符，太长会被截断丢掉限定词）。" +
         "用户只要一个模糊主题时，用 queries 一次传多条扇出（同一主题的不同说法/不同限定），不要只搜一次。" +
         "本工具的结果来自互联网、不在本地文库，引用时给出链接，不要用 [[cite:…]]。",
       parameters: {
@@ -166,9 +172,11 @@ export const TOOLS: ToolImpl[] = [
       const url = String(args.url || "").trim();
       if (!url) { return "url 不能为空"; }
       ctx?.progress?.("正在读取页面…");
+      const keys = readKeys(getConfig());
       const page = await websearch.readPage(url, {
         query: String(args.query || "").trim(),
-        apiKey: extractKey(getConfig()),
+        tavilyKey: keys.tavily,
+        deepseekKey: keys.deepseek,
         maxChars: Number(args.max_chars) || 8000
       });
       ctx?.emit?.({
@@ -579,7 +587,10 @@ export async function runTool(name: string, argsJson: string, ctx?: ToolContext)
   const tool = TOOLS.find((t) => t.def.name === name);
   if (!tool) { return `未知工具：${name}`; }
   if (name === "search_web" && !webSearchEnabled()) {
-    return `「联网搜索」未开启或没填 ${websearch.PROVIDER_NAMES[webProvider()]} 的 API Key：请让用户在 设置 → AI 助手 → 联网搜索 里检查并保存，然后再试（在此之前不要猜测外部论文）。`;
+    const st = webSearchState();
+    return st.on
+      ? `「联网搜索」已开启，但服务商「${st.provider}」还没填 API Key，搜索不可用：请让用户在 设置 → AI 助手 → 联网搜索 里填「${st.provider}」的 Key 并保存，然后再试（在此之前不要猜测外部论文）。`
+      : "「联网搜索」未开启：请让用户在 设置 → AI 助手 → 联网搜索 里开启后再试（在此之前不要猜测外部论文）。";
   }
   if (name === "fetch_url" && !webEnabled()) {
     return "「联网搜索」未开启：联网功能在 设置 → AI 助手 → 联网搜索 里，请让用户开启后再试。";

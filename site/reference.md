@@ -31,7 +31,7 @@ Electron 桌面应用：渲染进程（React）负责界面与 PDF.js 渲染，�
 打开 ─▶ 渲染进程用 PDF.js 渲染原文 / 译文（对照）
 点翻译 ─▶ 主进程调用内嵌引擎（engine/）─▶ 内置本地翻译模型（离线；也可切换在线接口）
         └▶ 生成 dual/mono PDF + blocks.jsonl，落盘到 storage/<docId>/
-Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走搜索服务商（Tavily / 博查）+ 读正文
+Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走搜索服务商（Tavily / 博查 / DeepSeek）+ 读正文
         └▶ 调用（独立配置的）在线接口流式作答（function calling；写操作先请用户批准）
 ~~~
 
@@ -52,6 +52,9 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
 `text.json`）、`storage/conversations/`（Arxiver 会话）、`config.json`（设置，含联网搜索的服务商与 API Key）、
 `logs/app.log`（运行日志）。详见[文档](../guide.html#storage)。
 
+`<cacheKey>.blocks.jsonl` 每行是一个段落块（`page / index / bbox / src / dst`）。片段里出现公式占位符时还带
+`vars`：页内编号 → 引擎从 PDF 字形抽出的公式文本（`{vN}` 与 `{{vN}}` 都认）；数学字体没有 Unicode 映射、抽不出内容时该键缺省，界面退回显示占位符。
+
 ## Arxiver 助手 {#agent}
 
 - **模型**：OpenAI 兼容 `chat/completions`（流式、function calling、usage），读取 `config.json` 中的 `chat_*` 配置（与翻译接口分离）；一轮提问最多 8 次工具往返（`MAX_ROUNDS`）。
@@ -64,15 +67,17 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
 
 ## 联网搜索与读正文 {#websearch}
 
-相关配置（`config.json`）：`search_enabled`（总开关，默认 `false`）、`search_provider`（`tavily` | `bocha`）、
-`search_key_tavily` / `search_key_bocha`（两家 Key 各自保存）、`search_scope`（`academic` | `web`）。
+相关配置（`config.json`）：`search_enabled`（总开关，默认 `false`）、`search_provider`（`tavily` | `bocha` | `deepseek`）、
+`search_key_tavily` / `search_key_bocha` / `search_key_deepseek`（各家 Key 分别保存）、`search_scope`（`academic` | `web`）。
 开关关闭时联网工具不暴露给模型；`search_web` 需要**当前服务商**有 Key，`fetch_url` 只要有开关（没 Key 就用本机抓取）。
+每次请求都会把联网状态（未开启 / 已开启但当前服务商缺 Key / 可用）写进上下文（`webSearchState()`），
+避免模型把「缺 Key」说成「没开启」，或在不可用时编造外部资料。
 不再调用 arXiv / OpenAlex 的检索接口（曾受 IP 限流）。
 
 ### 聚合搜索（`search_web` → `searchWeb()`）
 
-- **查询扇出**：模型给出 1~4 条**英文**受控检索式（可带会议名 / 年份 / `site:` 限定），并行请求，去重后统一排序。
-- **归一化**：两家结果都收敛成 `RawHit{title,url,content,date}`，之后共用清洗：
+- **查询扇出**：模型给出 1~4 条**英文**受控检索式（可带会议名 / 年份 / `site:` 限定），并行请求（DeepSeek 并发限 2），去重后统一排序。
+- **归一化**：各家结果都收敛成 `RawHit{title,url,content,date,site}`，之后共用清洗：
   - 标题剥掉 arXiv 的 `[2509.15459]` 前缀；博查另外剥站点后缀（`… – arxiv` / `… | researchgate`）；
   - 摘要优先从 `Abstract:` 之后截取——arXiv 摘要页常混入 arXivLabs / Announce Type / Subjects / Cite as 等样板，抽不到就留空，不显示噪声；
   - arXiv 编号先看 URL、取不到再从正文里找（`arXiv:…` 写法）；DOI **只从 URL 里识别**（防从摘要里误抓别人的 DOI）。两者决定条目能否一键导入；
@@ -80,20 +85,22 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
 - **排序**：`tier = 学术域名(1) + 带标识符(1)`，同 tier 按年份降序。学术白名单含 arXiv / ar5iv / OpenReview / NeurIPS / CVF / ECVA / PMLR / ACL / AAAI / IJCAI / ACM / IEEE / Springer / ScienceDirect / Nature / Science / PubMed / bioRxiv 等。
 - **Tavily**：`POST /search`，`search_depth=basic`、`include_usage`、`include_published_date`；学术时带 `include_domains` + `include_domains_mode`（`prefer` 加权 / `restrict` 限定），`time_range` 透传；用量取 `usage.credits`。
 - **博查**：`POST /v1/web-search`，`summary=true`（长摘要比 `snippet` 完整）、`count`、`freshness`（`day/week/month/year` → `oneDay/oneWeek/oneMonth/oneYear`）；字段映射 `name→title`、`summary || snippet→content`、`datePublished || dateLastCrawled→date`。它**没有域名参数、没有 extract、也不返回 credits**，所以 `academic + restrict` 由本地白名单兜底（`prefer` 本来就只是排序加权）。
-- **失败处理**：401/403 → Key 无效、432/433 → 额度用尽、429 → 频繁；所有查询都失败且无结果时抛出错误交给模型，让它如实说明，而不是编造论文。
+- **DeepSeek**：`POST https://api.deepseek.com/v1/tools/search`（Bearer 用 DeepSeek Key），`count`、`need_content=false`；字段映射 `summary || snippet→content`、`date→date`、`site_name→site`（本地认不出域名时用作 venue）。检索式按 **128 字符**预算截断（超长直接 400），时间范围转成 `after:YYYY-MM-DD`（比 day/week/month/year 更细）。它同样没有域名参数（`site:` 是 query 语法，26 个学术域名拼不进 128 字符），`academic + restrict` 也走本地白名单；**账号级 5 QPS**，所以四条查询限并发 2，408/429/5xx 等 800ms 重试一次；按请求计费（¥5 / 1000 次，无结果不计费），日志里记「N 次请求」而不是 credits。
+- **失败处理**：401/403 → Key 无效、402 → 余额不足、432/433 → 额度用尽、429 → 频繁；所有查询都失败且无结果时抛出错误交给模型，让它如实说明，而不是编造论文。
 
 ### 读正文（`fetch_url` → `readPage()`）
 
-预算默认 8000 字（`max_chars` 限 2000~20000），两条路径：
+预算默认 8000 字（`max_chars` 限 2000~20000），三条路径：
 
 1. **Tavily extract**（配了 Tavily Key 时优先）：`POST /extract`，带上 `query` 让服务端挑相关段落（`chunks_per_source=4`），1 credit / 5 个 URL，超时 25s；返回文本只做长度收敛。
-2. **本机抓取**（没配 Key 或 extract 失败）：`fetchPageText()`
+2. **DeepSeek Fetch**（配了 DeepSeek Key 且上一步没取到）：`POST https://api.deepseek.com/v1/tools/fetch`，直接返回 Markdown 正文（`title` + `content`），超时 30s；先走一次内网地址校验（不把 `localhost` / 内网 URL 发给服务商），取回的正文同样用 `pickPassages()` 按 query 挑段。它有域名级 QPS 且对无正文的页面返回 404，所以只作兜底。
+3. **本机抓取**（没配 Key 或上面都失败）：`fetchPageText()`
    - 只允许 `http` / `https`；拒绝 `localhost`、`*.local` / `*.internal`、IPv4 私网（`10.` / `127.` / `192.168.` / `172.16-31.` / `169.254.` / `0.` / CGNAT）与 IPv6 私网，**DNS 解析后再校验一次**（防内网域名与 DNS 重绑定）；
    - 手动跟随跳转、最多 4 跳、**每一跳重新校验**；单跳 20s 超时；响应体最大 3MB；
    - `application/pdf` → 落临时文件后调 `engine/extract_text.py`（PyMuPDF）逐页抽文本；HTML → 去 `script/style` / 标签、还原实体、取 `<title>`；其它按纯文本；
    - 再本地挑段落 `pickPassages()`：按空行切段（>40 字），用 `agent/text.ts` 的 `tokenize` 算与 query 的词重合度打分、轻微偏好靠前段落，拼到预算为止，段间用 `---`。
 
-读到的内容一方面以 `read` 事件推给界面（「已读正文」行：站点 · 字数，悬停看途径与完整链接），另一方面作为工具结果回给模型。主进程日志（`websearch:` 前缀）记录每条检索式命中数、`<服务商> 合计 N 条，用量 X credits，耗时 Yms`、`读取 <域名>（<途径>，N 字，Yms）`。
+读到的内容一方面以 `read` 事件推给界面（「已读正文」行：站点 · 字数，悬停看途径与完整链接），另一方面作为工具结果回给模型。主进程日志（`websearch:` 前缀）记录每条检索式命中数、`<服务商> 合计 N 条，用量 X credits / N 次请求，耗时 Yms`、`读取 <域名>（<途径>，N 字，Yms）`。
 
 > Key 以明文存于 `config.json`（仅本机、不进 git）；对外只发检索式与要读的 URL，本地文献内容不外发。
 

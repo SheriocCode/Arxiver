@@ -1059,19 +1059,36 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .reader-overlay .block-rect:hover { background: rgba(16,163,127,.28); }
 .reader-overlay .block-rect.is-active { background: rgba(16,163,127,.28); border-color: rgba(16,163,127,1); box-shadow: 0 0 0 1px rgba(16,163,127,.55); }
 .reader-overlay .block-rect.block-formula { border-color: rgba(150,150,150,.55); background: rgba(150,150,150,.08); }
-/* 块框面板：点击块框后贴在块框旁边显示，随页面滚动跟随，再点一次 / 点别处 / × 关闭 */
+/* 块框面板：点击块框后贴在旁边显示，标题栏可拖动；译文在上，原文默认折叠 */
 .block-tip {
   position: absolute; z-index: 95;
   width: min(380px, 42vw); max-height: 45vh; overflow: auto;
   padding: 8px 10px; background: var(--surface); border: 1px solid var(--border-strong);
   border-radius: var(--radius); font-size: 12px; box-shadow: var(--shadow);
 }
-.block-tip .tip-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.block-tip.is-dragging { user-select: none; }
+.block-tip .tip-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; cursor: grab; user-select: none; }
+.block-tip.is-dragging .tip-head { cursor: grabbing; }
 .block-tip .tip-title { flex: 1; font-size: 11px; color: var(--muted); }
 .block-tip .tip-close { flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: var(--radius-sm); color: var(--muted); }
 .block-tip .tip-close:hover { background: var(--hover); color: var(--text); }
-.block-tip .tip-src { color: var(--muted); margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); white-space: pre-wrap; word-break: break-word; }
 .block-tip .tip-dst { color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.block-tip .tip-dst.is-empty { color: var(--faint); }
+.block-tip .tip-src-box { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
+.block-tip .tip-src-box > summary { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--muted); font-size: 11px; list-style: none; user-select: none; }
+.block-tip .tip-src-box > summary::-webkit-details-marker { display: none; }
+.block-tip .tip-src-label { font-weight: 600; }
+.block-tip .tip-src-hint { color: var(--faint); }
+.block-tip .tip-src { margin-top: 4px; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+/* 公式 / 富文本占位符（{v0} / {{v0}}）：抽到公式文本就直接显示，抽不到就标出占位符 */
+.block-tip .vph {
+  display: inline-block; max-width: 240px; margin: 0 1px; padding: 0 4px;
+  border: 1px dashed var(--star); border-radius: var(--radius-sm);
+  background: var(--surface-2); color: var(--star);
+  font-size: 11px; line-height: 16px; vertical-align: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.block-tip .vph.is-formula { border-style: solid; background: var(--surface-3); }
 .reader-overlay .page-placeholder { display: flex; align-items: center; justify-content: center; width: var(--page-w, 100%); background: #f4f4f4; color: #aaa; border: 1px dashed #666; border-radius: 2px; font-size: 14px; }
 .reader-overlay .page-skip { background: #ececec; color: #999; }
 .reader-overlay .page-placeholder.page-active { flex-direction: column; gap: 10px; border-color: var(--accent); background: #f6fffb; }

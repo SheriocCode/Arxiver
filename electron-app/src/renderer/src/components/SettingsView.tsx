@@ -76,6 +76,7 @@ export default function SettingsView({
         chat_base_url: config.chat_base_url, chat_api_key: config.chat_api_key, chat_model: config.chat_model,
         search_enabled: config.search_enabled, search_provider: config.search_provider,
         search_key_tavily: config.search_key_tavily, search_key_bocha: config.search_key_bocha,
+        search_key_deepseek: config.search_key_deepseek,
         search_scope: config.search_scope,
         threads: config.threads, timeout: config.timeout, source_lang: config.source_lang, target_lang: config.target_lang
       });
@@ -84,8 +85,12 @@ export default function SettingsView({
 
   const set = <K extends keyof AppConfig>(k: K, v: AppConfig[K]): void => setForm((f) => ({ ...f, [k]: v }));
   const cur = SECTIONS.find((s) => s.id === section) || SECTIONS[0];
-  const searchProvider: "tavily" | "bocha" = form.search_provider === "bocha" ? "bocha" : "tavily";
-  const searchKeyValue = (searchProvider === "bocha" ? form.search_key_bocha : form.search_key_tavily) || "";
+  const searchProvider: AppConfig["search_provider"] =
+    form.search_provider === "bocha" ? "bocha" : form.search_provider === "deepseek" ? "deepseek" : "tavily";
+  const searchKeyField: "search_key_tavily" | "search_key_bocha" | "search_key_deepseek" =
+    searchProvider === "bocha" ? "search_key_bocha" : searchProvider === "deepseek" ? "search_key_deepseek" : "search_key_tavily";
+  const searchKeyValue = form[searchKeyField] || "";
+  const searchProviderName = { tavily: "Tavily", bocha: "博查", deepseek: "DeepSeek" }[searchProvider];
   const inputStyle = { height: 34, minWidth: 240, background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", color: "var(--text)", padding: "0 10px", outline: "none" } as const;
 
   async function save(): Promise<void> {
@@ -283,18 +288,23 @@ export default function SettingsView({
                   <Row label="启用联网搜索" desc="允许 AI 搜索文库外的论文与资料；只发送检索式，不上传本地文献内容。默认关闭">
                     <Switch on={!!form.search_enabled} onToggle={() => set("search_enabled", !form.search_enabled)} />
                   </Row>
-                  <Row label="搜索服务商" desc="Tavily：学术结果稳、域名加权更细；博查：国内网络友好、返回摘要更完整（可在两家之间随时切换对比）">
+                  <Row label="搜索服务商" desc="Tavily：学术结果稳、域名加权更细；博查：国内网络友好、返回摘要更完整；DeepSeek：自研搜索，国内直连、长摘要 + 权威性排序（可在各家之间随时切换对比）">
                     <select value={searchProvider} onChange={(e) => set("search_provider", e.target.value as AppConfig["search_provider"])} disabled={!form.search_enabled}>
                       <option value="tavily">Tavily</option>
                       <option value="bocha">博查（Bocha）</option>
+                      <option value="deepseek">DeepSeek</option>
                     </select>
                   </Row>
                   {searchProvider === "bocha" ? (
                     <Row label="博查 API Key" desc={<>在 <ExtLink href="https://open.bochaai.com/">博查官网</ExtLink> 控制台获取（Bearer sk-…）</>}>
                       <input type="password" style={inputStyle} value={form.search_key_bocha || ""} onChange={(e) => set("search_key_bocha", e.target.value)} />
                     </Row>
+                  ) : searchProvider === "deepseek" ? (
+                    <Row label="DeepSeek API Key" desc={<>在 <ExtLink href="https://platform.deepseek.com/">DeepSeek 官网</ExtLink> 创建（可与对话接口用同一把）；搜索 ¥5 / 1000 次，账号级 5 QPS。读正文兜底也用它</>}>
+                      <input type="password" style={inputStyle} value={form.search_key_deepseek || ""} onChange={(e) => set("search_key_deepseek", e.target.value)} />
+                    </Row>
                   ) : (
-                    <Row label="Tavily API Key" desc={<>在 <ExtLink href="https://app.tavily.com/">Tavily 官网</ExtLink> 注册后获取；每次提问约消耗 3~6 credits（免费额度 1000/月）。读正文用的也是它</>}>
+                    <Row label="Tavily API Key" desc={<>在 <ExtLink href="https://app.tavily.com/">Tavily 官网</ExtLink> 注册后获取；每次提问约消耗 3~6 credits（免费额度 1000/月）。读正文优先用它</>}>
                       <input type="password" style={inputStyle} value={form.search_key_tavily || ""} onChange={(e) => set("search_key_tavily", e.target.value)} />
                     </Row>
                   )}
@@ -305,7 +315,7 @@ export default function SettingsView({
                     </select>
                   </Row>
                   {form.search_enabled && !searchKeyValue ? (
-                    <div style={{ color: "var(--danger)", fontSize: 12 }}>还没填 {searchProvider === "bocha" ? "博查" : "Tavily"} API Key，联网搜索不会生效。</div>
+                    <div style={{ color: "var(--danger)", fontSize: 12 }}>还没填 {searchProviderName} API Key，联网搜索不会生效。</div>
                   ) : null}
                   <div className="modal-foot" style={{ border: 0, padding: "4px 0" }}>
                     <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>

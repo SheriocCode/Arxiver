@@ -368,7 +368,7 @@ def translate_stream(
             except Exception as exc:  # noqa: BLE001 - preview must never break translation
                 logger.debug("partial preview failed: %s", exc)
 
-    def on_block(page, index, total, bbox, src, dst):
+    def on_block(page, index, total, bbox, src, dst, vars_=None):
         try:
             print("ENGINE_BLOCK %d %d %d" % (page, index + 1, total), flush=True)
         except Exception:
@@ -385,6 +385,16 @@ def translate_stream(
                 "src": src,
                 "dst": dst,
             }
+            # 片段里引用到的 {vN} / {{vN}} 才有意义：把公式文本一并记下来给块框面板用
+            if vars_:
+                used = set(re.findall(r"\{+\s*v\s*(\d+)", f"{src or ''} {dst or ''}"))
+                picked = {
+                    vid: vars_[int(vid)]
+                    for vid in used
+                    if int(vid) < len(vars_) and vars_[int(vid)]
+                }
+                if picked:
+                    record["vars"] = picked
             with open(
                 os.path.join(events_dir, "engine-events.jsonl"), "a", encoding="utf-8"
             ) as handle:

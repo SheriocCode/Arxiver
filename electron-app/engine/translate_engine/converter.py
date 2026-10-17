@@ -44,6 +44,23 @@ from translate_engine.translator import (
 log = logging.getLogger(__name__)
 
 
+def _formula_text(chars) -> str:
+    """把一组公式字形还原成可读文本，供块框面板展示 {vN} 背后的真实内容。
+
+    LTChar.get_text() 走字体的 ToUnicode / encoding；部分数学字体没有映射
+    （拿到私用区字符，界面上就是豆腐块），这时宁可返回空串，让界面退回 {vN}。
+    """
+    try:
+        text = "".join(ch.get_text() for ch in chars)
+    except Exception:  # noqa: BLE001 - 抽不出公式文本不该影响翻译
+        return ""
+    if any(0xE000 <= ord(c) <= 0xF8FF for c in text):
+        return ""
+    text = "".join(c for c in text if c.isprintable() or c == " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:80]
+
+
 class PDFConverterEx(PDFConverter):
     def __init__(
         self,
@@ -341,6 +358,8 @@ class TranslateConverter(PDFConverterEx):
             l = max([vch.x1 for vch in v]) - v[0].x0
             log.debug(f'< {l:.1f} {v[0].x0:.1f} {v[0].y0:.1f} {v[0].cid} {v[0].fontname} {len(varl[id])} > v{id} = {"".join([ch.get_text() for ch in v])}')
             vlen.append(l)
+        # 块框面板要展示 {vN} 背后的公式内容（按页内编号），抽不出的留空
+        var_text = [_formula_text(v) for v in var]
 
         ############################################################
         # B. 段落翻译
@@ -385,7 +404,13 @@ class TranslateConverter(PDFConverterEx):
                         else:
                             bbox = [0.0, 0.0, 0.0, 0.0]
                         self.block_progress_cb(
-                            self.current_page, index, len(sstk), bbox, sstk[index], result
+                            self.current_page,
+                            index,
+                            len(sstk),
+                            bbox,
+                            sstk[index],
+                            result,
+                            var_text,
                         )
                     except Exception:
                         pass

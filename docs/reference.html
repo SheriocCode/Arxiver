@@ -52,7 +52,7 @@
 打开 ─▶ 渲染进程用 PDF.js 渲染原文 / 译文（对照）
 点翻译 ─▶ 主进程调用内嵌引擎（engine/）─▶ 内置本地翻译模型（离线；也可切换在线接口）
         └▶ 生成 dual/mono PDF + blocks.jsonl，落盘到 storage/&lt;docId&gt;/
-Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走搜索服务商（Tavily / 博查）+ 读正文
+Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走搜索服务商（Tavily / 博查 / DeepSeek）+ 读正文
         └▶ 调用（独立配置的）在线接口流式作答（function calling；写操作先请用户批准）
 </code></pre></div></div>
 
@@ -96,6 +96,9 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
 <code class="language-plaintext highlighter-rouge">text.json</code>）、<code class="language-plaintext highlighter-rouge">storage/conversations/</code>（Arxiver 会话）、<code class="language-plaintext highlighter-rouge">config.json</code>（设置，含联网搜索的服务商与 API Key）、
 <code class="language-plaintext highlighter-rouge">logs/app.log</code>（运行日志）。详见<a href="../guide.html#storage">文档</a>。</p>
 
+<p><code class="language-plaintext highlighter-rouge">&lt;cacheKey&gt;.blocks.jsonl</code> 每行是一个段落块（<code class="language-plaintext highlighter-rouge">page / index / bbox / src / dst</code>）。片段里出现公式占位符时还带
+<code class="language-plaintext highlighter-rouge">vars</code>：页内编号 → 引擎从 PDF 字形抽出的公式文本（<code class="language-plaintext highlighter-rouge">{vN}</code> 与 `` 都认）；数学字体没有 Unicode 映射、抽不出内容时该键缺省，界面退回显示占位符。</p>
+
 <h2 id="agent">Arxiver 助手</h2>
 
 <ul>
@@ -110,16 +113,18 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
 
 <h2 id="websearch">联网搜索与读正文</h2>
 
-<p>相关配置（<code class="language-plaintext highlighter-rouge">config.json</code>）：<code class="language-plaintext highlighter-rouge">search_enabled</code>（总开关，默认 <code class="language-plaintext highlighter-rouge">false</code>）、<code class="language-plaintext highlighter-rouge">search_provider</code>（<code class="language-plaintext highlighter-rouge">tavily</code> | <code class="language-plaintext highlighter-rouge">bocha</code>）、
-<code class="language-plaintext highlighter-rouge">search_key_tavily</code> / <code class="language-plaintext highlighter-rouge">search_key_bocha</code>（两家 Key 各自保存）、<code class="language-plaintext highlighter-rouge">search_scope</code>（<code class="language-plaintext highlighter-rouge">academic</code> | <code class="language-plaintext highlighter-rouge">web</code>）。
+<p>相关配置（<code class="language-plaintext highlighter-rouge">config.json</code>）：<code class="language-plaintext highlighter-rouge">search_enabled</code>（总开关，默认 <code class="language-plaintext highlighter-rouge">false</code>）、<code class="language-plaintext highlighter-rouge">search_provider</code>（<code class="language-plaintext highlighter-rouge">tavily</code> | <code class="language-plaintext highlighter-rouge">bocha</code> | <code class="language-plaintext highlighter-rouge">deepseek</code>）、
+<code class="language-plaintext highlighter-rouge">search_key_tavily</code> / <code class="language-plaintext highlighter-rouge">search_key_bocha</code> / <code class="language-plaintext highlighter-rouge">search_key_deepseek</code>（各家 Key 分别保存）、<code class="language-plaintext highlighter-rouge">search_scope</code>（<code class="language-plaintext highlighter-rouge">academic</code> | <code class="language-plaintext highlighter-rouge">web</code>）。
 开关关闭时联网工具不暴露给模型；<code class="language-plaintext highlighter-rouge">search_web</code> 需要<strong>当前服务商</strong>有 Key，<code class="language-plaintext highlighter-rouge">fetch_url</code> 只要有开关（没 Key 就用本机抓取）。
+每次请求都会把联网状态（未开启 / 已开启但当前服务商缺 Key / 可用）写进上下文（<code class="language-plaintext highlighter-rouge">webSearchState()</code>），
+避免模型把「缺 Key」说成「没开启」，或在不可用时编造外部资料。
 不再调用 arXiv / OpenAlex 的检索接口（曾受 IP 限流）。</p>
 
 <h3 id="searchweb--searchweb">聚合搜索（<code class="language-plaintext highlighter-rouge">search_web</code> → <code class="language-plaintext highlighter-rouge">searchWeb()</code>）</h3>
 
 <ul>
-  <li><strong>查询扇出</strong>：模型给出 1~4 条<strong>英文</strong>受控检索式（可带会议名 / 年份 / <code class="language-plaintext highlighter-rouge">site:</code> 限定），并行请求，去重后统一排序。</li>
-  <li><strong>归一化</strong>：两家结果都收敛成 <code class="language-plaintext highlighter-rouge">RawHit{title,url,content,date}</code>，之后共用清洗：
+  <li><strong>查询扇出</strong>：模型给出 1~4 条<strong>英文</strong>受控检索式（可带会议名 / 年份 / <code class="language-plaintext highlighter-rouge">site:</code> 限定），并行请求（DeepSeek 并发限 2），去重后统一排序。</li>
+  <li><strong>归一化</strong>：各家结果都收敛成 <code class="language-plaintext highlighter-rouge">RawHit{title,url,content,date,site}</code>，之后共用清洗：
     <ul>
       <li>标题剥掉 arXiv 的 <code class="language-plaintext highlighter-rouge">[2509.15459]</code> 前缀；博查另外剥站点后缀（<code class="language-plaintext highlighter-rouge">… – arxiv</code> / <code class="language-plaintext highlighter-rouge">… | researchgate</code>）；</li>
       <li>摘要优先从 <code class="language-plaintext highlighter-rouge">Abstract:</code> 之后截取——arXiv 摘要页常混入 arXivLabs / Announce Type / Subjects / Cite as 等样板，抽不到就留空，不显示噪声；</li>
@@ -130,16 +135,18 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
   <li><strong>排序</strong>：<code class="language-plaintext highlighter-rouge">tier = 学术域名(1) + 带标识符(1)</code>，同 tier 按年份降序。学术白名单含 arXiv / ar5iv / OpenReview / NeurIPS / CVF / ECVA / PMLR / ACL / AAAI / IJCAI / ACM / IEEE / Springer / ScienceDirect / Nature / Science / PubMed / bioRxiv 等。</li>
   <li><strong>Tavily</strong>：<code class="language-plaintext highlighter-rouge">POST /search</code>，<code class="language-plaintext highlighter-rouge">search_depth=basic</code>、<code class="language-plaintext highlighter-rouge">include_usage</code>、<code class="language-plaintext highlighter-rouge">include_published_date</code>；学术时带 <code class="language-plaintext highlighter-rouge">include_domains</code> + <code class="language-plaintext highlighter-rouge">include_domains_mode</code>（<code class="language-plaintext highlighter-rouge">prefer</code> 加权 / <code class="language-plaintext highlighter-rouge">restrict</code> 限定），<code class="language-plaintext highlighter-rouge">time_range</code> 透传；用量取 <code class="language-plaintext highlighter-rouge">usage.credits</code>。</li>
   <li><strong>博查</strong>：<code class="language-plaintext highlighter-rouge">POST /v1/web-search</code>，<code class="language-plaintext highlighter-rouge">summary=true</code>（长摘要比 <code class="language-plaintext highlighter-rouge">snippet</code> 完整）、<code class="language-plaintext highlighter-rouge">count</code>、<code class="language-plaintext highlighter-rouge">freshness</code>（<code class="language-plaintext highlighter-rouge">day/week/month/year</code> → <code class="language-plaintext highlighter-rouge">oneDay/oneWeek/oneMonth/oneYear</code>）；字段映射 <code class="language-plaintext highlighter-rouge">name→title</code>、<code class="language-plaintext highlighter-rouge">summary || snippet→content</code>、<code class="language-plaintext highlighter-rouge">datePublished || dateLastCrawled→date</code>。它<strong>没有域名参数、没有 extract、也不返回 credits</strong>，所以 <code class="language-plaintext highlighter-rouge">academic + restrict</code> 由本地白名单兜底（<code class="language-plaintext highlighter-rouge">prefer</code> 本来就只是排序加权）。</li>
-  <li><strong>失败处理</strong>：401/403 → Key 无效、432/433 → 额度用尽、429 → 频繁；所有查询都失败且无结果时抛出错误交给模型，让它如实说明，而不是编造论文。</li>
+  <li><strong>DeepSeek</strong>：<code class="language-plaintext highlighter-rouge">POST https://api.deepseek.com/v1/tools/search</code>（Bearer 用 DeepSeek Key），<code class="language-plaintext highlighter-rouge">count</code>、<code class="language-plaintext highlighter-rouge">need_content=false</code>；字段映射 <code class="language-plaintext highlighter-rouge">summary || snippet→content</code>、<code class="language-plaintext highlighter-rouge">date→date</code>、<code class="language-plaintext highlighter-rouge">site_name→site</code>（本地认不出域名时用作 venue）。检索式按 <strong>128 字符</strong>预算截断（超长直接 400），时间范围转成 <code class="language-plaintext highlighter-rouge">after:YYYY-MM-DD</code>（比 day/week/month/year 更细）。它同样没有域名参数（<code class="language-plaintext highlighter-rouge">site:</code> 是 query 语法，26 个学术域名拼不进 128 字符），<code class="language-plaintext highlighter-rouge">academic + restrict</code> 也走本地白名单；<strong>账号级 5 QPS</strong>，所以四条查询限并发 2，408/429/5xx 等 800ms 重试一次；按请求计费（¥5 / 1000 次，无结果不计费），日志里记「N 次请求」而不是 credits。</li>
+  <li><strong>失败处理</strong>：401/403 → Key 无效、402 → 余额不足、432/433 → 额度用尽、429 → 频繁；所有查询都失败且无结果时抛出错误交给模型，让它如实说明，而不是编造论文。</li>
 </ul>
 
 <h3 id="fetchurl--readpage">读正文（<code class="language-plaintext highlighter-rouge">fetch_url</code> → <code class="language-plaintext highlighter-rouge">readPage()</code>）</h3>
 
-<p>预算默认 8000 字（<code class="language-plaintext highlighter-rouge">max_chars</code> 限 2000~20000），两条路径：</p>
+<p>预算默认 8000 字（<code class="language-plaintext highlighter-rouge">max_chars</code> 限 2000~20000），三条路径：</p>
 
 <ol>
   <li><strong>Tavily extract</strong>（配了 Tavily Key 时优先）：<code class="language-plaintext highlighter-rouge">POST /extract</code>，带上 <code class="language-plaintext highlighter-rouge">query</code> 让服务端挑相关段落（<code class="language-plaintext highlighter-rouge">chunks_per_source=4</code>），1 credit / 5 个 URL，超时 25s；返回文本只做长度收敛。</li>
-  <li><strong>本机抓取</strong>（没配 Key 或 extract 失败）：<code class="language-plaintext highlighter-rouge">fetchPageText()</code>
+  <li><strong>DeepSeek Fetch</strong>（配了 DeepSeek Key 且上一步没取到）：<code class="language-plaintext highlighter-rouge">POST https://api.deepseek.com/v1/tools/fetch</code>，直接返回 Markdown 正文（<code class="language-plaintext highlighter-rouge">title</code> + <code class="language-plaintext highlighter-rouge">content</code>），超时 30s；先走一次内网地址校验（不把 <code class="language-plaintext highlighter-rouge">localhost</code> / 内网 URL 发给服务商），取回的正文同样用 <code class="language-plaintext highlighter-rouge">pickPassages()</code> 按 query 挑段。它有域名级 QPS 且对无正文的页面返回 404，所以只作兜底。</li>
+  <li><strong>本机抓取</strong>（没配 Key 或上面都失败）：<code class="language-plaintext highlighter-rouge">fetchPageText()</code>
     <ul>
       <li>只允许 <code class="language-plaintext highlighter-rouge">http</code> / <code class="language-plaintext highlighter-rouge">https</code>；拒绝 <code class="language-plaintext highlighter-rouge">localhost</code>、<code class="language-plaintext highlighter-rouge">*.local</code> / <code class="language-plaintext highlighter-rouge">*.internal</code>、IPv4 私网（<code class="language-plaintext highlighter-rouge">10.</code> / <code class="language-plaintext highlighter-rouge">127.</code> / <code class="language-plaintext highlighter-rouge">192.168.</code> / <code class="language-plaintext highlighter-rouge">172.16-31.</code> / <code class="language-plaintext highlighter-rouge">169.254.</code> / <code class="language-plaintext highlighter-rouge">0.</code> / CGNAT）与 IPv6 私网，<strong>DNS 解析后再校验一次</strong>（防内网域名与 DNS 重绑定）；</li>
       <li>手动跟随跳转、最多 4 跳、<strong>每一跳重新校验</strong>；单跳 20s 超时；响应体最大 3MB；</li>
@@ -149,7 +156,7 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
   </li>
 </ol>
 
-<p>读到的内容一方面以 <code class="language-plaintext highlighter-rouge">read</code> 事件推给界面（「已读正文」行：站点 · 字数，悬停看途径与完整链接），另一方面作为工具结果回给模型。主进程日志（<code class="language-plaintext highlighter-rouge">websearch:</code> 前缀）记录每条检索式命中数、<code class="language-plaintext highlighter-rouge">&lt;服务商&gt; 合计 N 条，用量 X credits，耗时 Yms</code>、<code class="language-plaintext highlighter-rouge">读取 &lt;域名&gt;（&lt;途径&gt;，N 字，Yms）</code>。</p>
+<p>读到的内容一方面以 <code class="language-plaintext highlighter-rouge">read</code> 事件推给界面（「已读正文」行：站点 · 字数，悬停看途径与完整链接），另一方面作为工具结果回给模型。主进程日志（<code class="language-plaintext highlighter-rouge">websearch:</code> 前缀）记录每条检索式命中数、<code class="language-plaintext highlighter-rouge">&lt;服务商&gt; 合计 N 条，用量 X credits / N 次请求，耗时 Yms</code>、<code class="language-plaintext highlighter-rouge">读取 &lt;域名&gt;（&lt;途径&gt;，N 字，Yms）</code>。</p>
 
 <blockquote>
   <p>Key 以明文存于 <code class="language-plaintext highlighter-rouge">config.json</code>（仅本机、不进 git）；对外只发检索式与要读的 URL，本地文献内容不外发。</p>

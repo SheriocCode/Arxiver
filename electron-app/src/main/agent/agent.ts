@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import type { AgentEvent, AgentChatRequest } from "../../shared/types";
 import * as library from "../library";
 import { runChat, modelConfigured, type ChatMessage } from "./model";
-import { toolDefs, runTool, isWriteTool, type ToolContext } from "./tools";
+import { toolDefs, runTool, isWriteTool, webSearchState, type ToolContext } from "./tools";
 
 export type { AgentChatRequest };
 
@@ -11,7 +11,7 @@ const MAX_ROUNDS = 8;
 
 const SYSTEM_PROMPT = [
   "你是一个严谨的文献研究助手，帮助用户在本地文献库中检索、阅读并回答问题。",
-  "你可以调用工具：list_library（浏览文库）、search_library（跨文献检索段落）、read_document（读取某篇文献正文）、search_in_document（单篇内检索），以及 search_web（联网搜索）与 fetch_url（读网页/PDF 正文），后两个仅在开启联网搜索后可用。",
+  "你可以调用工具：list_library（浏览文库）、search_library（跨文献检索段落）、read_document（读取某篇文献正文）、search_in_document（单篇内检索），以及 search_web（联网搜索）与 fetch_url（读网页/PDF 正文）。联网能力是否可用，以【联网搜索】状态为准（每次请求都会给出）。",
   "工作方式：先检索/阅读相关证据，再基于证据作答；不要凭空编造。",
   "智能路由：系统会给出【用户当前正在阅读的文献】作为默认上下文。若问题没有指明其它文献（如“总结核心贡献/方法/局限”），默认针对这篇当前文献，直接用 read_document / search_in_document 处理，不要反问是哪一篇，也不要先全库扫描。只有问题明确涉及其它文献、跨文献对比或整库问题时，才用 search_library / list_library 去查找。",
   "联网搜索（search_web）：本地文库显然没有时（用户要找“最新的 / 别人的 / 某领域的 / 某会议的”资料）才用。要点：",
@@ -88,6 +88,15 @@ export class AgentService extends EventEmitter {
     if (req.refs && req.refs.length) {
       const lines = req.refs.map((id) => { const d = library.getDocument(id); return `- ${id} 《${d ? d.title : id}》`; });
       ctx.push(`【用户用 @ 额外引用的已打开文献（可作为对比/补充证据，需要用 read_document / search_in_document 读取）】\n${lines.join("\n")}`);
+    }
+    // 联网能力的三态：别让模型把「缺 Key」猜成「没开启」，也别在不可用时编造外部资料
+    const web = webSearchState();
+    if (!web.on) {
+      ctx.push("【联网搜索】未开启：search_web / fetch_url 都不可用。需要最新或外部资料时，如实说明并引导用户到 设置 → AI 助手 → 联网搜索 开启。");
+    } else if (!web.key) {
+      ctx.push(`【联网搜索】已开启，但服务商「${web.provider}」没有配置 API Key：search_web 不可用（fetch_url 仍可读用户给出的网页/PDF）。需要联网检索时，直接告诉用户去 设置 → AI 助手 → 联网搜索 填「${web.provider}」的 API Key；不要说你没有联网能力，也不要编造外部资料。`);
+    } else {
+      ctx.push(`【联网搜索】已开启（服务商：${web.provider}）：search_web 与 fetch_url 均可用。`);
     }
     ctx.push(`【用户问题】${req.message}`);
     messages.push({ role: "user", content: ctx.join("\n") });

@@ -24,7 +24,7 @@ compare:
     zotero: { mark: part, text: "无内置，需装第三方插件；多为在线服务（正文发往服务商、额度用完要订阅），通常要整篇翻完才能看" }
   - icon: bot
     label: AI Harness
-    more: 助手使用独立配置的 OpenAI 兼容接口，与翻译互不影响；联网搜索默认关闭，开启后可选 Tavily 或博查，Key 各存一份。
+    more: 助手使用独立配置的 OpenAI 兼容接口，与翻译互不影响；联网搜索默认关闭，开启后可选 Tavily / 博查 / DeepSeek，Key 各存一份。
     arxiver: { mark: plus, text: "<strong>跨文献问答、联网检索与读正文、导入外部论文、改标签 / 分类（写操作先确认），长任务显示进度与已用时间</strong>" }
     zotero: { mark: "no", text: "官方无内置；第三方 AI 插件零散，配置与体验参差" }
   - icon: book-open

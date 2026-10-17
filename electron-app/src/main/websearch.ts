@@ -18,13 +18,15 @@ const execFileAsync = promisify(execFile);
 const TAVILY_SEARCH = "https://api.tavily.com/search";
 const TAVILY_EXTRACT = "https://api.tavily.com/extract";
 const BOCHA_SEARCH = "https://api.bochaai.com/v1/web-search";
+const DEEPSEEK_SEARCH = "https://api.deepseek.com/v1/tools/search";
+const DEEPSEEK_FETCH = "https://api.deepseek.com/v1/tools/fetch";
 const TIMEOUT = 20000;
 const UA = "Arxiver/0.8 (+https://github.com/SheriocCode/Arxiver)";
 const MAX_QUERIES = 4;
 
-export type SearchProvider = "tavily" | "bocha";
+export type SearchProvider = "tavily" | "bocha" | "deepseek";
 
-export const PROVIDER_NAMES: Record<SearchProvider, string> = { tavily: "Tavily", bocha: "博查" };
+export const PROVIDER_NAMES: Record<SearchProvider, string> = { tavily: "Tavily", bocha: "博查", deepseek: "DeepSeek" };
 
 // 学术优先白名单：用 prefer 模式（提升权重但不排他），避免把项目主页 / 博客直接过滤掉
 const ACADEMIC_DOMAINS = [
@@ -65,12 +67,13 @@ export interface WebSearchOptions {
   provider?: SearchProvider;
 }
 
-// 两家服务商归一化后的原始结果
+// 各家服务商归一化后的原始结果
 interface RawHit {
   title: string;
   url: string;
   content: string;
   date: string;
+  site?: string;
 }
 
 interface TavilyResult {
@@ -79,6 +82,17 @@ interface TavilyResult {
   content?: string;
   score?: number;
   published_date?: string | null;
+}
+
+// DeepSeek（/v1/tools/search）的返回结构
+interface DeepSeekItem {
+  title?: string;
+  url?: string;
+  snippet?: string;
+  summary?: string;
+  site_name?: string | null;
+  date?: string | null;
+  rerank_score?: number;
 }
 
 // 博查（Web Search API）的返回结构
@@ -170,9 +184,10 @@ function urlKey(url: string): string {
 
 function httpHint(status: number, detail: string): string {
   const hint = status === 401 || status === 403 ? "API Key 无效或没有权限"
-    : status === 432 || status === 433 ? "套餐额度已用尽"
-      : status === 429 ? "请求过于频繁（稍后重试）"
-        : `HTTP ${status}`;
+    : status === 402 ? "账户余额不足"
+      : status === 432 || status === 433 ? "套餐额度已用尽"
+        : status === 429 ? "请求过于频繁（稍后重试）"
+          : `HTTP ${status}`;
   return `${hint}${detail ? "：" + detail : ""}`;
 }
 
@@ -258,6 +273,75 @@ async function bochaSearch(
   }
 }
 
+const DEEPSEEK_QUERY_MAX = 128;
+
+// DeepSeek 的 query 限 1~128 字符，超了直接 400：按预算截断（宁可少一点限定，也别整条失败）
+function clipDeepSeekQuery(q: string, max = DEEPSEEK_QUERY_MAX): string {
+  const t = String(q || "").trim();
+  return t.length > max ? t.slice(0, max).trim() : t;
+}
+
+// time_range → after:YYYY-MM-DD（DeepSeek 支持精确到日的日期限定）
+function deepSeekTimeFilter(tr?: WebSearchOptions["timeRange"]): string {
+  const days = tr === "day" ? 1 : tr === "week" ? 7 : tr === "month" ? 30 : tr === "year" ? 365 : 0;
+  if (!days) { return ""; }
+  return "after:" + new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+}
+
+// DeepSeek 搜索：一次一条 query；summary（600~800 字）比 snippet 更适合给模型读，
+// 正文留给 fetch，所以 need_content 固定 false。按请求计费，不返回 credits。
+async function deepseekSearch(
+  key: string,
+  query: string,
+  o: { count: number; timeRange?: WebSearchOptions["timeRange"] }
+): Promise<{ hits: RawHit[]; credits: number } | { error: string }> {
+  const filter = deepSeekTimeFilter(o.timeRange);
+  const body = JSON.stringify({
+    query: filter ? clipDeepSeekQuery(query, DEEPSEEK_QUERY_MAX - filter.length - 1) + " " + filter : clipDeepSeekQuery(query),
+    count: o.count,
+    need_content: false
+  });
+  for (let attempt = 0; ; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
+    try {
+      const res = await fetch(DEEPSEEK_SEARCH, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+        body,
+        signal: ctrl.signal
+      });
+      const text = await res.text().catch(() => "");
+      if (!res.ok) {
+        const detail = (() => {
+          try { return String((JSON.parse(text) as any)?.error?.message || ""); } catch { return text.slice(0, 200); }
+        })();
+        // 408 / 429 / 5xx 值得等一等再试一次（文档建议）
+        if (attempt === 0 && (res.status === 408 || res.status === 429 || res.status >= 500)) {
+          await new Promise((r) => setTimeout(r, 800));
+          continue;
+        }
+        return { error: httpHint(res.status, detail) };
+      }
+      const json = JSON.parse(text) as { results?: DeepSeekItem[] };
+      return {
+        hits: (json.results || []).filter((x) => x.url).map((x) => ({
+          title: String(x.title || ""),
+          url: String(x.url || ""),
+          content: String(x.summary || x.snippet || ""),
+          date: String(x.date || ""),
+          site: String(x.site_name || "")
+        })),
+        credits: 0
+      };
+    } catch (e) {
+      return { error: logger.errText(e) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
 interface OneQueryOpts {
   scope: "academic" | "web";
   mode: "prefer" | "restrict";
@@ -270,6 +354,9 @@ function searchOne(
 ): Promise<{ hits: RawHit[]; credits: number } | { error: string }> {
   if (provider === "bocha") {
     return bochaSearch(key, query, { count: o.maxResults, timeRange: o.timeRange });
+  }
+  if (provider === "deepseek") {
+    return deepseekSearch(key, query, { count: o.maxResults, timeRange: o.timeRange });
   }
   return tavilySearch(key, {
     query,
@@ -303,7 +390,7 @@ function toHit(r: RawHit): PaperHit | null {
     authors: "",
     year: date.slice(0, 4) || yearIn(title) || yearIn(snippet),
     date,
-    venue: siteName(host),
+    venue: siteName(host) || String(r.site || ""),
     url,
     pdfUrl: pdfUrlOf(url, arxivId),
     arxivId,
@@ -339,19 +426,37 @@ function merge(list: PaperHit[]): PaperHit[] {
   return Array.from(new Set(byUrl.values()));
 }
 
+// 并发上限：DeepSeek 的 Search 是账号级 5 QPS，四条查询全并发正好踩线（用户连点两次就 429），限到 2
+async function settleLimited<T>(tasks: (() => Promise<T>)[], limit: number): Promise<PromiseSettledResult<T>[]> {
+  const out: PromiseSettledResult<T>[] = new Array(tasks.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = next++;
+      if (i >= tasks.length) { return; }
+      try { out[i] = { status: "fulfilled", value: await tasks[i]() }; }
+      catch (reason) { out[i] = { status: "rejected", reason }; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), tasks.length) }, worker));
+  return out;
+}
+
 export async function searchWeb(o: WebSearchOptions, apiKey: string): Promise<PaperHit[]> {
   const queries = Array.from(new Set((o.queries || []).map((q) => String(q || "").trim()).filter(Boolean))).slice(0, MAX_QUERIES);
   if (!queries.length) { return []; }
-  const provider: SearchProvider = o.provider === "bocha" ? "bocha" : "tavily";
+  const provider: SearchProvider = o.provider === "bocha" ? "bocha" : o.provider === "deepseek" ? "deepseek" : "tavily";
   const scope = o.scope === "web" ? "web" : "academic";
   const mode = o.mode === "restrict" ? "restrict" : "prefer";
   const maxResults = Math.max(1, Math.min(20, Number(o.maxResults) || 8));
   const started = Date.now();
-  const results = await Promise.allSettled(
-    queries.map((q) => searchOne(provider, apiKey, q, { scope, mode, timeRange: o.timeRange, maxResults }))
+  const results = await settleLimited(
+    queries.map((q) => () => searchOne(provider, apiKey, q, { scope, mode, timeRange: o.timeRange, maxResults })),
+    provider === "deepseek" ? 2 : queries.length
   );
   const flat: PaperHit[] = [];
   let credits = 0;
+  let billed = 0;
   const errors: string[] = [];
   results.forEach((r, i) => {
     if (r.status === "fulfilled") {
@@ -362,13 +467,14 @@ export async function searchWeb(o: WebSearchOptions, apiKey: string): Promise<Pa
       }
       credits += r.value.credits;
       const hits = r.value.hits.map(toHit).filter((x): x is PaperHit => !!x);
+      if (hits.length) { billed += 1; }
       logger.info("websearch", `「${queries[i].slice(0, 60)}」→ ${hits.length} 条`);
       flat.push(...hits);
     } else {
       errors.push(logger.errText(r.reason));
     }
   });
-  // 博查没有域名限制参数：学术 + restrict 时用本地白名单兜住（Tavily 端已过滤，这里是等价操作）
+  // 博查 / DeepSeek 没有域名限制参数：学术 + restrict 时用本地白名单兜住（Tavily 端已过滤，这里是等价操作）
   const pool = scope === "academic" && mode === "restrict"
     ? flat.filter((p) => ACADEMIC_DOMAINS.some((d) => p.source === d || p.source.endsWith("." + d)))
     : flat;
@@ -380,7 +486,9 @@ export async function searchWeb(o: WebSearchOptions, apiKey: string): Promise<Pa
       if (t !== 0) { return t; }
       return (b.year || "0").localeCompare(a.year || "0");
     });
-  logger.info("websearch", `${PROVIDER_NAMES[provider]} 合计 ${merged.length} 条，用量 ${credits} credits，耗时 ${Date.now() - started}ms` +
+  // Tavily 按 credits 计费，博查 / DeepSeek 按请求次数计费（无结果不计费）
+  const usage = provider === "tavily" ? `${credits} credits` : `${billed} 次请求`;
+  logger.info("websearch", `${PROVIDER_NAMES[provider]} 合计 ${merged.length} 条，用量 ${usage}，耗时 ${Date.now() - started}ms` +
     (errors.length ? `，失败 ${errors.length} 个查询` : ""));
   if (!merged.length && errors.length) {
     throw new Error(errors[0]);
@@ -577,22 +685,63 @@ async function tavilyExtract(url: string, query: string, apiKey: string): Promis
   }
 }
 
-export async function readPage(url: string, opts: { query?: string; apiKey?: string; maxChars?: number } = {}): Promise<PageContent> {
+// DeepSeek Fetch：直接返回 Markdown 正文，当 Tavily extract 取不到时的兜底（按请求计费）
+async function deepseekFetch(url: string, apiKey: string): Promise<{ text: string; title: string } | { error: string }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    const res = await fetch(DEEPSEEK_FETCH, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+      body: JSON.stringify({ url }),
+      signal: ctrl.signal
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      const detail = (() => {
+        try { return String((JSON.parse(text) as any)?.error?.message || ""); } catch { return text.slice(0, 160); }
+      })();
+      return { error: httpHint(res.status, detail) };
+    }
+    const json = JSON.parse(text) as { title?: string; content?: string };
+    const content = String(json.content || "").trim();
+    if (!content) { return { error: "DeepSeek Fetch 没取到正文" }; }
+    return { text: content, title: String(json.title || "") };
+  } catch (e) {
+    return { error: logger.errText(e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function readPage(url: string, opts: { query?: string; tavilyKey?: string; deepseekKey?: string; maxChars?: number } = {}): Promise<PageContent> {
   const budget = Math.max(2000, Math.min(20000, Number(opts.maxChars) || 8000));
   const query = String(opts.query || "").trim();
-  const key = String(opts.apiKey || "");
+  const tavilyKey = String(opts.tavilyKey || "");
+  const deepseekKey = String(opts.deepseekKey || "");
   const started = Date.now();
   let text = "";
   let title = "";
   let via = "";
   let finalUrl = url;
-  if (key) {
-    const r = await tavilyExtract(url, query, key);
+  if (tavilyKey) {
+    const r = await tavilyExtract(url, query, tavilyKey);
     if ("text" in r) {
       text = r.text;
       via = `Tavily extract${r.credits ? `（${r.credits} credits）` : ""}`;
     } else {
       logger.warn("websearch", `Tavily extract 失败，改用直接抓取：${r.error}`);
+    }
+  }
+  // DeepSeek Fetch 兜底：先做一次内网地址检查，别把 localhost / 内网 URL 发给服务商
+  if (!text && deepseekKey && (await assertPublicUrl(url).then(() => true, () => false))) {
+    const r = await deepseekFetch(url, deepseekKey);
+    if ("text" in r) {
+      text = pickPassages(r.text, query, budget) || r.text.slice(0, budget);
+      title = r.title;
+      via = "DeepSeek Fetch";
+    } else {
+      logger.warn("websearch", `DeepSeek Fetch 失败，改用直接抓取：${r.error}`);
     }
   }
   if (!text) {
@@ -601,7 +750,7 @@ export async function readPage(url: string, opts: { query?: string; apiKey?: str
     finalUrl = r.finalUrl;
     text = pickPassages(r.text, query, budget);
     via = "直接抓取";
-  } else {
+  } else if (via.startsWith("Tavily")) {
     // Tavily 已按 query 重排过，这里只做长度与格式收敛
     text = text.replace(/\s*\n\s*/g, "\n").trim().slice(0, budget);
     title = hostOf(finalUrl);

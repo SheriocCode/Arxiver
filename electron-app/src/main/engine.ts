@@ -61,6 +61,7 @@ export interface BlockEvent {
   bbox: number[];
   src: string;
   dst: string;
+  vars?: Record<string, string>;
 }
 
 const CACHE_KEY_FIELDS = [

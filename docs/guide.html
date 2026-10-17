@@ -73,7 +73,10 @@
   <li>「新建文献」可导入本地 PDF，或粘贴 arXiv 链接/编号自动下载。</li>
   <li>文库支持分类、标签、星标、回收站、阅读历史与全文检索（标签页 / 年份 / 状态等）。</li>
   <li>双击条目打开阅读器（<strong>默认原文 + 单页</strong>）：工具栏可切换 <strong>原文 / 对照 / 译文</strong> 与 单页 / 双页，并支持缩放、目录大纲、缩略图与页面主题（护眼 / 米黄 / 暗色）。</li>
-  <li>工具栏右端的<strong>块框</strong>按钮（层叠图标）可直接在阅读界面显示 / 隐藏段落块框，没有译文时不可用；点击块框会钉住它，查看对应的原文 / 译文。</li>
+  <li>工具栏右端的<strong>块框</strong>按钮（层叠图标）可直接在阅读界面显示 / 隐藏段落块框，没有译文时不可用；点击块框会钉住它，查看对应的<strong>译文</strong>（<strong>原文默认折叠</strong>，点「原文」展开对照）。
+面板<strong>按住标题栏可拖动</strong>，拖过之后就不再跟随块框、停在原处；再次点击同一块框、点空白处或关闭按钮收起。
+译文里保留的公式 / 格式占位符（<code class="language-plaintext highlighter-rouge">{v0}</code>、``）会单独渲染成<strong>琥珀色小标签</strong>：引擎能抽出公式内容时标签直接显示公式本身（如实线框），抽不出来（部分数学字体没有 Unicode 映射）才显示 <code class="language-plaintext highlighter-rouge">{vN}</code>（虚线框）。
+这份公式文本是翻译时随块框数据一起缓存的，<strong>旧译文需要重新翻译一次</strong>才会显示。</li>
 </ul>
 
 <h2 id="translate">翻译</h2>
@@ -114,7 +117,7 @@
   <tbody>
     <tr>
       <td><strong>Tavily</strong></td>
-      <td>英文 / 学术结果更干净，支持学术域名加权；读正文（extract）也用它，按 credits 计费</td>
+      <td>英文 / 学术结果更干净，支持学术域名加权；读正文（extract）优先用它，按 credits 计费</td>
       <td><a href="https://tavily.com">tavily.com</a></td>
     </tr>
     <tr>
@@ -122,12 +125,18 @@
       <td>国内网络友好、响应快，中文网页结果好；学术场景噪声略多，不显示 credits</td>
       <td><a href="https://open.bochaai.com">open.bochaai.com</a></td>
     </tr>
+    <tr>
+      <td><strong>DeepSeek</strong></td>
+      <td>自研搜索引擎，国内直连；返回 600~800 字长摘要与权威性排序，支持 <code class="language-plaintext highlighter-rouge">site:</code> / <code class="language-plaintext highlighter-rouge">after:</code> 等语法；按请求计费（¥5 / 1000 次，无结果不计费）</td>
+      <td><a href="https://platform.deepseek.com/">platform.deepseek.com</a></td>
+    </tr>
   </tbody>
 </table>
 
 <ul>
   <li><strong>检索范围</strong>：学术优先（对 arXiv / 会议 / 期刊等域名加权，不排他）或 全网。</li>
-  <li>两家的 Key 各自保存在本机，<strong>切换服务商不用重填</strong>。</li>
+  <li>各家的 Key 分开保存在本机，<strong>切换服务商不用重填</strong>；DeepSeek 的 Key 可以与「对话接口」用同一把。</li>
+  <li>DeepSeek 搜索限 <strong>账号级 5 QPS</strong>、单条检索式 <strong>128 字符</strong>，应用内已做串行化与截断，正常使用不会触发限速。</li>
   <li>开启后助手可以：
     <ul>
       <li><strong>搜索</strong>：结果以卡片列出（标题 / 站点 / 年份 / 摘要片段 / 链接）。有 arXiv 编号或 DOI 的条目可点卡片上的「导入到文库」入库，其它只能「打开链接」；</li>
@@ -135,7 +144,7 @@
       <li><strong>引用</strong>：回答里指代卡片时显示灰色的 <code class="language-plaintext highlighter-rouge">卡片 N</code> 胶囊，点击会滚动到那张卡片并高亮。</li>
     </ul>
   </li>
-  <li>「已读正文」行显示读了哪个站点、多少字；悬停可看读取途径（服务端抽取 / 直接抓取）与完整链接，点 ↗ 用浏览器打开。</li>
+  <li>「已读正文」行显示读了哪个站点、多少字；悬停可看读取途径（Tavily extract / DeepSeek Fetch / 直接抓取）与完整链接，点 ↗ 用浏览器打开。</li>
   <li><strong>隐私</strong>：只把检索式发给搜索服务商，不上传本地文献内容；读正文时只发送要读的网址。</li>
   <li>检索与读取记录会写进运行日志（左侧栏「日志 → 系统运行日志」里搜 <code class="language-plaintext highlighter-rouge">websearch</code>，或看 <code class="language-plaintext highlighter-rouge">%APPDATA%\Arxiver\logs\app.log</code>）。</li>
   <li>联网结果不在本地文库，所以助手给的是链接而不是页码引用。</li>
@@ -174,7 +183,7 @@ logs/app.log                 # 运行日志（检索 / 读取 / 错误）
   <li><strong>翻译引擎</strong>：本地模式下翻译时才会启动 Python 引擎（<code class="language-plaintext highlighter-rouge">python.exe</code>），任务结束就退出；<strong>本地模型服务（<code class="language-plaintext highlighter-rouge">llama-server.exe</code>，约 1.4 GB）首次翻译后常驻</strong>，所以后续翻译主要是每页的版面分析 + 翻译 + PDF 写回，另有每次任务约 2 秒的引擎启动固定开销。每次翻译的分段耗时（引擎就绪 / 版面模型加载 / 版面分析 / 全流程）会自动记进「日志 → 系统运行日志」，也可在「设置 → 运行状态」看到引擎进程与任务。</li>
   <li><strong>源文件缺失</strong>：条目对应的 <code class="language-plaintext highlighter-rouge">storage/&lt;docId&gt;/paper.pdf</code> 丢失时无法打开，需重新导入。</li>
   <li><strong>助手无响应</strong>：确认「设置 → AI 助手」的接口地址 / 密钥 / 模型正确、网络可达，且已在「AI 助手」中启用。</li>
-  <li><strong>联网搜索不生效</strong>：确认已在「设置 → AI 助手 → 联网搜索」打开开关，并且填的是<strong>当前服务商</strong>的 Key（切到博查后要填博查的 Key）；两家 Key 都留空时搜索不可用，「读正文」也只剩本机抓取。</li>
+  <li><strong>联网搜索不生效</strong>：确认已在「设置 → AI 助手 → 联网搜索」打开开关，并且填的是<strong>当前服务商</strong>的 Key（切到博查就填博查的 Key，切到 DeepSeek 就填 DeepSeek 的 Key）；各家的 Key 都留空时搜索不可用，「读正文」也只剩本机抓取。</li>
   <li><strong>搜索报错</strong>：Key 无效 / 额度用尽 / 请求过于频繁会直接在回答里说明；可以换服务商或换检索式再试。</li>
   <li><strong>读正文失败</strong>：需要登录或纯前端渲染的页面可能读不到，助手会说明；给它 PDF 直链（如 <code class="language-plaintext highlighter-rouge">arxiv.org/pdf/…</code>）通常可行。</li>
   <li><strong>任务管理器里的数字和「运行状态」面板不一样 / 那几个 “Arxiver” 分别是什么</strong>：两件事一起说。① Windows 任务管理器只按 exe 的「描述」显示进程名，Chromium 的渲染 / GPU / 网络等子进程在它那里全都叫 <code class="language-plaintext highlighter-rouge">Arxiver</code>（只有 Chrome / Edge 这类被系统特殊识别的浏览器才显示「GPU 进程 / 工具进程」），用面板里的 <strong>PID</strong> 就能逐行对上。② <strong>数字不一样是因为列的”口径”不同</strong>：任务管理器「进程」页默认那列是「<strong>活动的专用工作集</strong>」，Chromium 不提供这个数；面板给的 <strong>工作集 / 提交大小</strong> 分别对应任务管理器「<strong>详细信息</strong>」里可添加的「<strong>工作集(内存)</strong>」「<strong>提交大小</strong>」两列（已逐进程核对一致）。所以要看数字，请在任务管理器切到「详细信息」→ 右键表头 → <strong>选择列</strong>，勾上这两列（顺便勾「命令行」还能看到 <code class="language-plaintext highlighter-rouge">--type=…</code>）。应用内 <strong>「设置 → 运行状态」</strong> 另有整体内存 / CPU 趋势、「暂停」采样和<strong>「导出诊断报告」</strong>（进程快照 + 环境信息 + 最近日志，方便发给开发者排查）。面板底部 <strong>「翻译引擎与任务」</strong> 单独列出主进程的子进程（Python 引擎 <code class="language-plaintext highlighter-rouge">python.exe</code>、本地模型服务 <code class="language-plaintext highlighter-rouge">llama-server.exe</code>：PID、内存、端口、正在翻的文件）与任务进度——这些不在 Electron 的进程表里，任务管理器里也是<strong>另一个进程名</strong>，所以不列在上面。另外注意：<strong>多开文献标签或同时翻多篇不会新增进程</strong>，所有文书都渲染在同一个界面进程里，翻译任务则是排队跑同一个 Python 引擎。</li>
