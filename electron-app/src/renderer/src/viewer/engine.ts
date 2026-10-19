@@ -66,6 +66,20 @@ interface TextLine {
 // 译文里保留的公式 / 富文本占位符（{v0} / {{v0}} / {v*}）：不并进正文，单独渲染成带颜色的 chip
 const BLOCK_PLACEHOLDER = /\{\{?\s*v\s*[\d*]+(?:\s*[\d*]+)*\s*\}?\}/gi;
 
+// 引用定位用的文本归一化：忽略大小写、空白、标点与连字差异，
+// 这样 AI 从抽取文本里抄来的片段也能在 PDF.js 的文本层里对上。
+const LIGATURES: Record<string, string> = { "ﬁ": "fi", "ﬂ": "fl", "ﬀ": "ff", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st" };
+function quoteChar(ch: string): string {
+  const lig = LIGATURES[ch];
+  if (lig) { return lig; }
+  return /[0-9a-z\u4e00-\u9fff]/.test(ch) ? ch : "";
+}
+function quoteNorm(s: string): string {
+  let out = "";
+  for (const ch of String(s || "").toLowerCase()) { out += quoteChar(ch); }
+  return out;
+}
+
 function fillBlockText(el: Element | null, text: string, empty: string, vars?: Record<string, string>): void {
   if (!el) { return; }
   const box = el as HTMLElement;
@@ -183,6 +197,9 @@ export class ViewerEngine {
   private sizeCache = new WeakMap<HTMLElement, number>();
   private bodyCache = new WeakMap<HTMLElement, number>();
   private smallCache = new WeakMap<HTMLElement, boolean>();
+  // AI 引用跳转后要高亮的原文片段（页码 + 片段），缩放/重绘时按它重新画
+  private quotePage = 0;
+  private quoteText = "";
 
 
 
@@ -199,6 +216,7 @@ export class ViewerEngine {
     this.root.addEventListener("pointerdown", this.onPagePointerDown);
     document.addEventListener("selectionchange", this.onSelectionChange);
     document.addEventListener("mouseup", this.onSelectionSettle);
+    document.addEventListener("pointerdown", this.onQuotePointerDown);
     let raf = 0;
     this.root.addEventListener("scroll", () => {
       if (raf) { return; }
@@ -253,6 +271,7 @@ export class ViewerEngine {
     this.updateTextLayers();
     // 缩放/换宽度后，已经画好的高亮是按旧的显示尺寸画的，重画一次
     this.paintSelection();
+    this.repaintQuote();
   }
 
   private blankCanvas(): HTMLCanvasElement { const c = document.createElement("canvas"); c.className = "pdf-canvas"; return c; }
@@ -546,6 +565,7 @@ export class ViewerEngine {
       layer.className = "text-layer";
       wrap.appendChild(layer);
     }
+    this.spanCache.delete(layer);
     layer.dataset.refw = String(refWidth);
     layer.style.transformOrigin = "0 0";
     layer.style.transform = `scale(${this.zoom})`;
@@ -568,6 +588,7 @@ export class ViewerEngine {
     // blocksByPage belongs to the document, not to the DOM: keep it across rebuilds
     // (view/layout switches) so the block overlays can be re-rendered.
     this.pageSize = {}; this.renderedW = {}; this.renderedWR = {}; this.linksByPage = {};
+    this.quotePage = 0; this.quoteText = "";
     this.rows = []; this.rowFirstPage = []; this.currentPageIndex = 0; this.totalPages = 0;
     this.root.innerHTML = "";
     this.root.hidden = true;
@@ -618,6 +639,9 @@ export class ViewerEngine {
           const selLayer = document.createElement("div");
           selLayer.className = "sel-layer";
           wrap.appendChild(selLayer);
+          const citeLayer = document.createElement("div");
+          citeLayer.className = "cite-layer";
+          wrap.appendChild(citeLayer);
           const layer = document.createElement("div");
           layer.className = "block-layer" + (this.showBlocks() ? "" : " hidden");
           wrap.appendChild(layer);
@@ -742,6 +766,205 @@ export class ViewerEngine {
     this.expectedScrollTop = this.root.scrollTop;
     this.currentPageIndex = i;
     this.emit({ displayPage: n, scrollFraction: 0 });
+  }
+
+  // ---- AI 引用：跳到某页后，按原文片段在文本层里定位并高亮 ----
+  // 只给了页码时退化成原来的翻页；带片段时把命中的那几行画上高亮并滚到视野上方 1/3。
+  async focusQuote(pageNum: number, quote?: string): Promise<void> {
+    const page = this.totalPages ? Math.max(1, Math.min(this.totalPages, pageNum)) : pageNum;
+    const q = String(quote || "").replace(/\s+/g, " ").trim();
+    this.clearQuoteHighlight();
+    this.quotePage = 0;
+    this.quoteText = "";
+    // 引用总是指向原文：当前只显示译文时切回对照/原文，否则文本层里根本没有英文可定位
+    if (this.view === "target") {
+      this.view = this.rightBytes ? "compare" : "source";
+      if (this.view === "compare") { this.layout = "single"; }
+      void this.build();
+    }
+    for (let i = 0; i < 120 && !this.pageWrap[page]; i++) { await delay(80); }
+    this.goToNumberedPage(page);
+    if (!q) { return; }
+    this.quotePage = page;
+    this.quoteText = q;
+    const wrap = await this.ensurePageText(page);
+    if (!wrap) { return; }
+    const textLayer = wrap.querySelector<HTMLElement>(".text-layer");
+    if (!textLayer) { return; }
+    const range = this.findQuoteRange(textLayer, q);
+    if (!range) { return; }
+    const top = this.paintQuoteRects(wrap, range);
+    // 命中行滚动到视口上方约 1/3 处，避免只停在这一页的开头
+    const rootRect = this.root.getBoundingClientRect();
+    const wrapRect = wrap.getBoundingClientRect();
+    const pageTop = wrapRect.top - rootRect.top + this.root.scrollTop;
+    const target = pageTop + top - this.root.clientHeight * 0.3;
+    const maxTop = Math.max(0, this.root.scrollHeight - this.root.clientHeight);
+    this.root.scrollTop = Math.max(0, Math.min(maxTop, target));
+    this.expectedScrollTop = this.root.scrollTop;
+    this.emit({ displayPage: page, scrollFraction: 0 });
+  }
+
+  private clearQuoteHighlight(): void {
+    this.root.querySelectorAll<HTMLElement>(".cite-layer").forEach((l) => { l.innerHTML = ""; });
+  }
+
+  // 点了引用高亮以外的地方（正文、工具栏、AI 面板…）就把高亮收掉；点在高亮本身上则保留
+  private onQuotePointerDown = (e: PointerEvent): void => {
+    if (!this.quotePage) { return; }
+    const layer = this.pageWrap[this.quotePage]?.querySelector<HTMLElement>(".cite-layer");
+    const inside = layer
+      ? Array.from(layer.children).some((el) => {
+        const r = el.getBoundingClientRect();
+        return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      })
+      : false;
+    if (inside) { return; }
+    this.clearQuoteHighlight();
+    this.quotePage = 0;
+    this.quoteText = "";
+  };
+
+  private repaintQuote(): void {
+    this.clearQuoteHighlight();
+    if (!this.quotePage || !this.quoteText) { return; }
+    const wrap = this.pageWrap[this.quotePage];
+    const layer = wrap?.querySelector<HTMLElement>(".text-layer");
+    if (!wrap || !layer) { return; }
+    const range = this.findQuoteRange(layer, this.quoteText);
+    if (range) { this.paintQuoteRects(wrap, range); }
+  }
+
+  // 等这一页渲染出文本层（用户可能直接点了一个还没滚动到的引用）
+  private async ensurePageText(page: number): Promise<HTMLElement | null> {
+    for (let i = 0; i < 60; i++) {
+      const wrap = this.pageWrap[page];
+      if (!wrap) { await delay(80); continue; }
+      let layer = wrap.querySelector<HTMLElement>(".text-layer");
+      if (!layer && this.leftDoc) {
+        const canvas = this.leftSlots[page];
+        const width = this.pageWidth();
+        try {
+          if (canvas && this.renderedW[page] !== width) {
+            await this.renderCell(canvas, this.leftDoc, page, width);
+            this.renderedW[page] = width;
+          } else {
+            const p = await this.leftDoc.getPage(page);
+            const base = p.getViewport({ scale: 1 });
+            await this.renderTextLayer(wrap, p, base.width, this.basePageW);
+          }
+        } catch { /* 渲染失败就退回只翻页 */ }
+        layer = wrap.querySelector<HTMLElement>(".text-layer");
+      }
+      if (layer && layer.textContent && layer.textContent.trim()) { return wrap; }
+      await delay(80);
+    }
+    return this.pageWrap[page] || null;
+  }
+
+  // 把文本层按阅读顺序拼成一个归一化字符串，并记录每个字符对应的文本节点/偏移
+  private quoteIndex(layer: HTMLElement): { text: string; chars: { node: Text; offset: number }[] } {
+    const chars: { node: Text; offset: number }[] = [];
+    let text = "";
+    for (const span of this.textSpans(layer)) {
+      // 只看叶子 span，避免 markedContent 之类的外层容器把文字算两遍
+      if (span.querySelector("span")) { continue; }
+      const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+      let node: Node | null;
+      while ((node = walker.nextNode())) {
+        const t = node as Text;
+        const s = t.data;
+        for (let i = 0; i < s.length; i++) {
+          const ch = s[i].toLowerCase();
+          const mapped = LIGATURES[ch] || quoteChar(ch);
+          for (let k = 0; k < mapped.length; k++) {
+            chars.push({ node: t, offset: i });
+            text += mapped[k];
+          }
+        }
+      }
+    }
+    return { text, chars };
+  }
+
+  private findQuoteRange(layer: HTMLElement, quote: string): Range | null {
+    const needle = quoteNorm(quote);
+    if (!needle) { return null; }
+    const { text, chars } = this.quoteIndex(layer);
+    if (!text) { return null; }
+    // 模型给的片段可能前后多抄了几个字：先整段找，再逐步用前缀；仍找不到就换个起点试
+    const lengths = [needle.length, 260, 200, 160, 130, 100, 80, 60, 45, 30, 20]
+      .filter((n, i, a) => n > 0 && n <= needle.length && a.indexOf(n) === i);
+    const starts = [0, 10, 20, 40, 70].filter((n) => n < needle.length - 20);
+    for (const start of starts) {
+      for (const len of lengths) {
+        const part = needle.slice(start, start + len);
+        if (part.length < 12) { continue; }
+        const idx = text.indexOf(part);
+        if (idx < 0) { continue; }
+        const a = chars[idx];
+        const b = chars[idx + part.length - 1];
+        if (!a || !b) { continue; }
+        try {
+          const range = document.createRange();
+          range.setStart(a.node, a.offset);
+          range.setEnd(b.node, b.offset + 1);
+          return range;
+        } catch { return null; }
+      }
+    }
+    return null;
+  }
+
+  private paintQuoteRects(wrap: HTMLElement, range: Range): number {
+    const layer = wrap.querySelector<HTMLElement>(".cite-layer");
+    const textLayer = wrap.querySelector<HTMLElement>(".text-layer");
+    if (!layer || !textLayer) { return 0; }
+    const wr = wrap.getBoundingClientRect();
+    const rects = Array.from(range.getClientRects()).filter((r) => r.width > 1 && r.height > 1);
+    if (!rects.length) { return 0; }
+    // 和选区高亮一样：原生 Range 矩形比行距高，按"最贴的那一行文字"的行框来画，避免糊成一大条
+    const lines: { top: number; height: number; left: number; width: number; el: HTMLElement }[] = [];
+    this.textSpans(textLayer).forEach((span) => {
+      const b = span.getBoundingClientRect();
+      if (b.width > 1 && b.height > 1) { lines.push({ top: b.top, height: b.height, left: b.left, width: b.width, el: span }); }
+    });
+    if (!lines.length) { return 0; }
+    const seen = new Set<string>();
+    let top = Infinity;
+    for (const r of rects) {
+      let line: typeof lines[number] | null = null;
+      let bestScore = Infinity;
+      for (const ln of lines) {
+        const o = Math.min(r.bottom, ln.top + ln.height) - Math.max(r.top, ln.top);
+        if (o <= 0) { continue; }
+        const ox = Math.min(r.right, ln.left + ln.width) - Math.max(r.left, ln.left);
+        if (ox <= 0) { continue; }
+        if (ln.height < r.height * 0.45 || ln.height > r.height * 1.8) { continue; }
+        const score = Math.abs(ln.height - r.height) - o * 1e-3 - ox * 1e-6;
+        if (score < bestScore) { bestScore = score; line = ln; }
+      }
+      if (!line) { continue; }
+      // 浏览器有时给出"整行宽"的矩形：用这一行自己的有墨范围收窄
+      const ink = this.inkRatio(line.el);
+      const inkWidth = line.width * ink.width;
+      if (inkWidth < 1) { continue; }
+      let left = r.left;
+      let width = r.width;
+      if (width > inkWidth + 1) { left = line.left + line.width * ink.lead; width = inkWidth; }
+      const key = Math.round(left) + ":" + Math.round(line.top) + ":" + Math.round(width);
+      if (seen.has(key)) { continue; }
+      seen.add(key);
+      const el = document.createElement("div");
+      el.className = "cite-highlight";
+      el.style.left = (left - wr.left) + "px";
+      el.style.top = (line.top - wr.top) + "px";
+      el.style.width = width + "px";
+      el.style.height = line.height + "px";
+      layer.appendChild(el);
+      top = Math.min(top, line.top - wr.top);
+    }
+    return isFinite(top) ? top : 0;
   }
 
   private applyZoom(z: number): void {
@@ -1640,6 +1863,7 @@ export class ViewerEngine {
     this.clearSelection();
     document.removeEventListener("selectionchange", this.onSelectionChange);
     document.removeEventListener("mouseup", this.onSelectionSettle);
+    document.removeEventListener("pointerdown", this.onQuotePointerDown);
     this.root.removeEventListener("pointerdown", this.onPagePointerDown);
     this.regionCancel?.();
     if (this.regionEl) { this.regionEl.remove(); this.regionEl = null; }

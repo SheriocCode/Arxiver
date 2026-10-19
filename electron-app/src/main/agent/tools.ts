@@ -91,6 +91,18 @@ function nearTags(name: string): string {
   return near.length ? `（相近的标签：${near.map((t) => `「${t}」`).join("、")}）` : "";
 }
 
+// 引用标记带上被引用的原文片段：前端会按 docId + 页码 + 片段在 PDF 文本层里定位并高亮。
+// 片段必须是正文原样摘录（不改写），并去掉会破坏标记的 ] 和 |。
+function citeMark(docId: string, page: number, snippet?: string): string {
+  const q = String(snippet || "")
+    .replace(/\s+/g, " ")
+    .replace(/[\[\]|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 180);
+  return q ? `[[cite:${docId}#${page}|${q}]]` : `[[cite:${docId}#${page}]]`;
+}
+
 export const TOOLS: ToolImpl[] = [
   {
     def: {
@@ -239,7 +251,7 @@ export const TOOLS: ToolImpl[] = [
   {
     def: {
       name: "search_library",
-      description: "在整本文库中检索与问题最相关的段落（跨文献）。返回带引用标记的段落，引用格式 [[cite:文献id#页码]]。",
+      description: "在整本文库中检索与问题最相关的段落（跨文献）。返回带引用标记的段落，引用格式 [[cite:文献id#页码|原文片段]]（片段已附在标记里，回答时原样复用即可定位高亮）。",
       parameters: {
         type: "object",
         properties: {
@@ -257,7 +269,7 @@ export const TOOLS: ToolImpl[] = [
       if (hits.length === 0) { return "（没有检索到相关段落，可尝试换用关键词或改用 list_library 浏览文档）"; }
       return hits.map((h) => {
         const doc = findDoc(h.docId);
-        return `[[cite:${h.docId}#${h.page}]] 《${doc ? doc.title : h.docId}》第 ${h.page} 页\n${h.text}`;
+        return `${citeMark(h.docId, h.page, h.text)} 《${doc ? doc.title : h.docId}》第 ${h.page} 页\n${h.text}`;
       }).join("\n\n---\n\n");
     }
   },
@@ -281,13 +293,14 @@ export const TOOLS: ToolImpl[] = [
       const pages = text.pageRange(docId, await text.loadPages(docId), args.pages as string | undefined);
       if (pages.length === 0) { return `（《${doc.title}》没有可用文本，可能未入库或解析失败）`; }
       const body = pages.map((p) => `[第${p.page}页 [[cite:${docId}#${p.page}]]]\n${p.text}`).join("\n\n");
-      return `文档 ${docId} 《${doc.title}》\n\n${body}`;
+      return `文档 ${docId} 《${doc.title}》\n\n${body}\n\n` +
+        `引用本页中的具体句子时，把原文片段原样附在页码后：[[cite:${docId}#页码|原文片段]]（用于在 PDF 里定位并高亮该段）。`;
     }
   },
   {
     def: {
       name: "search_in_document",
-      description: "在指定文献内检索相关段落。返回带引用标记的段落。",
+      description: "在指定文献内检索相关段落。返回带引用标记的段落，引用格式 [[cite:文献id#页码|原文片段]]（片段已附在标记里）。",
       parameters: {
         type: "object",
         properties: {
@@ -304,7 +317,7 @@ export const TOOLS: ToolImpl[] = [
       const limit = Number(args.limit) || 8;
       const hits = await text.search([docId], query, limit);
       if (hits.length === 0) { return "（未检索到相关段落）"; }
-      return hits.map((h) => `[[cite:${docId}#${h.page}]] 第 ${h.page} 页\n${h.text}`).join("\n\n---\n\n");
+      return hits.map((h) => `${citeMark(docId, h.page, h.text)} 第 ${h.page} 页\n${h.text}`).join("\n\n---\n\n");
     }
   },
   {

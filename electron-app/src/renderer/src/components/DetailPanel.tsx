@@ -54,7 +54,7 @@ export default function DetailPanel({
   config?: AppConfig | null;
   aiSelection?: { text: string; page: number } | null;
   aiImage?: { id: string; dataUrl: string; page: number; anchor?: number; text?: string } | null;
-  onCite?: (docId: string, page: number) => void;
+  onCite?: (docId: string, page: number, quote?: string) => void;
   onClearSelection?: () => void;
   onClearAiImage?: () => void;
   openDocs?: { id: string; name: string }[];
@@ -536,7 +536,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   onOpenSettings?: (section?: string) => void;
   selection?: { text: string; page: number } | null;
   image?: { id: string; dataUrl: string; page: number; anchor?: number; text?: string } | null;
-  onCite: (docId: string, page: number) => void;
+  onCite: (docId: string, page: number, quote?: string) => void;
   onClearSelection: () => void;
   onClearImage: () => void;
   openDocs: { id: string; name: string }[];

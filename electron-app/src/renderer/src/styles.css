@@ -1040,6 +1040,10 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .reader-overlay .page-wrap .text-layer ::selection { background: transparent; }
 .reader-overlay .sel-layer { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .reader-overlay .sel-highlight { position: absolute; background: rgba(16,163,127,.35); border-radius: 1px; }
+/* AI 引用跳转后的定位高亮：用暖色和绿色选区区分开，闪一下，点别处消失 */
+.reader-overlay .cite-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.reader-overlay .cite-highlight { position: absolute; background: color-mix(in srgb, var(--star) 34%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--star) 78%, transparent); border-radius: 2px; animation: cite-flash .9s ease-out 1; }
+@keyframes cite-flash { from { background: color-mix(in srgb, var(--star) 62%, transparent); } to { background: color-mix(in srgb, var(--star) 34%, transparent); } }
 .reader-overlay .block-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .reader-overlay .link-layer { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
 .reader-overlay .link-rect { position: absolute; pointer-events: auto; cursor: pointer; border-radius: 2px; }
@@ -1424,8 +1428,12 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
   box-shadow: var(--shadow); cursor: pointer; font-size: 12px; white-space: nowrap;
 }
 .reader-overlay .sel-ask:hover { background: var(--accent-strong-hover); }
-.cite-chip { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; margin: 0 2px; border-radius: 999px; background: rgba(16,163,127,.16); color: var(--accent); font-size: 11px; cursor: pointer; border: 0; vertical-align: baseline; }
-.cite-chip:hover { background: rgba(16,163,127,.3); }
+.cite-chip { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; margin: 0 2px; border-radius: 999px; background: color-mix(in srgb, var(--star) 18%, transparent); color: var(--star); font-size: 11px; cursor: pointer; border: 0; vertical-align: baseline; }
+.cite-chip:hover { background: color-mix(in srgb, var(--star) 32%, transparent); }
+/* 带原文片段的引用：把页码和段落一起显示，太长时在胶囊里换行 */
+.cite-chip.has-quote { display: inline; height: auto; padding: 1px 7px; border-radius: var(--radius-sm); line-height: 1.55; text-align: left; white-space: normal; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.cite-chip.has-quote .cite-page { font-weight: 600; margin-right: 4px; white-space: nowrap; }
+.cite-chip.has-quote .cite-quote { color: var(--text-2); }
 .ai-md { word-break: break-word; overflow-wrap: anywhere; line-height: 1.6; }
 .ai-md > :first-child { margin-top: 0; }
 .ai-md > :last-child { margin-bottom: 0; }

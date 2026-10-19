@@ -5,7 +5,7 @@ import { Icon } from "./Icons";
 import { LANGS } from "../lib/langs";
 
 export interface ViewerHandle {
-  goToPage(page: number): void;
+  goToPage(page: number, quote?: string): void;
 }
 
 async function loadKey(engine: ViewerEngine, docId: string, key: string): Promise<void> {
@@ -49,7 +49,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const sourceLoadedRef = useRef(false);
   const keyRef = useRef(activeKey);
   keyRef.current = activeKey;
-  const pendingPageRef = useRef(0);
+  const pendingPageRef = useRef<{ page: number; quote?: string } | null>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const engineRef = useRef<ViewerEngine | null>(null);
@@ -159,8 +159,8 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   useEffect(() => {
     const p = pendingPageRef.current;
     if (p && (status?.numPages || 0) > 0) {
-      pendingPageRef.current = 0;
-      engineRef.current?.goToNumberedPage(p);
+      pendingPageRef.current = null;
+      void engineRef.current?.focusQuote(p.page, p.quote).catch(() => undefined);
     }
   }, [status?.numPages]);
 
@@ -365,10 +365,10 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   }, [panel, status?.numPages]);
 
   useImperativeHandle(ref, () => ({
-    goToPage: (page: number) => {
+    goToPage: (page: number, quote?: string) => {
       const engine = engineRef.current;
-      if (engine && (statusRef.current?.numPages || 0) > 0) { engine.goToNumberedPage(page); }
-      else { pendingPageRef.current = page; }
+      if (engine && (statusRef.current?.numPages || 0) > 0) { void engine.focusQuote(page, quote).catch(() => undefined); }
+      else { pendingPageRef.current = { page, quote }; }
     }
   }), []);
 

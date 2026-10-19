@@ -228,17 +228,17 @@ export default function App(): JSX.Element {
     setAiImage({ id: "img" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), ...capture });
   }, [activeDocId, lib]);
 
-  const citeJump = useCallback((docId: string, page: number) => {
+  const citeJump = useCallback((docId: string, page: number, quote?: string) => {
     const target = docId || activeDocId;
     if (!target) { return; }
-    if (target === activeDocId) { viewerRefs.current.get(target)?.goToPage(page); return; }
+    if (target === activeDocId) { viewerRefs.current.get(target)?.goToPage(page, quote); return; }
     const doc = lib.documents.find((d) => d.id === target);
     if (!doc) { return; }
     openDoc(doc);
     let tries = 0;
     const tryJump = (): void => {
       const v = viewerRefs.current.get(target);
-      if (v) { v.goToPage(page); return; }
+      if (v) { v.goToPage(page, quote); return; }
       if (tries++ < 12) { window.setTimeout(tryJump, 150); }
     };
     window.setTimeout(tryJump, 150);
