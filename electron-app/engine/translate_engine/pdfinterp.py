@@ -1,4 +1,5 @@
 import logging
+from io import BytesIO
 from typing import Any, Dict, Optional, Sequence, Tuple, cast
 import numpy as np
 
@@ -39,6 +40,24 @@ from pdfminer.utils import (
 )
 
 log = logging.getLogger(__name__)
+
+
+class PDFContentParserEx(PDFContentParser):
+    """按 PDF 规范在多个内容流之间插入空白分隔。
+
+    pdfminer 直接按流依次读取；若上一流以 ``Q`` 结尾、下一流以 ``q`` 开头，
+    两个 token 会被粘成 ``Qq`` 并丢弃，导致 q/Q 不配对、后续正文沿用上一个
+    Form XObject（如 arXiv 竖排水印）的变换矩阵，整页被误判成旋转/公式文字。
+    """
+
+    def fillfp(self) -> None:
+        if not self.fp:
+            if self.istream < len(self.streams):
+                strm = stream_value(self.streams[self.istream])
+                self.istream += 1
+            else:
+                raise PSEOF("Unexpected EOF, file truncated?")
+            self.fp = BytesIO(strm.get_data() + b"\n")
 
 
 def safe_float(o: Any) -> Optional[float]:
@@ -205,51 +224,57 @@ class PDFPageInterpreterEx(PDFPageInterpreter):
             return
         # log.debug("Processing xobj: %r", xobj)
         subtype = xobj.get("Subtype")
-        if subtype is LITERAL_FORM and "BBox" in xobj:
-            interpreter = self.dup()
-            bbox = cast(Rect, list_value(xobj["BBox"]))
-            matrix = cast(Matrix, list_value(xobj.get("Matrix", MATRIX_IDENTITY)))
-            # According to PDF reference 1.7 section 4.9.1, XObjects in
-            # earlier PDFs (prior to v1.2) use the page's Resources entry
-            # instead of having their own Resources entry.
-            xobjres = xobj.get("Resources")
-            if xobjres:
-                resources = dict_value(xobjres)
-            else:
-                resources = self.resources.copy()
-            self.device.begin_figure(xobjid, bbox, matrix)
-            ctm = mult_matrix(matrix, self.ctm)
-            ops_base = interpreter.render_contents(
-                resources,
-                [xobj],
-                ctm=ctm,
-            )
-            self.ncs = interpreter.ncs
-            self.scs = interpreter.scs
-            try:  # 有的时候 form 字体加不上这里会烂掉
-                self.device.fontid = interpreter.fontid
-                self.device.fontmap = interpreter.fontmap
-                ops_new = self.device.end_figure(xobjid)
-                ctm_inv = np.linalg.inv(np.array(ctm[:4]).reshape(2, 2))
-                np_version = np.__version__
-                if np_version.split(".")[0] >= "2":
-                    pos_inv = -np.asmatrix(ctm[4:]) * ctm_inv
+        try:
+            if subtype is LITERAL_FORM and "BBox" in xobj:
+                interpreter = self.dup()
+                bbox = cast(Rect, list_value(xobj["BBox"]))
+                matrix = cast(Matrix, list_value(xobj.get("Matrix", MATRIX_IDENTITY)))
+                # According to PDF reference 1.7 section 4.9.1, XObjects in
+                # earlier PDFs (prior to v1.2) use the page's Resources entry
+                # instead of having their own Resources entry.
+                xobjres = xobj.get("Resources")
+                if xobjres:
+                    resources = dict_value(xobjres)
                 else:
-                    pos_inv = -np.mat(ctm[4:]) * ctm_inv
-                a, b, c, d = ctm_inv.reshape(4).tolist()
-                e, f = pos_inv.tolist()[0]
-                self.obj_patch[self.xobjmap[xobjid].objid] = (
-                    f"q {ops_base}Q {a} {b} {c} {d} {e} {f} cm {ops_new}"
+                    resources = self.resources.copy()
+                self.device.begin_figure(xobjid, bbox, matrix)
+                ctm = mult_matrix(matrix, self.ctm)
+                ops_base = interpreter.render_contents(
+                    resources,
+                    [xobj],
+                    ctm=ctm,
                 )
-            except Exception:
+                self.ncs = interpreter.ncs
+                self.scs = interpreter.scs
+                try:  # 有的时候 form 字体加不上这里会烂掉
+                    self.device.fontid = interpreter.fontid
+                    self.device.fontmap = interpreter.fontmap
+                    ops_new = self.device.end_figure(xobjid)
+                    ctm_inv = np.linalg.inv(np.array(ctm[:4]).reshape(2, 2))
+                    np_version = np.__version__
+                    if np_version.split(".")[0] >= "2":
+                        pos_inv = -np.asmatrix(ctm[4:]) * ctm_inv
+                    else:
+                        pos_inv = -np.mat(ctm[4:]) * ctm_inv
+                    a, b, c, d = ctm_inv.reshape(4).tolist()
+                    e, f = pos_inv.tolist()[0]
+                    self.obj_patch[self.xobjmap[xobjid].objid] = (
+                        f"q {ops_base}Q {a} {b} {c} {d} {e} {f} cm {ops_new}"
+                    )
+                except Exception:
+                    pass
+            elif subtype is LITERAL_IMAGE and "Width" in xobj and "Height" in xobj:
+                self.device.begin_figure(xobjid, (0, 0, 1, 1), MATRIX_IDENTITY)
+                self.device.render_image(xobjid, xobj)
+                self.device.end_figure(xobjid)
+            else:
+                # unsupported xobject type.
                 pass
-        elif subtype is LITERAL_IMAGE and "Width" in xobj and "Height" in xobj:
-            self.device.begin_figure(xobjid, (0, 0, 1, 1), MATRIX_IDENTITY)
-            self.device.render_image(xobjid, xobj)
-            self.device.end_figure(xobjid)
-        else:
-            # unsupported xobject type.
-            pass
+        finally:
+            # 渲染 Form XObject 时子解释器会把共享 device 的 ctm 改成表单自己的矩阵
+            # （例如 arXiv 的竖排水印），不恢复的话后续正文都会沿用这个矩阵、被误判成
+            # 旋转/公式文字，整页漏翻。这里必须回到当前页面的 ctm。
+            self.device.set_ctm(self.ctm)
 
     def process_page(self, page: PDFPage) -> None:
         # 重载设置 page 的 obj_patch
@@ -302,7 +327,7 @@ class PDFPageInterpreterEx(PDFPageInterpreter):
         # 重载返回指令流
         ops = ""
         try:
-            parser = PDFContentParser(streams)
+            parser = PDFContentParserEx(streams)
         except PSEOF:
             # empty page
             return
