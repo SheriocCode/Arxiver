@@ -31,7 +31,7 @@
   <a href="https://github.com/SheriocCode/Arxiver/issues">问题反馈</a>
 </p>
 
-![Arxiver 双语对照阅读](assets/README/translate.jpg)
+![Arxiver 双语对照阅读](assets/README/index.jpg)
 
 ## 为什么值得一试
 
