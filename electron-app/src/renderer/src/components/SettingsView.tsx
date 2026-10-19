@@ -12,7 +12,6 @@ const SECTIONS = [
   { id: "appearance", name: "外观", icon: "sparkle" },
   { id: "citation", name: "引用", icon: "copy" },
   { id: "ai", name: "AI 助手", icon: "message" },
-  { id: "sync", name: "同步与存储", icon: "globe" },
   { id: "shortcuts", name: "快捷键", icon: "terminal" },
   { id: "runtime", name: "运行状态", icon: "chart" },
   { id: "about", name: "关于", icon: "book" }
@@ -192,9 +191,6 @@ export default function SettingsView({
                   <Row label="显示未读标记" desc="在文献列表中标出未读条目"><Switch on={settings.showUnread} onToggle={() => updateSettings({ showUnread: !settings.showUnread })} /></Row>
                   <Row label="自动抓取元数据" desc="通过 DOI 自动补全标题、作者与来源"><Switch on={settings.fetchMeta} onToggle={() => updateSettings({ fetchMeta: !settings.fetchMeta })} /></Row>
                 </Group>
-                <Group title="编辑">
-                  <Row label="自动保存笔记" desc="停止输入后自动保存当前笔记"><Switch on={settings.autoSave} onToggle={() => updateSettings({ autoSave: !settings.autoSave })} /></Row>
-                </Group>
               </>
             )}
 
@@ -212,11 +208,6 @@ export default function SettingsView({
                 </Group>
                 <Group title="显示">
                   <Row label="减少动态效果" desc="关闭界面过渡与动效"><Switch on={settings.reduceMotion} onToggle={() => updateSettings({ reduceMotion: !settings.reduceMotion })} /></Row>
-                  <Row label="PDF 默认缩放" desc="信息页 PDF 预览的初始缩放比例">
-                    <select value={settings.pdfZoom} onChange={(e) => updateSettings({ pdfZoom: e.target.value as AppSettings["pdfZoom"] })}>
-                      <option value="fit">适应宽度</option><option value="1">100%</option><option value="1.25">125%</option>
-                    </select>
-                  </Row>
                 </Group>
                 <Group title="译文块框">
                   <Row label="翻译时显示块框" desc="翻译过程中在对照视图标出文本块（点击块框查看原文 / 译文）">
@@ -259,17 +250,7 @@ export default function SettingsView({
 
             {section === "citation" && (
               <Group title="引用格式">
-                <Row label="默认引用格式" desc="点击「复制引用」时生成的格式">
-                  <select value={settings.citeFormat} onChange={(e) => updateSettings({ citeFormat: e.target.value as AppSettings["citeFormat"] })}>
-                    <option value="apa">APA 7th</option><option value="gb">GB/T 7714</option><option value="mla">MLA 9th</option>
-                  </select>
-                </Row>
                 <Row label="包含 DOI" desc="复制引用时附带 DOI 与标识符"><Switch on={settings.citeDoi} onToggle={() => updateSettings({ citeDoi: !settings.citeDoi })} /></Row>
-                <Row label="导出格式" desc="导出文献库时的默认文件格式">
-                  <select value={settings.exportFormat} onChange={(e) => updateSettings({ exportFormat: e.target.value as AppSettings["exportFormat"] })}>
-                    <option value="bibtex">BibTeX</option><option value="ris">RIS</option><option value="csv">CSV</option>
-                  </select>
-                </Row>
               </Group>
             )}
 
@@ -324,23 +305,6 @@ export default function SettingsView({
                 </Group>
                 <Group title="AI 助手">
                   <Row label="启用 AI 助手" desc="在详情栏显示 AI 标签页"><Switch on={settings.aiEnabled} onToggle={() => updateSettings({ aiEnabled: !settings.aiEnabled })} /></Row>
-                  <Row label="模型" desc="选择回答问题时使用的模型">
-                    <select value={settings.aiModel} onChange={(e) => updateSettings({ aiModel: e.target.value })}>
-                      <option value="文献助手">文献助手</option><option value="文献助手 Pro">文献助手 Pro</option>
-                    </select>
-                  </Row>
-                  <Row label="附带引用来源" desc="回答中标注所依据的文献位置"><Switch on={settings.aiSources} onToggle={() => updateSettings({ aiSources: !settings.aiSources })} /></Row>
-                  <Row label="自动总结新条目" desc="添加文献后自动生成一段摘要"><Switch on={settings.autoSummary} onToggle={() => updateSettings({ autoSummary: !settings.autoSummary })} /></Row>
-                </Group>
-              </>
-            )}
-
-            {section === "sync" && (
-              <>
-                <Group title="账户"><Row label="当前账户" desc="研究员 · 个人文库" /></Group>
-                <Group title="同步">
-                  <Row label="自动同步" desc="在有改动时自动上传至云端"><Switch on={settings.autoSync} onToggle={() => updateSettings({ autoSync: !settings.autoSync })} /></Row>
-                  <Row label="存储用量" desc="本地文库数据" />
                 </Group>
               </>
             )}

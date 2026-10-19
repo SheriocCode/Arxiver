@@ -7,18 +7,10 @@ export interface AppSettings {
   showCounts: boolean;
   showUnread: boolean;
   fetchMeta: boolean;
-  autoSave: boolean;
   accent: Accent;
   reduceMotion: boolean;
-  pdfZoom: "fit" | "1" | "1.25";
-  citeFormat: "apa" | "gb" | "mla";
   citeDoi: boolean;
-  exportFormat: "bibtex" | "ris" | "csv";
   aiEnabled: boolean;
-  aiModel: string;
-  aiSources: boolean;
-  autoSummary: boolean;
-  autoSync: boolean;
   showBlocksTranslating: boolean;
   showBlocksTranslation: boolean;
   splashEnabled: boolean;
@@ -32,18 +24,10 @@ const DEFAULTS: AppSettings = {
   showCounts: true,
   showUnread: true,
   fetchMeta: true,
-  autoSave: true,
   accent: "green",
   reduceMotion: false,
-  pdfZoom: "fit",
-  citeFormat: "apa",
   citeDoi: true,
-  exportFormat: "bibtex",
   aiEnabled: true,
-  aiModel: "文献助手",
-  aiSources: true,
-  autoSummary: false,
-  autoSync: true,
   showBlocksTranslating: true,
   showBlocksTranslation: false,
   splashEnabled: true,
