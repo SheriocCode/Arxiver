@@ -5,17 +5,26 @@ import * as logger from "./logger";
 
 // 入库后补全元数据：优先文件名里的 arXiv 编号，其次 PDF 自带元信息 / 首页里的 arXiv、DOI。
 // 导入（importPaper）与「本地导入后补全」两条路都走这里。
-export async function enrichDocMeta(docId: string): Promise<ReturnType<typeof library.getDocument>> {
+export async function enrichDocMeta(
+  docId: string,
+  onProgress?: (text: string) => void
+): Promise<ReturnType<typeof library.getDocument>> {
+  const say = (t: string): void => { try { onProgress?.(t); } catch { /* ignore */ } };
   const doc = library.getDocument(docId);
   if (!doc) { return null; }
   try {
     const nameHit = parseIdentifier(doc.sourceName || "");
+    if (nameHit) { say("正在查询 arXiv / CrossRef 元信息…"); }
     let meta = nameHit ? await resolveIdentifier(doc.sourceName || "") : null;
     if (!meta) {
+      say("正在读取 PDF 元信息…");
       const probe = await probePdf(docId);
       if (probe) {
         const id = probe.arxivId || probe.doi;
-        if (id) { meta = await resolveIdentifier(id); }
+        if (id) {
+          say("正在查询 arXiv / CrossRef 元信息…");
+          meta = await resolveIdentifier(id);
+        }
         if (!meta) {
           // 只有 PDF 自带的 title/author 也要用上
           const patch: Partial<typeof doc> = {};
@@ -27,6 +36,7 @@ export async function enrichDocMeta(docId: string): Promise<ReturnType<typeof li
       }
     }
     if (meta) {
+      say("正在补全元数据…");
       library.updateDocument(docId, {
         title: meta.title || doc.title,
         authors: meta.authors || doc.authors,

@@ -449,12 +449,13 @@ function ConfirmCard({ item, onDecide }: { item: AiConfirm; onDecide: (confirmId
 
 // 一批检索结果：过程性的那几批默认**折叠成一行**（图标 + 数量 + 站点），最后一批展开成卡片。
 // 展开状态由父组件控制，这样 [[card:N]] 跳转时能把目标那一批展开并高亮。
-function PaperBlock({ papers, open, onToggle, onJumped, state, inLibrary, onImport, onOpen }: {
+function PaperBlock({ papers, open, onToggle, onJumped, state, progress, inLibrary, onImport, onOpen }: {
   papers: PaperHit[];
   open: boolean;
   onToggle: () => void;
   onJumped?: string;
   state: Record<string, "busy" | "ok" | "err">;
+  progress: string;
   inLibrary: (p: PaperHit) => string;
   onImport: (p: PaperHit) => void;
   onOpen: (url: string) => void;
@@ -470,17 +471,18 @@ function PaperBlock({ papers, open, onToggle, onJumped, state, inLibrary, onImpo
         <Icon name={open ? "chev-down" : "chev-right"} small />
       </button>
       {open ? (
-        <PaperCards papers={papers} jumped={onJumped} state={state} inLibrary={inLibrary} onImport={onImport} onOpen={onOpen} />
+        <PaperCards papers={papers} jumped={onJumped} state={state} progress={progress} inLibrary={inLibrary} onImport={onImport} onOpen={onOpen} />
       ) : null}
     </div>
   );
 }
 
 // 外部检索结果卡片：可一键导入文库，或打开链接 / PDF；带本轮对话里的编号（[[card:N]] 用）
-function PaperCards({ papers, jumped, state, inLibrary, onImport, onOpen }: {
+function PaperCards({ papers, jumped, state, progress, inLibrary, onImport, onOpen }: {
   papers: PaperHit[];
   jumped?: string;
   state: Record<string, "busy" | "ok" | "err">;
+  progress: string;
   inLibrary: (p: PaperHit) => string;
   onImport: (p: PaperHit) => void;
   onOpen: (url: string) => void;
@@ -520,6 +522,9 @@ function PaperCards({ papers, jumped, state, inLibrary, onImport, onOpen }: {
               {p.url ? <button type="button" className="btn btn-ghost" onClick={() => onOpen(p.url)}><Icon name="external" small /> 打开链接</button> : null}
               {p.pdfUrl ? <button type="button" className="btn btn-ghost" onClick={() => onOpen(p.pdfUrl)}><Icon name="file" small /> PDF</button> : null}
             </div>
+            {state[p.key] === "busy" && progress ? (
+              <div className="import-note"><span className="spinner" />{progress}</div>
+            ) : null}
           </div>
         );
       })}
@@ -549,8 +554,11 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   const [convList, setConvList] = useState<ConversationSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [refs, setRefs] = useState<{ id: string; title: string }[]>([]);
+  useEffect(() => window.api.onLibraryProgress((p) => setLibProgress(p.done ? "" : p.text)), []);
   // 待发送的图片（阅读器框选截图 / 输入框粘贴 / 选文件），发送后随这一轮清空
   const [images, setImages] = useState<{ id: string; dataUrl: string; page?: number; anchor?: number; text?: string }[]>([]);
+  // 导入 / 补全元数据的阶段提示（卡片上的「导入到文库」）
+  const [libProgress, setLibProgress] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const [atOpen, setAtOpen] = useState(false);
   const [histQuery, setHistQuery] = useState("");
@@ -1112,9 +1120,14 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
                         }
                         if (b.kind === "tools") {
                           const pending = b.items.filter((x) => x.content === undefined).length;
+                          const running = [...b.items].reverse().find((x) => x.content === undefined);
                           return (
-                            <details key={bi} className="ai-tools">
-                              <summary>工具调用（{b.items.length}）{pending > 0 ? <span className="ai-tool-run">运行中…</span> : null}</summary>
+                            <details key={bi} className="ai-tools" open={pending > 0}>
+                              <summary>
+                                工具调用（{b.items.length}）
+                                {pending > 0 ? <span className="ai-tool-run">运行中…</span> : null}
+                                {running?.progress ? <span className="ai-tool-progress"> · {running.progress}</span> : null}
+                              </summary>
                               {b.items.map((tool, j) => (
                                 <div key={j} className="ai-tool">
                                   {tool.content === undefined ? <span className="spinner" /> : null}
@@ -1136,6 +1149,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
                               onToggle={() => setPaperOpen((s) => ({ ...s, [key]: !(s[key] ?? (bi === lastPapers)) }))}
                               onJumped={jumped}
                               state={imp}
+                              progress={libProgress}
                               inLibrary={docIdOfPaper}
                               onImport={importPaper}
                               onOpen={(u) => { void window.api.openExternal(u); }}

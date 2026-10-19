@@ -1,4 +1,4 @@
-import { useState, type JSX } from "react";
+import { useEffect, useState, type JSX } from "react";
 import type { LibraryCollection, LibraryDoc } from "../../../shared/types";
 
 export default function NewItemModal({
@@ -12,7 +12,7 @@ export default function NewItemModal({
   defaultCollection: string;
   onClose: () => void;
   onCreated: (doc: LibraryDoc) => void;
-  onImportFile: (collectionId: string) => void;
+  onImportFile: (collectionId: string) => Promise<void>;
 }): JSX.Element {
   const [form, setForm] = useState({ title: "", authors: "", year: "", venue: "", type: "会议论文", tags: "" });
   const [coll, setColl] = useState(defaultCollection);
@@ -20,16 +20,41 @@ export default function NewItemModal({
   const [ident, setIdent] = useState("");
   const [identErr, setIdentErr] = useState("");
   const [importing, setImporting] = useState(false);
+  const [fileBusy, setFileBusy] = useState(false);
+  const [progress, setProgress] = useState("");
+  const busy = importing || fileBusy;
+
+  // 下载 PDF / 解析元数据的阶段提示来自主进程
+  useEffect(() => window.api.onLibraryProgress((p) => setProgress(p.done ? "" : p.text)), []);
 
   async function importIdent(): Promise<void> {
     const value = ident.trim();
-    if (!value || importing) { return; }
+    if (!value || busy) { return; }
     setImporting(true);
     setIdentErr("");
-    const res = await window.api.libraryImportByIdentifier(value, coll ? [coll] : []);
-    setImporting(false);
-    if (!res.ok || !res.doc) { setIdentErr(res.error || "导入失败"); return; }
-    onCreated(res.doc);
+    setProgress("正在连接…");
+    try {
+      const res = await window.api.libraryImportByIdentifier(value, coll ? [coll] : []);
+      if (!res.ok || !res.doc) { setIdentErr(res.error || "导入失败"); return; }
+      onCreated(res.doc);
+    } catch (e) {
+      setIdentErr((e as Error)?.message || "导入失败");
+    } finally {
+      setImporting(false);
+      setProgress("");
+    }
+  }
+
+  async function importLocal(): Promise<void> {
+    if (busy) { return; }
+    setFileBusy(true);
+    setProgress("正在读取 PDF…");
+    try {
+      await onImportFile(coll);
+    } finally {
+      setFileBusy(false);
+      setProgress("");
+    }
   }
   const set = (k: keyof typeof form, v: string): void => {
     setForm((f) => ({ ...f, [k]: v }));
@@ -82,10 +107,16 @@ export default function NewItemModal({
                   onChange={(e) => { setIdent(e.target.value); if (identErr) { setIdentErr(""); } }}
                   onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void importIdent(); } }}
                 />
-                <button type="button" className="btn btn-primary" disabled={importing || !ident.trim()} onClick={() => { void importIdent(); }}>
-                  {importing ? "获取中…" : "获取并导入"}
+                <button type="button" className="btn btn-primary" disabled={busy || !ident.trim()} onClick={() => { void importIdent(); }}>
+                  {importing ? "导入中…" : "获取并导入"}
                 </button>
               </div>
+              {busy ? (
+                <span className="import-note">
+                  <span className="spinner" />
+                  {progress || (importing ? "正在获取元信息…" : "正在导入 PDF…")}
+                </span>
+              ) : null}
               <span className={"error" + (identErr ? " is-on" : "")}>{identErr}</span>
             </div>
             <div className="ident-sep" />
@@ -120,8 +151,8 @@ export default function NewItemModal({
             </div>
           </div>
           <div className="modal-foot">
-            <button type="button" className="btn btn-ghost" style={{ marginRight: "auto" }} onClick={() => onImportFile(coll)}>
-              <svg className="icon icon-sm" aria-hidden="true"><use href="#i-plus" /></svg> 导入 PDF 文件…
+            <button type="button" className="btn btn-ghost" style={{ marginRight: "auto" }} disabled={busy} onClick={() => { void importLocal(); }}>
+              <svg className="icon icon-sm" aria-hidden="true"><use href="#i-plus" /></svg> {fileBusy ? "导入中…" : "导入 PDF 文件…"}
             </button>
             <button type="button" className="btn btn-ghost" onClick={onClose}>取消</button>
             <button type="submit" className="btn btn-primary"><svg className="icon icon-sm" aria-hidden="true"><use href="#i-check" /></svg> 创建条目</button>

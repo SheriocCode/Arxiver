@@ -264,16 +264,20 @@ export default function App(): JSX.Element {
   const importFile = useCallback(async (collectionId: string) => {
     const picked = await window.api.pickFile();
     if (!picked) { return; }
-    const doc = await window.api.libraryAdd({
-      filePath: picked.filePath,
-      name: picked.name,
-      collections: collectionId ? [collectionId] : []
-    });
-    // 「自动抓取元数据」开启时：按文件名 / PDF 自带信息 / 首页里的 arXiv、DOI 补全元信息
-    if (settings.fetchMeta) { await window.api.libraryEnrichMetadata(doc.id); }
-    await lib.refresh();
-    lib.select(doc.id);
-    setNewOpen(false);
+    try {
+      const doc = await window.api.libraryAdd({
+        filePath: picked.filePath,
+        name: picked.name,
+        collections: collectionId ? [collectionId] : []
+      });
+      // 「自动抓取元数据」开启时：按文件名 / PDF 自带信息 / 首页里的 arXiv、DOI 补全元信息
+      if (settings.fetchMeta) { await window.api.libraryEnrichMetadata(doc.id); }
+      await lib.refresh();
+      lib.select(doc.id);
+      setNewOpen(false);
+    } catch (e) {
+      alert("导入失败：" + ((e as Error)?.message || String(e)));
+    }
   }, [lib, settings.fetchMeta]);
 
   const toggleSidebar = useCallback(() => {

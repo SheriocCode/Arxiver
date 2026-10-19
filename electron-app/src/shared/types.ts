@@ -440,6 +440,8 @@ export interface Api {
   }): Promise<LibraryDoc>;
   libraryImportByIdentifier(input: string, collections: string[]): Promise<{ ok: boolean; doc?: LibraryDoc; error?: string }>;
   libraryEnrichMetadata(id: string): Promise<LibraryDoc | null>;
+  // 导入 / 补全元数据期间的阶段提示（下载、解析、查询接口…）
+  onLibraryProgress(cb: (progress: { text: string; done?: boolean }) => void): () => void;
   libraryUpdate(id: string, patch: Partial<LibraryDoc>): Promise<LibraryDoc | null>;
   librarySetTrash(id: string, trashed: boolean): Promise<LibraryDoc | null>;
   libraryPurge(id: string): Promise<boolean>;

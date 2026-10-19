@@ -316,6 +316,11 @@ function resolveParams(overrides?: Partial<TransParams>): TransParams {
   };
 }
 
+// 导入 PDF / 解析元数据是长耗时操作：把当前阶段推给渲染端，避免看起来像卡死
+function reportLibraryProgress(text: string, done = false): void {
+  try { mainWindow?.webContents.send("library:progress", { text, done }); } catch { /* 窗口已关闭 */ }
+}
+
 async function loadSourceBytes(payload?: SourcePayload): Promise<{ bytes: Buffer; name: string; sourceUrl: string }> {
   if (payload?.sourceBytes) {
     return {
@@ -645,15 +650,22 @@ function registerIpc(): void {
 
   ipcMain.handle("library:state", () => library.list());
   ipcMain.handle("library:add", async (_event, payload: SourcePayload & { type?: string; collections?: string[] }) => {
-    const loaded = await loadSourceBytes(payload);
-    return library.addDocument({
-      bytes: loaded.bytes,
-      name: loaded.name,
-      sourceUrl: loaded.sourceUrl,
-      title: payload?.title,
-      type: payload?.type,
-      collections: payload?.collections
-    });
+    const label = payload?.name || "PDF";
+    reportLibraryProgress(payload?.filePath ? `正在读取 ${label}…` : `正在导入 ${label}…`);
+    try {
+      const loaded = await loadSourceBytes(payload);
+      reportLibraryProgress("正在写入文库…");
+      return library.addDocument({
+        bytes: loaded.bytes,
+        name: loaded.name,
+        sourceUrl: loaded.sourceUrl,
+        title: payload?.title,
+        type: payload?.type,
+        collections: payload?.collections
+      });
+    } finally {
+      reportLibraryProgress("", true);
+    }
   });
   ipcMain.handle("library:addManual", (_event, payload: {
     title: string; authors?: string; year?: string; venue?: string; type?: string;
@@ -671,11 +683,22 @@ function registerIpc(): void {
   }));
 
   // 本地导入后补全元数据 → enrich.ts
-  ipcMain.handle("library:enrichMetadata", async (_event, docId: string) => enrichDocMeta(docId));
+  ipcMain.handle("library:enrichMetadata", async (_event, docId: string) => {
+    try {
+      return await enrichDocMeta(docId, (t) => reportLibraryProgress(t));
+    } finally {
+      reportLibraryProgress("", true);
+    }
+  });
 
   // 按标识符导入（粘贴 arXiv 链接/编号或 DOI）：逻辑在 importPaper.ts（agent 的 import_paper 工具共用）
-  ipcMain.handle("library:importByIdentifier", async (_event, input: string, collections: string[]) =>
-    importPaper({ identifier: input, collections }));
+  ipcMain.handle("library:importByIdentifier", async (_event, input: string, collections: string[]) => {
+    try {
+      return await importPaper({ identifier: input, collections, onProgress: (t) => reportLibraryProgress(t) });
+    } finally {
+      reportLibraryProgress("", true);
+    }
+  });
   ipcMain.handle("library:update", (_event, id: string, patch) => library.updateDocument(id, patch));
   ipcMain.handle("library:setTrash", (_event, id: string, trashed: boolean) => library.setTrash(id, trashed));
   ipcMain.handle("library:purge", (_event, id: string) => library.purge(id));

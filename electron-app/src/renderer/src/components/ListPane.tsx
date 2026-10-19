@@ -46,6 +46,7 @@ export default function ListPane({
   const [menu, setMenu] = useState<{ x: number; y: number; doc: LibraryDoc } | null>(null);
   const [dropOver, setDropOver] = useState(false);
   const [importing, setImporting] = useState("");
+  const dropBusy = useRef(false);
 
   useEffect(() => {
     if (!menu) { return; }
@@ -53,6 +54,14 @@ export default function ListPane({
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [menu]);
+
+  // 拖入后的读取 / 解析阶段提示（来自主进程）；只在本列表自己的拖拽导入期间显示
+  useEffect(() => {
+    const off = window.api.onLibraryProgress((p) => {
+      if (dropBusy.current && !p.done && p.text) { setImporting(p.text); }
+    });
+    return off;
+  }, []);
 
   const gridTemplate = `24px ${cols.title}px ${cols.tags}px ${cols.year}px ${cols.added}px ${cols.modified}px 44px minmax(0, 1fr)`;
   // how many tag dots fit in the (resizable) tags column; the rest collapse into a
@@ -100,18 +109,23 @@ export default function ListPane({
     const files = Array.from(e.dataTransfer.files || []).filter((f) => /\.pdf$/i.test(f.name));
     if (!files.length) { return; }
     const target = ["all", "recent", "unfiled", "duplicates", "trash"].includes(lib.collId) ? [] : [lib.collId];
-    for (const f of files) {
-      setImporting(`正在导入 ${f.name}…`);
-      try {
-        const bytes = new Uint8Array(await f.arrayBuffer());
-        const doc = await window.api.libraryAdd({ sourceBytes: bytes, name: f.name, collections: target });
-        if (fetchMeta) { await window.api.libraryEnrichMetadata(doc.id); }
-      } catch {
-        /* 单个文件失败不影响其它 */
+    dropBusy.current = true;
+    try {
+      for (const f of files) {
+        setImporting(`正在导入 ${f.name}…`);
+        try {
+          const bytes = new Uint8Array(await f.arrayBuffer());
+          const doc = await window.api.libraryAdd({ sourceBytes: bytes, name: f.name, collections: target });
+          if (fetchMeta) { await window.api.libraryEnrichMetadata(doc.id); }
+        } catch {
+          /* 单个文件失败不影响其它 */
+        }
       }
+    } finally {
+      dropBusy.current = false;
+      setImporting("");
+      await lib.refresh();
     }
-    setImporting("");
-    await lib.refresh();
   };
 
   return (
@@ -212,9 +226,9 @@ export default function ListPane({
       </div>
       </div>
 
-      {dropOver && (
+      {(dropOver || importing) && (
         <div className="drop-veil">
-          <Icon name="plus" />
+          {importing ? <span className="spinner" /> : <Icon name="plus" />}
           <span>{importing || "松开以导入 PDF（可多选）"}</span>
         </div>
       )}

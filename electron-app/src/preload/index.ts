@@ -38,6 +38,7 @@ const api = {
   libraryAddManual: (payload: unknown) => ipcRenderer.invoke("library:addManual", payload),
   libraryImportByIdentifier: (input: string, collections: string[]) => ipcRenderer.invoke("library:importByIdentifier", input, collections),
   libraryEnrichMetadata: (id: string) => ipcRenderer.invoke("library:enrichMetadata", id),
+  onLibraryProgress: (cb: (progress: { text: string; done?: boolean }) => void) => subscribe("library:progress", cb as (p: unknown) => void),
   libraryUpdate: (id: string, patch: unknown) => ipcRenderer.invoke("library:update", id, patch),
   librarySetTrash: (id: string, trashed: boolean) => ipcRenderer.invoke("library:setTrash", id, trashed),
   libraryPurge: (id: string) => ipcRenderer.invoke("library:purge", id),
