@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type JSX, type MutableRefObject } from "react";
-import type { LibraryDoc, Conversation, ConversationSummary, PaperHit, ConvBlock, AppConfig } from "../../../shared/types";
+import type { LibraryDoc, Conversation, ConversationSummary, PaperHit, ConvBlock, AppConfig, Skill } from "../../../shared/types";
 import { Icon } from "./Icons";
 import { formatDate } from "../lib/format";
 import { getPdfjs } from "../lib/pdf";
@@ -285,6 +285,8 @@ interface AiTurn {
   text: string;
   // 用户这一轮附带的图片（data URL）；渲染成缩略图，也随会话持久化
   images?: string[];
+  // 用户这一轮启用的技能 id
+  skills?: string[];
   blocks?: AiBlock[];
   error?: string;
   // 未配置模型时的引导轮：不发起请求，只给一句说明 + 「去设置」按钮
@@ -331,13 +333,15 @@ function fmtConvTime(ts: number): string {
 
 interface NavAnchor { first: number; text: string; answer: string }
 
-function convAnchors(list: AiTurn[]): NavAnchor[] {
+function convAnchors(list: AiTurn[], skillName: (id: string) => string): NavAnchor[] {
   const runs: { first: number; last: number; text: string }[] = [];
   for (let i = 0; i < list.length; i++) {
-    if (list[i].role !== "user" || !list[i].text.trim()) { continue; }
+    const skills = (list[i].skills || []).map((id) => skillName(id) || "技能");
+    const label = [list[i].text.trim(), skills.length ? `✦ ${skills.join("、")}` : ""].filter(Boolean).join(" · ");
+    if (list[i].role !== "user" || !label) { continue; }
     const prev = runs[runs.length - 1];
-    if (prev && prev.last === i - 1) { prev.last = i; prev.text += " / " + list[i].text.trim(); }
-    else { runs.push({ first: i, last: i, text: list[i].text.trim() }); }
+    if (prev && prev.last === i - 1) { prev.last = i; prev.text += " / " + label; }
+    else { runs.push({ first: i, last: i, text: label }); }
   }
   return runs.map((r) => {
     const next = list[r.last + 1];
@@ -532,6 +536,119 @@ function PaperCards({ papers, jumped, state, progress, inLibrary, onImport, onOp
   );
 }
 
+function SkillsMenu({ skills, attached, onToggle, onSave, onDelete, onAskAi }: {
+  skills: Skill[];
+  attached: string[];
+  onToggle: (id: string) => void;
+  onSave: (input: { id?: string; name: string; description: string; instructions: string }) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onAskAi: () => void;
+}): JSX.Element {
+  const [editing, setEditing] = useState<Skill | "new" | null>(null);
+  const [form, setForm] = useState({ name: "", description: "", instructions: "" });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const startEdit = (skill?: Skill): void => {
+    setForm(skill
+      ? { name: skill.name, description: skill.description, instructions: skill.instructions }
+      : { name: "", description: "", instructions: "" });
+    setError("");
+    setEditing(skill || "new");
+  };
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (busy) { return; }
+    const name = form.name.trim();
+    const instructions = form.instructions.trim();
+    if (!name) { setError("给技能起个名字"); return; }
+    if (!instructions) { setError("技能里要写清楚提示词 / 步骤"); return; }
+    setBusy(true);
+    try {
+      await onSave({ id: editing === "new" ? undefined : (editing as Skill).id, name, description: form.description.trim(), instructions });
+      setEditing(null);
+      setError("");
+    } catch (err) {
+      setError((err as Error)?.message || "保存失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (editing) {
+    const isNew = editing === "new";
+    return (
+      <div className="ai-skills-pop">
+        <form className="ai-skill-form" onSubmit={(e) => void submit(e)}>
+          <div className="ai-skills-head">
+            <h4>{isNew ? "新建技能" : "编辑技能"}</h4>
+            <button type="button" className="icon-btn" title="返回技能列表" onClick={() => { setEditing(null); setError(""); }}><Icon name="chev-left" small /></button>
+          </div>
+          <label className="ai-skill-field">
+            <span>名称</span>
+            <input value={form.name} maxLength={80} placeholder="如：论文速读" onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+          </label>
+          <label className="ai-skill-field">
+            <span>什么时候用（一句话）</span>
+            <input value={form.description} maxLength={400} placeholder="如：快速判断一篇论文值不值得精读" onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+          </label>
+          <label className="ai-skill-field">
+            <span>提示词 / 步骤</span>
+            <textarea
+              value={form.instructions}
+              rows={7}
+              maxLength={12000}
+              placeholder={"写清楚希望 AI 怎么做，例如：\n1. 先用三句话概括问题与贡献\n2. 列出方法与关键实验\n3. 指出局限，并给出值得追的参考文献"}
+              onChange={(e) => setForm((f) => ({ ...f, instructions: e.target.value }))}
+            />
+          </label>
+          {error ? <div className="ai-skill-error">{error}</div> : null}
+          <div className="ai-skill-form-actions">
+            <button type="button" className="btn" onClick={() => { setEditing(null); setError(""); }}>取消</button>
+            <button type="submit" className="btn primary" disabled={busy}>{busy ? "保存中…" : "保存"}</button>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ai-skills-pop">
+      <div className="ai-skills-head">
+        <h4>技能</h4>
+        <button type="button" className="ai-skill-new" onClick={() => startEdit()}><Icon name="plus" small />新建</button>
+      </div>
+      <div className="ai-skills-hint">把重复使用的提示词 / 工作流程存成技能；点一下即可启用，也可以让 AI 帮你写。</div>
+      {skills.length === 0 ? (
+        <div className="ai-skills-empty">还没有技能。新建一个，或对 AI 说「把刚才的做法存成技能」。</div>
+      ) : (
+        <div className="ai-skills-list">
+          {skills.map((s) => {
+            const on = attached.includes(s.id);
+            return (
+              <div key={s.id} className={"ai-skill-item" + (on ? " is-on" : "")}>
+                <button type="button" className="ai-skill-main" title={on ? "取消启用" : "启用这个技能"} onClick={() => onToggle(s.id)}>
+                  <span className="ai-skill-name">
+                    <span className="ai-skill-check">{on ? <Icon name="check" small /> : <Icon name="sparkle" small />}</span>
+                    {s.name}
+                  </span>
+                  <span className="ai-skill-desc">{s.description || "未填写说明"}</span>
+                </button>
+                <button type="button" className="icon-btn" title="编辑" onClick={() => startEdit(s)}><Icon name="note" small /></button>
+                <button type="button" className="icon-btn" title="删除" onClick={() => { if (window.confirm(`删除技能「${s.name}」？`)) { void onDelete(s.id); } }}><Icon name="trash" small /></button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div className="ai-skills-foot">
+        <button type="button" className="btn btn-ghost" onClick={onAskAi}><Icon name="sparkle" small />让 AI 帮我写</button>
+      </div>
+    </div>
+  );
+}
+
 function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image, onCite, onClearSelection, onClearImage, openDocs, resolveDocTitle, active }: {
   lib: LibraryApi;
   active?: boolean;
@@ -553,6 +670,38 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   const [convId, setConvId] = useState("");
   const [convList, setConvList] = useState<ConversationSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  // 技能：技能库、本轮启用的技能、技能面板开关
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [attached, setAttached] = useState<string[]>([]);
+  const [showSkills, setShowSkills] = useState(false);
+  const skillsReady = useRef(false);
+  const skillsRef = useRef<Skill[]>([]);
+  skillsRef.current = skills;
+  const reloadSkills = useCallback(async (): Promise<void> => {
+    try {
+      setSkills(await window.api.skillsList());
+      skillsReady.current = true;
+    } catch { /* 读失败就保持旧列表 */ }
+  }, []);
+  useEffect(() => { void reloadSkills(); }, [reloadSkills]);
+  // 技能被删除后，别让它的 id 还挂在"已启用"里（否则空输入也能发送）
+  useEffect(() => {
+    if (!skillsReady.current) { return; }
+    const known = new Set(skills.map((s) => s.id));
+    setAttached((prev) => (prev.some((id) => !known.has(id)) ? prev.filter((id) => known.has(id)) : prev));
+  }, [skills]);
+  const toggleSkill = (id: string): void => {
+    setAttached((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+  const saveSkill = async (input: { id?: string; name: string; description: string; instructions: string }): Promise<void> => {
+    await window.api.skillsSave(input);
+    await reloadSkills();
+  };
+  const deleteSkill = async (id: string): Promise<void> => {
+    await window.api.skillsRemove(id);
+    setAttached((prev) => prev.filter((x) => x !== id));
+    await reloadSkills();
+  };
   const [refs, setRefs] = useState<{ id: string; title: string }[]>([]);
   useEffect(() => window.api.onLibraryProgress((p) => setLibProgress(p.done ? "" : p.text)), []);
   // 待发送的图片（阅读器框选截图 / 输入框粘贴 / 选文件），发送后随这一轮清空
@@ -604,6 +753,9 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   useEffect(() => {
     if (!active) { return; }
     const onPaste = (e: ClipboardEvent): void => {
+      // 阅读器打开时，粘贴图片归笔记编辑器处理，不再抢到 AI 面板
+      const reader = document.querySelector(".reader-overlay");
+      if (reader && !reader.hasAttribute("hidden")) { return; }
       const cd = e.clipboardData;
       // 剪贴板里同时有文字时按普通文本粘贴处理（比如从 PDF 里复制文字），不抢输入
       if ((cd?.getData("text/plain") || "").trim()) { return; }
@@ -717,7 +869,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     const id = convIdRef.current;
     if (!id) { return; }
     const firstUser = messages.find((m) => m.role === "user");
-    const clean = messages.filter((m) => m.text.trim() || (m.images && m.images.length) || m.error || (m.blocks && m.blocks.length > 0));
+    const firstSkill = (firstUser?.skills || []).map((id) => skillsRef.current.find((s) => s.id === id)?.name).filter((n): n is string => !!n)[0];
+    const clean = messages.filter((m) => m.text.trim() || (m.images && m.images.length) || (m.skills && m.skills.length) || m.error || (m.blocks && m.blocks.length > 0));
     const docIds = new Set<string>();
     if (doc.id) { docIds.add(doc.id); }
     for (const m of messages) {
@@ -732,12 +885,13 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
       scope: "library",
       docId: undefined,
       docIds: Array.from(docIds),
-      title: (firstUser?.text || (firstUser?.images?.length ? "图片提问" : "新对话")).slice(0, 60),
+      title: (firstUser?.text || (firstUser?.images?.length ? "图片提问" : firstSkill ? `技能：${firstSkill}` : "新对话")).slice(0, 60),
       updated_at: 0,
       messages: clean.map((m) => ({
         role: m.role,
         text: m.text,
         images: m.images,
+        skills: m.skills,
         // 待确认的卡片不入库（重新打开时已失效）；其余块保留顺序
         blocks: (m.blocks || []).filter((b) => b.kind !== "confirm") as ConvBlock[],
         reasoning: m.blocks?.filter((b) => b.kind === "reasoning").map((b) => (b as { text: string }).text).join(""),
@@ -757,7 +911,13 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
       setConvList(list);
       if (list[0]) {
         const conv = await window.api.agentConversation(list[0].id);
-        if (!cancelled && conv) { setTurns(conv.messages.map((m) => ({ ...m, blocks: blocksOf(m) }))); setConvId(conv.id); convIdRef.current = conv.id; }
+        if (!cancelled && conv) {
+          setTurns(conv.messages.map((m) => ({ ...m, blocks: blocksOf(m) })));
+          setConvId(conv.id);
+          convIdRef.current = conv.id;
+          const last = [...conv.messages].reverse().find((m) => m.role === "user" && m.skills && m.skills.length);
+          setAttached(last?.skills ? [...last.skills] : []);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -790,6 +950,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
 
   useEffect(() => {
     const off = window.api.onAgentEvent((e) => {
+      if (e.type === "skills_changed") { void reloadSkills(); }
       if (e.turnId !== turnRef.current) { return; }
       setTurns((prev) => {
         if (prev.length === 0) { return prev; }
@@ -884,7 +1045,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   const send = (preset?: string): void => {
     const q = (preset !== undefined ? preset : input).trim();
     const imgs = images;
-    if ((!q && !imgs.length) || sending) { return; }
+    const skillIds = attached;
+    if ((!q && !imgs.length && !skillIds.length) || sending) { return; }
     // 没配置对话模型：不要真的发起请求（主进程只能回一句冷冰冰的报错，界面还会一直转圈），
     // 直接把问题记下来并引导用户去「设置 → AI 助手」。
     if (!aiReady) {
@@ -892,7 +1054,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
       setImages([]);
       atBottomRef.current = true;
       setShowJump(false);
-      setTurns((prev) => [...prev, { role: "user", text: q, images: imgs.map((i) => i.dataUrl) }, { role: "assistant", text: "", setup: true, error: "AI 助手还没配置对话模型：请在「设置 → AI 助手」里填写基础地址、API 密钥与模型。" }]);
+      setTurns((prev) => [...prev, { role: "user", text: q, images: imgs.map((i) => i.dataUrl), skills: skillIds }, { role: "assistant", text: "", setup: true, error: "AI 助手还没配置对话模型：请在「设置 → AI 助手」里填写基础地址、API 密钥与模型。" }]);
       return;
     }
     if (!convIdRef.current) {
@@ -913,13 +1075,17 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
       if (t.role !== "user" || !t.images) { continue; }
       for (const url of t.images) { if (recentImages.size < 6) { recentImages.add(url); } }
     }
+    const skillTitles = (ids?: string[]): string[] =>
+      (ids || []).map((id) => skills.find((s) => s.id === id)?.name).filter((n): n is string => !!n);
     const history = turnsRef.current
-      .filter((t) => t.text.trim() || (t.images && t.images.length))
+      .filter((t) => t.text.trim() || (t.images && t.images.length) || (t.skills && t.skills.length))
       .map((t) => {
         const cards = papersOf(t.blocks || []);
         const kept = t.role === "user" && t.images ? t.images.filter((url) => recentImages.has(url)) : [];
         const withImages = kept.length ? { images: kept } : {};
-        if (!cards.length) { return { role: t.role, content: t.text, ...withImages }; }
+        const sk = t.role === "user" ? skillTitles(t.skills) : [];
+        const base = t.text + (sk.length ? `\n\n[本轮启用技能：${sk.join("、")}]` : "");
+        if (!cards.length) { return { role: t.role, content: base, ...withImages }; }
         let digest = "";
         for (const p of cards.slice(0, 40)) {
           const ids = [p.arxivId ? `arXiv:${p.arxivId}` : "", p.doi ? `doi:${p.doi}` : ""].filter(Boolean).join(" ");
@@ -927,20 +1093,23 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
           if (digest.length + line.length > 3000) { break; }
           digest += line;
         }
-        return { role: t.role, content: `${t.text}\n\n[本轮外部检索结果卡片，编号即 [[card:N]] 里的 N：\n${digest}]`, ...withImages };
+        return { role: t.role, content: `${base}\n\n[本轮外部检索结果卡片，编号即 [[card:N]] 里的 N：\n${digest}]`, ...withImages };
       });
-    setTurns((prev) => [...prev, { role: "user", text: q, images: imgs.map((i) => i.dataUrl) }, { role: "assistant", text: "", streaming: true }]);
+    setTurns((prev) => [...prev, { role: "user", text: q, images: imgs.map((i) => i.dataUrl), skills: skillIds }, { role: "assistant", text: "", streaming: true }]);
     setSending(true);
     const sel = selection ? selection : undefined;
     const refIds = refs.map((r) => r.id);
+    const skillIdsPayload = skillIds;
     const cardBase = turnsRef.current.reduce((n, t) => n + papersOf(t.blocks || []).length, 0);
     setRefs([]);
     setAtOpen(false);
+    setShowSkills(false);
     // turnId 自己先生成、先记下，再发起请求：主进程可能在我们拿到返回值之前就发事件
     const turnId = "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     turnRef.current = turnId;
     void window.api.agentChat({
       turnId, scope: "library", docId: doc.id, selection: sel, refs: refIds, message: q, history, cardBase,
+      skills: skillIdsPayload,
       images: imgs.map((i) => ({ dataUrl: i.dataUrl, page: i.page, anchor: i.anchor, text: i.text }))
     })
       .catch((err) => {
@@ -975,6 +1144,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     const text = q && q.role === "user" ? q.text : "";
     setTurns(list.slice(0, Math.max(0, i - 1)));
     if (text) { setInput(text); }
+    if (q && q.role === "user" && q.skills && q.skills.length) { setAttached([...q.skills]); }
     if (q && q.role === "user" && q.images && q.images.length) {
       setImages(q.images.map((dataUrl, k) => ({ id: "edit" + Date.now().toString(36) + k, dataUrl })));
     }
@@ -982,7 +1152,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   };
 
   const atOptions = openDocs.filter((d) => d.id !== doc.id);
-  const anchors = convAnchors(turns);
+  const skillName = (id: string): string => skills.find((s) => s.id === id)?.name || "";
+  const anchors = convAnchors(turns, skillName);
   anchorsRef.current = anchors;
   const histFiltered = convList.filter((c) => {
     const q = histQuery.trim().toLowerCase();
@@ -1008,12 +1179,19 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     void window.api.agentConfirm(confirmId, { approved, args });
   };
 
-  const newConv = (): void => { setTurns([]); setConvId(""); convIdRef.current = ""; setShowHistory(false); setImages([]); };
+  const newConv = (): void => { setTurns([]); setConvId(""); convIdRef.current = ""; setShowHistory(false); setImages([]); setAttached([]); setShowSkills(false); };
   const openConv = async (id: string): Promise<void> => {
     const conv = await window.api.agentConversation(id);
     // 切到别的会话时，没发出去的图片不该跟过去
     setImages([]);
-    if (conv) { setTurns(conv.messages.map((m) => ({ ...m, blocks: blocksOf(m) }))); setConvId(conv.id); convIdRef.current = conv.id; }
+    if (conv) {
+      setTurns(conv.messages.map((m) => ({ ...m, blocks: blocksOf(m) })));
+      setConvId(conv.id);
+      convIdRef.current = conv.id;
+      // 恢复这个会话最后一次启用的技能（已删除的会查不到名字，不会显示）
+      const last = [...conv.messages].reverse().find((m) => m.role === "user" && m.skills && m.skills.length);
+      setAttached(last?.skills ? [...last.skills] : []);
+    }
     setShowHistory(false);
   };
   const delConv = async (id: string): Promise<void> => {
@@ -1029,8 +1207,33 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
         <span className="ai-brand">Arxiver</span>
         <span className="od-fill" />
         <button type="button" className="icon-btn" title="新对话" onClick={newConv}><Icon name="plus" small /></button>
+        <div className="ai-skills-wrap">
+          <button
+            type="button"
+            className="icon-btn"
+            title="技能：可复用的提示词 / 工作流程"
+            aria-pressed={showSkills || attached.length > 0}
+            onClick={() => { setShowSkills((v) => !v); setShowHistory(false); }}
+          >
+            <Icon name="sparkle" small />
+          </button>
+          {showSkills && (
+            <SkillsMenu
+              skills={skills}
+              attached={attached}
+              onToggle={toggleSkill}
+              onSave={saveSkill}
+              onDelete={deleteSkill}
+              onAskAi={() => {
+                setShowSkills(false);
+                setInput("帮我创建一个技能。先问清这个技能要解决什么任务、希望按什么步骤执行、输出成什么格式，确认后把它保存成技能。");
+                inputRef.current?.focus();
+              }}
+            />
+          )}
+        </div>
         <div className="ai-hist-wrap">
-          <button type="button" className="icon-btn" title="历史对话" onClick={() => setShowHistory((v) => !v)}><Icon name="history" small /></button>
+          <button type="button" className="icon-btn" title="历史对话" onClick={() => { setShowHistory((v) => !v); setShowSkills(false); }}><Icon name="history" small /></button>
           {showHistory && (
             <div className="ai-hist-pop">
               <input className="ai-hist-search" placeholder="搜索对话或论文…" value={histQuery} onChange={(e) => setHistQuery(e.target.value)} />
@@ -1069,6 +1272,28 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
               <button onClick={() => send("解释主要方法")}>解释主要方法</button>
               <button onClick={() => send("分析局限性")}>分析局限性</button>
             </div>
+            <div className="ai-skill-quick">
+              <div className="ai-skill-quick-head">
+                <span><Icon name="sparkle" small />技能</span>
+                <button type="button" className="ai-skill-manage" onClick={() => { setShowSkills(true); setShowHistory(false); }}>管理</button>
+              </div>
+              {skills.length ? (
+                <div className="ai-skill-quick-list">
+                  {skills.slice(0, 4).map((s) => {
+                    const on = attached.includes(s.id);
+                    return (
+                      <button key={s.id} type="button" className={"ai-skill-quick-chip" + (on ? " is-on" : "")} title={s.description || s.name} onClick={() => toggleSkill(s.id)}>
+                        {on ? <Icon name="check" small /> : null}{s.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <button type="button" className="ai-skill-quick-empty" onClick={() => { setShowSkills(true); setShowHistory(false); }}>
+                  把常用的提示词 / 流程存成技能，之后一键启用
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           turns.map((t, i) => (
@@ -1077,6 +1302,14 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
                 <div className="msg-role">{t.role === "user" ? "我" : "Arxiver"}</div>
                 {t.role === "user" ? (
                   <>
+                    {t.skills && t.skills.length ? (
+                      <div className="msg-skills">
+                        {t.skills.map((id) => {
+                          const name = skillName(id);
+                          return name ? <span key={id} className="msg-skill-chip"><Icon name="sparkle" small />{name}</span> : null;
+                        })}
+                      </div>
+                    ) : null}
                     {t.text ? <div className="msg-content">{t.text}</div> : null}
                     {t.images && t.images.length ? (
                       <div className="msg-imgs">
@@ -1209,8 +1442,18 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
               : atOptions.map((d) => <button key={d.id} type="button" className="ai-at-item" onClick={() => pickRef(d)}>@ {d.name}</button>)}
           </div>
         )}
-        {(selection && selection.text.trim()) || refs.length > 0 || images.length > 0 ? (
+        {(selection && selection.text.trim()) || refs.length > 0 || images.length > 0 || attached.length > 0 ? (
           <div className="ai-refs">
+            {attached.map((id) => {
+              const s = skills.find((x) => x.id === id);
+              if (!s) { return null; }
+              return (
+                <span key={id} className="ai-ref-chip ai-skill-chip" title={s.description || s.name}>
+                  <Icon name="sparkle" small />{s.name}
+                  <button type="button" className="ai-ref-x" title="取消启用" onClick={() => toggleSkill(id)}><Icon name="x" small /></button>
+                </span>
+              );
+            })}
             {selection && selection.text.trim() ? (
               <span className="ai-ref-chip">选文（第 {selection.page} 页）：{selection.text.trim().slice(0, 40)}
                 <button type="button" className="ai-ref-x" title="移除" onClick={onClearSelection}><Icon name="x" small /></button>
@@ -1279,7 +1522,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
             <span className="od-fill" />
             {sending
               ? <button type="button" className="send-btn" title="停止" onClick={(e) => { e.preventDefault(); stop(); }}><Icon name="x" small /></button>
-              : <button type="submit" className="send-btn" aria-label="发送" disabled={!input.trim() && images.length === 0}><Icon name="arrow-up" small /></button>}
+              : <button type="submit" className="send-btn" aria-label="发送" disabled={!input.trim() && images.length === 0 && attached.length === 0}><Icon name="arrow-up" small /></button>}
           </div>
         </form>
       </div>

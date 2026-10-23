@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type JSX } from "react";
-import type { AppConfig, TransParams, TranslationRef } from "../../../shared/types";
+import type { AppConfig, PdfAnnotation, PdfAnnotKind, TransParams, TranslationRef } from "../../../shared/types";
 import { ViewerEngine, type ViewerStatus, type TranslationDoneInfo, type RegionCapture } from "../viewer/engine";
 import { Icon } from "./Icons";
 import { LANGS } from "../lib/langs";
@@ -13,6 +13,31 @@ async function loadKey(engine: ViewerEngine, docId: string, key: string): Promis
   if (!tb || !tb.length) { return; }
   await engine.loadTranslation(new Uint8Array(tb));
   await engine.loadBlocks(docId, key);
+}
+
+const ANNOT_COLORS: [string, string][] = [
+  ["yellow", "黄色"],
+  ["green", "绿色"],
+  ["blue", "蓝色"],
+  ["pink", "粉色"]
+];
+const ANNOT_KIND_LABEL: Record<PdfAnnotKind, string> = {
+  highlight: "高亮", underline: "下划线", strike: "删除线", note: "笔记"
+};
+const ANNOT_KIND_ICON: Record<PdfAnnotKind, string> = {
+  highlight: "highlight", underline: "underline", strike: "strike", note: "note"
+};
+
+// 侧栏一行里优先显示笔记正文（最常用来找内容），没有笔记时退回选中原文 / 图片链接数量
+function annotExcerpt(a: PdfAnnotation): { text: string; kind: "note" | "quote" | "meta" } {
+  const note = (a.note || "").trim();
+  if (note) { return { text: note, kind: "note" }; }
+  const bits: string[] = [];
+  if (a.text) { bits.push(a.text); }
+  if (a.links?.length) { bits.push(a.links.length === 1 ? a.links[0] : `${a.links.length} 个链接`); }
+  if (a.images?.length) { bits.push(`${a.images.length} 张图片`); }
+  if (bits.length) { return { text: bits.join(" · "), kind: a.text ? "quote" : "meta" }; }
+  return { text: "空笔记", kind: "meta" };
 }
 
 type PageTheme = "original" | "green" | "beige" | "dark";
@@ -59,11 +84,14 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const [status, setStatus] = useState<ViewerStatus | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
+  const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
+  const [annotVisible, setAnnotVisible] = useState(true);
+  const [annotColor, setAnnotColor] = useState("yellow");
   const [sourceLang, setSourceLang] = useState("en");
   const [targetLang, setTargetLang] = useState("zh-CN");
   const [variant, setVariant] = useState("dual");
   const [pages, setPages] = useState("");
-  const [panel, setPanel] = useState<"toc" | "thumbs" | null>(null);
+  const [panel, setPanel] = useState<"toc" | "thumbs" | "annots" | null>(null);
   const [outline, setOutline] = useState<{ title: string; page: number; level: number; anchor: number }[]>([]);
   const [outlineLoading, setOutlineLoading] = useState(false);
   const [outlineGenerating, setOutlineGenerating] = useState(false);
@@ -104,6 +132,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
       (s) => { statusRef.current = s; setStatus(s); },
       (info) => doneRef.current?.(info)
     );
+    engine.onAnnotations = (list) => setAnnotations(list);
     engineRef.current = engine;
     return () => { engine.dispose(); engineRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -230,13 +259,23 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
     const last = rects[rects.length - 1];
     if (!last) { return null; }
     const sr = stage.getBoundingClientRect();
+    // 选区工具条比原来的单按钮宽：右端贴选区末行，左端至少要留出整条工具条的宽度
+    const barW = 352;
     return {
-      x: Math.min(Math.max(120, last.right - sr.left), Math.max(120, sr.width - 4)),
+      x: Math.min(Math.max(barW, last.right - sr.left), Math.max(barW, sr.width - 4)),
       y: Math.min(Math.max(4, last.bottom - sr.top + 4), Math.max(4, sr.height - 34)),
       text: sel.toString().trim(),
       page: statusRef.current?.displayPage || 1
     };
   }, []);
+
+  const annotateSelection = useCallback((kind: PdfAnnotKind, color = annotColor) => {
+    engineRef.current?.annotateSelection(kind, color);
+    setSelPop(null);
+    window.getSelection()?.removeAllRanges();
+  }, [annotColor]);
+
+
 
   useEffect(() => {
     function onUp(): void {
@@ -245,7 +284,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
     function onDown(e: MouseEvent): void {
       if (!visibleRef.current) { return; }
       const t = e.target as Element | null;
-      if (t && t.closest && t.closest(".sel-ask")) { return; }
+      if (t && t.closest && t.closest(".sel-tools")) { return; }
       setSelPop(null);
     }
     document.addEventListener("mouseup", onUp);
@@ -406,6 +445,13 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   // nothing to overlay, so the button stays disabled.
   const canShowBlocks = hasTranslation || running;
   const blocksOn = canShowBlocks && (running ? showBlocksTranslating : showBlocksTranslation);
+  const annotSorted = [...annotations].sort((a, b) => a.page - b.page || a.createdAt - b.createdAt);
+
+  function toggleAnnots(): void {
+    const next = !annotVisible;
+    setAnnotVisible(next);
+    engineRef.current?.setAnnotVisible(next);
+  }
 
   function start(): void {
     setMenuOpen(false);
@@ -480,6 +526,15 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
             <Icon name="layers" small />
           </button>
 
+          <button
+            type="button"
+            className={"panel-btn" + (annotVisible ? " active" : "")}
+            aria-pressed={annotVisible}
+            title={annotVisible ? "隐藏标注" : "显示标注"}
+            onClick={toggleAnnots}
+          >
+            <Icon name="highlight" small />
+          </button>
           <div className="translate-menu" ref={menuRef}>
             <div className="split">
               <button className="primary split-main" disabled={running} onClick={onMainClick}>{hasTranslation ? "已翻译" : "翻译"}</button>
@@ -589,13 +644,52 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
 
       <div className="workspace-body">
         {panel && (
-          <aside className="outline-panel">
+          <aside className={"outline-panel" + (panel === "annots" ? " is-annots" : "")}>
             <div className="outline-tabs">
               <button type="button" className={panel === "toc" ? "active" : ""} onClick={() => setPanel("toc")}>目录</button>
               <button type="button" className={panel === "thumbs" ? "active" : ""} onClick={() => setPanel("thumbs")}>缩略图</button>
+              <button type="button" className={panel === "annots" ? "active" : ""} onClick={() => setPanel("annots")}>标注</button>
             </div>
             <div className="outline-body">
-              {panel === "toc"
+              {panel === "annots" ? (
+                annotSorted.length === 0
+                  ? <div className="outline-empty">选中正文文字即可添加高亮或笔记；点击页面上的标注可直接改颜色、写笔记、插图或加链接。左侧列表只负责定位。</div>
+                  : (
+                    <div className="annot-list">
+                      {annotSorted.map((a) => {
+                        const excerpt = annotExcerpt(a);
+                        return (
+                          <div key={a.id} className="annot-row">
+                            <button type="button" className="annot-row-main" title="点击定位；在页面上点击该标注可查看 / 编辑" onClick={() => void engineRef.current?.focusAnnotation(a.id)}>
+                              <span className="annot-row-head">
+                                <span className="annot-dot" data-color={a.color || "yellow"} />
+                                <Icon name={ANNOT_KIND_ICON[a.kind]} small />
+                                <span className="annot-row-kind">
+                                  {ANNOT_KIND_LABEL[a.kind]}{a.kind !== "note" && a.note?.trim() ? " · 笔记" : ""}
+                                </span>
+                                {!!a.images?.length && (
+                                  <span className="annot-row-meta" title={`${a.images.length} 张图片`}>
+                                    <Icon name="image" small />{a.images.length}
+                                  </span>
+                                )}
+                                {!!a.links?.length && (
+                                  <span className="annot-row-meta" title={`${a.links.length} 个链接`}>
+                                    <Icon name="link" small />{a.links.length}
+                                  </span>
+                                )}
+                                <span className="annot-row-page">第 {a.page} 页</span>
+                              </span>
+                              <span className={"annot-row-text is-" + excerpt.kind}>{excerpt.text}</span>
+                            </button>
+                            <button type="button" className="annot-row-del" title="删除标注" onClick={() => engineRef.current?.removeAnnotation(a.id)}>
+                              <Icon name="trash" small />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
+              ) : panel === "toc"
                 ? (outlineLoading
                   ? <div className="outline-empty">{outlineGenerating ? "原pdf无目录，正在生成目录…" : "正在读取目录…"}</div>
                   : outline.length === 0
@@ -630,14 +724,44 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
         <div className="viewer-stage" ref={stageRef}>
           <div ref={hostRef} />
           {selPop && (
-            <button
-              type="button"
-              className="sel-ask"
+            <div
+              className="sel-tools"
               style={{ left: selPop.x, top: selPop.y }}
-              onClick={() => { onAskSelection?.(selPop.text, selPop.page); setSelPop(null); window.getSelection()?.removeAllRanges(); }}
+              onMouseDown={(e) => e.preventDefault()}
             >
-              <Icon name="arxiver" small /> 问 Arxiver
-            </button>
+              {ANNOT_COLORS.map(([color, label]) => (
+                <button
+                  key={color}
+                  type="button"
+                  className={"sel-tool sel-dot" + (annotColor === color ? " active" : "")}
+                  data-color={color}
+                  title={"标注颜色：" + label}
+                  onClick={() => setAnnotColor(color)}
+                />
+              ))}
+              <span className="sel-sep" />
+              <button type="button" className="sel-tool" title="高亮（当前颜色）" onClick={() => annotateSelection("highlight")}>
+                <Icon name="highlight" small />
+              </button>
+              <button type="button" className="sel-tool" title="下划线（当前颜色）" onClick={() => annotateSelection("underline")}>
+                <Icon name="underline" small />
+              </button>
+              <button type="button" className="sel-tool" title="删除线（当前颜色）" onClick={() => annotateSelection("strike")}>
+                <Icon name="strike" small />
+              </button>
+              <button type="button" className="sel-tool" title="添加笔记（可写文字 / 插图片 / 加链接）" onClick={() => annotateSelection("note")}>
+                <Icon name="note" small />
+              </button>
+              <span className="sel-sep" />
+              <button
+                type="button"
+                className="sel-tool sel-tool-wide"
+                title="把选中的文字发给 AI 助手"
+                onClick={() => { onAskSelection?.(selPop.text, selPop.page); setSelPop(null); window.getSelection()?.removeAllRanges(); }}
+              >
+                <Icon name="arxiver" small /> 问
+              </button>
+            </div>
           )}
           {citation && (
             <div

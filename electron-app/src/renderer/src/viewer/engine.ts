@@ -1,5 +1,6 @@
 import { getPdfjs } from "../lib/pdf";
-import type { BlockEvent, JobSummary, TransParams } from "../../../shared/types";
+import { normalizeImage, readImageFile } from "../lib/images";
+import type { BlockEvent, JobSummary, PdfAnnotation, PdfAnnotKind, PdfAnnotRect, TransParams } from "../../../shared/types";
 
 export type View = "source" | "target" | "compare";
 export type Layout = "single" | "double";
@@ -61,6 +62,30 @@ interface TextLine {
   bottom: number;
   left: number;
   right: number;
+}
+
+// 当前选区按页拆出来的高亮矩形（client 坐标）：画选区高亮和存标注共用
+interface SelSegment {
+  page: number;
+  text: string;
+  rects: { left: number; top: number; width: number; height: number }[];
+}
+
+const ANNOT_COLORS = ["yellow", "green", "blue", "pink"] as const;
+const ANNOT_LABELS: Record<PdfAnnotKind, string> = {
+  highlight: "高亮", underline: "下划线", strike: "删除线", note: "笔记"
+};
+const ANNOT_COLOR_LABELS: Record<string, string> = { yellow: "黄色", green: "绿色", blue: "蓝色", pink: "粉色" };
+
+function annotId(): string {
+  return "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+function clamp01(n: number): number { return Math.min(1, Math.max(0, n)); }
+
+// 空白笔记 / 没填链接的标注：不留在页面和侧栏里（历史版本可能存过）
+function isEmptyAnnot(a: PdfAnnotation): boolean {
+  if (a.kind !== "note") { return false; }
+  return !(a.note || "").trim() && !(a.images && a.images.length) && !(a.links && a.links.length);
 }
 
 // 译文里保留的公式 / 富文本占位符（{v0} / {{v0}} / {v*}）：不并进正文，单独渲染成带颜色的 chip
@@ -158,7 +183,25 @@ export class ViewerEngine {
   private renderedW: Record<number, number> = {};
   private renderedWR: Record<number, number> = {};
   private blocksByPage: Record<number, BlockEvent[]> = {};
-  private linksByPage: Record<number, { page: number; rect: number[]; anchor: number }[]> = {};
+  private linksByPage: Record<number, { page: number; rect: number[]; anchor: number; url?: string }[]> = {};
+  private annotLayer: Record<number, HTMLElement> = {};
+  private annotations: PdfAnnotation[] = [];
+  private annotVisible = true;
+  // 点在高亮 / 下划线 / 删除线 / 笔记区域上（不是拖选文字）→ 打开编辑面板
+  private annotDown: { x: number; y: number } | null = null;
+  private annotClickTimer = 0;
+  private annotHoverId: string | null = null;
+  private annotHoverRaf = 0;
+  // 标注变化（新增/编辑/删除/加载完成）时通知 React（侧栏列表、按钮状态）
+  onAnnotations: ((list: PdfAnnotation[]) => void) | null = null;
+  private annotTipEl: HTMLElement | null = null;
+  private annotTipId = "";
+  private annotTipOutside: ((e: MouseEvent) => void) | null = null;
+  private annotTipKey: ((e: KeyboardEvent) => void) | null = null;
+  // 正在读取 / 压缩图片：此时别把"看起来还空"的笔记当成空白取消掉
+  private tipImageBusy = false;
+  // 面板里的笔记直接编辑、自动保存（没有独立的"编辑 / 保存 / 取消"模式）
+  private annotSaveTimer = 0;
 
   private rows: HTMLElement[] = [];
   private rowFirstPage: number[] = [];
@@ -214,13 +257,16 @@ export class ViewerEngine {
     this.status = this.blank();
     this.root.addEventListener("wheel", (e) => { if (e.ctrlKey) { e.preventDefault(); this.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1); } }, { passive: false });
     this.root.addEventListener("pointerdown", this.onPagePointerDown);
+    this.root.addEventListener("pointerdown", this.onAnnotPointerDown);
+    this.root.addEventListener("click", this.onAnnotClick);
+    this.root.addEventListener("pointermove", this.onAnnotHover);
     document.addEventListener("selectionchange", this.onSelectionChange);
     document.addEventListener("mouseup", this.onSelectionSettle);
     document.addEventListener("pointerdown", this.onQuotePointerDown);
     let raf = 0;
     this.root.addEventListener("scroll", () => {
       if (raf) { return; }
-      raf = requestAnimationFrame(() => { raf = 0; this.updateCurrentPage(); this.followBlockTip(); this.scheduleRender(120); });
+      raf = requestAnimationFrame(() => { raf = 0; this.updateCurrentPage(); this.followBlockTip(); this.followAnnotTip(); this.scheduleRender(120); });
     });
     if (typeof ResizeObserver !== "undefined") {
       new ResizeObserver(() => {
@@ -269,9 +315,10 @@ export class ViewerEngine {
     this.root.style.setProperty("--page-w", this.pageWidth() + "px");
     this.root.style.setProperty("--cols", String(this.perRow() * this.colsPerPage()));
     this.updateTextLayers();
-    // 缩放/换宽度后，已经画好的高亮是按旧的显示尺寸画的，重画一次
+    // 缩放/换宽度后，已经画好的选区高亮、引用高亮、标注都是按旧的显示尺寸画的，重画一次
     this.paintSelection();
     this.repaintQuote();
+    this.renderAllAnnots();
   }
 
   private blankCanvas(): HTMLCanvasElement { const c = document.createElement("canvas"); c.className = "pdf-canvas"; return c; }
@@ -449,27 +496,27 @@ export class ViewerEngine {
     this.selRaf = requestAnimationFrame(() => { this.selRaf = 0; this.paintSelection(); });
   };
 
-  private paintSelection(): void {
-    const selLayers = this.root.querySelectorAll<HTMLElement>(".sel-layer");
-    for (const l of selLayers) { if (l.childElementCount) { l.innerHTML = ""; } }
-    if (this.root.hidden || this.root.clientWidth === 0) { return; }
+  // 当前选区按页拆成"贴行"的矩形：画选区高亮和保存标注都走这一份，保证两者位置一致。
+  private selectionSegments(): SelSegment[] {
+    if (this.root.hidden || this.root.clientWidth === 0) { return []; }
     const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !sel.toString().trim()) { return; }
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !sel.toString().trim()) { return []; }
     const node = sel.anchorNode;
     const anchor = node ? (node.nodeType === 1 ? (node as Element) : node.parentElement) : null;
-    if (!anchor || !this.root.contains(anchor)) { return; }
+    if (!anchor || !this.root.contains(anchor)) { return []; }
     // 起点落在哪一类文字里（正文 / 小字）：高亮只画同类，跨图/跨页时不会把脚注、图注、
     // 图表里的标签、页码一起点亮（用户要选它们时会从它们里面起手）。
     const anchorSpan = this.spanOf(sel.anchorNode);
     const anchorSmall = anchorSpan ? this.isSmallText(anchorSpan) : false;
     const rects = Array.from(sel.getRangeAt(0).getClientRects()).filter((r) => r.width > 1 && r.height > 1);
-    if (!rects.length) { return; }
+    if (!rects.length) { return []; }
+    const text = sel.toString().replace(/\s+/g, " ").trim();
     let minY = Infinity; let maxY = -Infinity;
     for (const r of rects) { minY = Math.min(minY, r.top); maxY = Math.max(maxY, r.bottom); }
+    const out: SelSegment[] = [];
     this.root.querySelectorAll<HTMLElement>(".page-wrap").forEach((wrap) => {
-      const selLayer = wrap.querySelector<HTMLElement>(".sel-layer");
       const textLayer = wrap.querySelector<HTMLElement>(".text-layer");
-      if (!selLayer || !textLayer) { return; }
+      if (!textLayer) { return; }
       const wr = wrap.getBoundingClientRect();
       if (wr.width <= 0 || wr.height <= 0 || wr.bottom < minY || wr.top > maxY) { return; }
       const lines: { top: number; height: number; left: number; width: number; el: HTMLElement; small: boolean }[] = [];
@@ -480,6 +527,7 @@ export class ViewerEngine {
       });
       if (!lines.length) { return; }
       const seen = new Set<string>();
+      const segRects: SelSegment["rects"] = [];
       for (const r of rects) {
         if (r.right < wr.left || r.left > wr.right) { continue; }
         // 找"和这个矩形最贴的那一行"：
@@ -512,15 +560,32 @@ export class ViewerEngine {
         const key = Math.round(left) + ":" + Math.round(line.top) + ":" + Math.round(width);
         if (seen.has(key)) { continue; }
         seen.add(key);
+        segRects.push({ left, top: line.top, width, height: line.height });
+      }
+      if (segRects.length) { out.push({ page: Number(wrap.dataset.page || 0), text, rects: segRects }); }
+    });
+    return out;
+  }
+
+  private paintSelection(): void {
+    const selLayers = this.root.querySelectorAll<HTMLElement>(".sel-layer");
+    for (const l of selLayers) { if (l.childElementCount) { l.innerHTML = ""; } }
+    if (this.root.hidden || this.root.clientWidth === 0) { return; }
+    for (const seg of this.selectionSegments()) {
+      const wrap = this.pageWrap[seg.page];
+      const selLayer = wrap?.querySelector<HTMLElement>(".sel-layer");
+      if (!wrap || !selLayer) { continue; }
+      const wr = wrap.getBoundingClientRect();
+      for (const r of seg.rects) {
         const el = document.createElement("div");
         el.className = "sel-highlight";
-        el.style.left = (left - wr.left) + "px";
-        el.style.top = (line.top - wr.top) + "px";
-        el.style.width = width + "px";
-        el.style.height = line.height + "px";
+        el.style.left = (r.left - wr.left) + "px";
+        el.style.top = (r.top - wr.top) + "px";
+        el.style.width = r.width + "px";
+        el.style.height = r.height + "px";
         selLayer.appendChild(el);
       }
-    });
+    }
   }
 
   // 一段文字里"真正有墨"的那部分（去掉首尾空白），用 canvas 按它自己的字体量出比例。
@@ -555,6 +620,624 @@ export class ViewerEngine {
     this.root.querySelectorAll<HTMLElement>(".sel-layer").forEach((l) => { if (l.childElementCount) { l.innerHTML = ""; } });
   }
 
+  // ---- 标注（高亮 / 笔记 / 标记文字 / 链接；图片作为笔记内容）------------------
+  // 坐标按页面归一化（0～1）存盘，缩放、换宽度、双页/对照都不用重算。
+  setAnnotVisible(v: boolean): void {
+    if (!v) { this.finishAnnotTip(); }
+    this.annotVisible = v;
+    this.root.classList.toggle("annots-hidden", !v);
+    this.renderAllAnnots();
+  }
+
+  private emitAnnotations(): void {
+    this.onAnnotations?.([...this.annotations]);
+  }
+
+  // 给当前选区加一条标注。笔记只取第一页（一份笔记不应该散成好几条）。
+  annotateSelection(kind: PdfAnnotKind, color = "yellow"): string | null {
+    const segs = this.selectionSegments();
+    if (!segs.length || !this.docId) { return null; }
+    const now = Date.now();
+    const made: PdfAnnotation[] = [];
+    const list = kind === "note" ? segs.slice(0, 1) : segs;
+    for (const seg of list) {
+      const wrap = this.pageWrap[seg.page];
+      if (!wrap) { continue; }
+      const wr = wrap.getBoundingClientRect();
+      if (!wr.width || !wr.height) { continue; }
+      const rects: PdfAnnotRect[] = seg.rects.map((r) => ({
+        x: clamp01((r.left - wr.left) / wr.width),
+        y: clamp01((r.top - wr.top) / wr.height),
+        w: clamp01(r.width / wr.width),
+        h: clamp01(r.height / wr.height)
+      })).filter((r) => r.w > 0.001 && r.h > 0.001);
+      if (!rects.length) { continue; }
+      made.push({
+        id: annotId(), docId: this.docId, page: seg.page, kind, color, rects,
+        text: seg.text.slice(0, 600), note: kind === "note" ? "" : undefined,
+        createdAt: now, updatedAt: now
+      });
+    }
+    if (!made.length) { return null; }
+    this.annotations.push(...made);
+    this.emitAnnotations();
+    this.renderAllAnnots();
+    for (const a of made) { void this.persistAnnot(a); }
+    window.getSelection()?.removeAllRanges();
+    this.clearSelection();
+    this.toast("已添加" + ANNOT_LABELS[kind]);
+    const first = made[0];
+    if (kind === "note") {
+      // 新建笔记直接把光标放到笔记框里
+      window.setTimeout(() => this.openAnnotTip(first.id, undefined, { focus: true }), 30);
+    }
+    return first.id;
+  }
+
+  private renderAllAnnots(): void {
+    this.root.classList.toggle("annots-hidden", !this.annotVisible);
+    const pages = Object.keys(this.annotLayer).map((k) => parseInt(k, 10));
+    for (const p of pages) { this.renderPageAnnots(p); }
+  }
+
+  private renderPageAnnots(page: number): void {
+    const layer = this.annotLayer[page];
+    if (!layer) { return; }
+    this.clearLayer(layer);
+    if (!this.annotVisible) { return; }
+    const wrap = this.pageWrap[page];
+    if (!wrap) { return; }
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h) { return; }
+    const items = this.annotations.filter((a) => a.page === page).sort((a, b) => a.createdAt - b.createdAt);
+    for (const a of items) {
+      const color = a.color || "yellow";
+      for (const r of a.rects) {
+        const el = document.createElement("div");
+        el.className = "annot-rect";
+        el.dataset.kind = a.kind;
+        el.dataset.color = color;
+        el.dataset.annot = a.id;
+        el.style.left = r.x * w + "px";
+        el.style.top = r.y * h + "px";
+        el.style.width = r.w * w + "px";
+        el.style.height = r.h * h + "px";
+        layer.appendChild(el);
+      }
+      // 只有真的写了内容（文字 / 图片 / 链接）才显示"笔记"小标：空白草稿关掉就没了
+      if ((a.note && a.note.trim()) || (a.images && a.images.length) || (a.links && a.links.length)) {
+        const last = a.rects[a.rects.length - 1];
+        if (!last) { continue; }
+        const mark = document.createElement("button");
+        mark.type = "button";
+        mark.className = "annot-mark";
+        mark.dataset.color = color;
+        mark.dataset.annot = a.id;
+        mark.title = a.note || (a.images?.length ? `${a.images.length} 张图片` : (a.links?.length ? `${a.links.length} 个链接` : "笔记"));
+        mark.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-note"></use></svg>';
+        mark.style.left = Math.max(0, Math.min(w - 16, (last.x + last.w) * w + 2)) + "px";
+        mark.style.top = Math.max(0, Math.min(h - 16, last.y * h - 2)) + "px";
+        mark.addEventListener("click", (ev) => { ev.stopPropagation(); this.openAnnotTip(a.id, mark); });
+        layer.appendChild(mark);
+      }
+    }
+  }
+
+  private async persistAnnot(a: PdfAnnotation): Promise<void> {
+    if (!this.docId) { return; }
+    try {
+      const saved = await window.api.annotationsSave(this.docId, a);
+      if (!saved) { return; }
+      const i = this.annotations.findIndex((x) => x.id === a.id);
+      if (i >= 0) { this.annotations[i] = saved; }
+      this.emitAnnotations();
+    } catch { /* 保存失败不打断阅读 */ }
+  }
+
+  removeAnnotation(id: string, message = "已删除标注"): void {
+    const i = this.annotations.findIndex((a) => a.id === id);
+    if (i < 0) { return; }
+    this.annotations.splice(i, 1);
+    if (this.annotTipId === id) { this.closeAnnotTip(); }
+    this.renderAllAnnots();
+    this.emitAnnotations();
+    void window.api.annotationsRemove(this.docId, id);
+    if (message) { this.toast(message); }
+  }
+
+  // 点在已有标注（高亮 / 下划线 / 删除线 / 笔记）的文字区域上：打开编辑面板补笔记。
+  // 高亮本身不能吃 pointer-events（否则没法在标注上继续选字），所以用几何命中判断：
+  // 只有"没拖动、没形成选区"的单击才算点击标注。
+  private onAnnotPointerDown = (e: PointerEvent): void => {
+    if (e.button !== 0) { return; }
+    this.annotDown = { x: e.clientX, y: e.clientY };
+    if (this.annotClickTimer) { window.clearTimeout(this.annotClickTimer); this.annotClickTimer = 0; }
+  };
+
+  private onAnnotClick = (e: MouseEvent): void => {
+    const down = this.annotDown;
+    this.annotDown = null;
+    if (!down) { return; }
+    if (Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 4) { return; }
+    const target = e.target as Element | null;
+    if (target && target.closest && target.closest(
+      ".annot-mark, .block-rect, .link-rect, .block-tip, .annot-tip, .sel-tools"
+    )) { return; }
+    const hit = this.annotationAt(e.clientX, e.clientY);
+    if (!hit) { return; }
+    // 双击选词时第一次 click 也会到；等一小会儿，选区非空就不弹面板
+    this.annotClickTimer = window.setTimeout(() => {
+      this.annotClickTimer = 0;
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().trim()) { return; }
+      this.openAnnotTip(hit.id);
+    }, 160);
+  };
+
+  // 鼠标移到已有标注上时描一圈，提示"这里可以点"
+  private onAnnotHover = (e: PointerEvent): void => {
+    if (this.annotHoverRaf) { return; }
+    const x = e.clientX, y = e.clientY;
+    this.annotHoverRaf = requestAnimationFrame(() => {
+      this.annotHoverRaf = 0;
+      if (this.root.hidden) { return; }
+      const hit = this.annotationAt(x, y);
+      const id = hit ? hit.id : null;
+      if (id === this.annotHoverId) { return; }
+      this.annotHoverId = id;
+      this.root.querySelectorAll<HTMLElement>(".annot-rect.is-hover").forEach((el) => el.classList.remove("is-hover"));
+      if (!hit) { return; }
+      const layer = this.annotLayer[hit.page];
+      layer?.querySelectorAll<HTMLElement>(`.annot-rect[data-annot="${hit.id}"]`).forEach((el) => el.classList.add("is-hover"));
+    });
+  };
+
+  private annotationAt(x: number, y: number): PdfAnnotation | null {
+    if (!this.annotVisible) { return null; }
+    for (const key of Object.keys(this.pageWrap)) {
+      const wrap = this.pageWrap[Number(key)];
+      if (!wrap) { continue; }
+      const r = wrap.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) { continue; }
+      if (x < r.left || x > r.right || y < r.top || y > r.bottom) { continue; }
+      const nx = (x - r.left) / r.width;
+      const ny = (y - r.top) / r.height;
+      const items = this.annotations.filter((a) => a.page === Number(key));
+      for (let i = items.length - 1; i >= 0; i--) {
+        const a = items[i];
+        if (a.rects.some((rect) => nx >= rect.x && nx <= rect.x + rect.w && ny >= rect.y && ny <= rect.y + rect.h)) {
+          return a;
+        }
+      }
+    }
+    return null;
+  }
+
+  // 从侧栏 / 笔记列表点过来：切回原文、定位到标注位置，并闪一下
+  async focusAnnotation(id: string): Promise<void> {
+    const a = this.annotations.find((x) => x.id === id);
+    if (!a) { return; }
+    if (this.view === "target") {
+      this.view = this.rightBytes ? "compare" : "source";
+      if (this.view === "compare") { this.layout = "single"; }
+      await this.build();
+    }
+    this.goToNumberedPage(a.page);
+    const wrap = await this.ensurePageText(a.page);
+    if (wrap) {
+      const r = wrap.getBoundingClientRect();
+      const rootRect = this.root.getBoundingClientRect();
+      const pageTop = r.top - rootRect.top + this.root.scrollTop;
+      const first = a.rects[0];
+      const target = pageTop + (first ? first.y * r.height : 0) - this.root.clientHeight * 0.3;
+      const maxTop = Math.max(0, this.root.scrollHeight - this.root.clientHeight);
+      this.root.scrollTop = Math.max(0, Math.min(maxTop, target));
+      this.expectedScrollTop = this.root.scrollTop;
+    }
+    this.renderAllAnnots();
+    const layer = this.annotLayer[a.page];
+    layer?.querySelectorAll<HTMLElement>(`[data-annot="${a.id}"]`).forEach((el) => {
+      el.classList.add("is-focus");
+      window.setTimeout(() => el.classList.remove("is-focus"), 1200);
+    });
+    // 左侧标注栏只负责定位，不展开编辑面板（要看 / 改就点页面上的标注）
+    this.emit({ displayPage: a.page, scrollFraction: 0 });
+  }
+
+  private annotAnchor(a: PdfAnnotation): HTMLElement | null {
+    const layer = this.annotLayer[a.page];
+    return layer?.querySelector<HTMLElement>(`.annot-mark[data-annot="${a.id}"]`)
+      || layer?.querySelector<HTMLElement>(`[data-annot="${a.id}"]`)
+      || this.pageWrap[a.page]
+      || null;
+  }
+
+  private ensureAnnotTip(): HTMLElement {
+    if (this.annotTipEl) { return this.annotTipEl; }
+    const el = document.createElement("div");
+    el.className = "annot-tip";
+    el.hidden = true;
+    el.innerHTML =
+      '<div class="annot-tip-head">' +
+      '<span class="annot-tip-title"></span>' +
+      '<button type="button" class="annot-tip-close" title="关闭"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg></button>' +
+      "</div>" +
+      '<div class="annot-tip-toolbar">' +
+      '<div class="annot-tip-colors"></div>' +
+      '<div class="annot-tip-tools">' +
+      '<button type="button" class="annot-tip-icon-btn annot-tip-link-btn" title="添加链接"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-link"></use></svg></button>' +
+      '<button type="button" class="annot-tip-icon-btn annot-tip-image-add" title="插入图片"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-image"></use></svg></button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="annot-tip-link-editor" hidden>' +
+      '<input class="annot-tip-url" type="text" spellcheck="false" placeholder="粘贴链接…" />' +
+      '<button type="button" class="annot-tip-link-add-btn">添加</button>' +
+      '<button type="button" class="annot-tip-link-cancel" title="取消"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg></button>' +
+      "</div>" +
+      '<div class="annot-tip-images"></div>' +
+      '<div class="annot-tip-link-list"></div>' +
+      '<textarea class="annot-tip-text" rows="3" placeholder="点击这里写笔记…（可粘贴图片）"></textarea>' +
+      '<input class="annot-tip-file" type="file" accept="image/*" hidden />' +
+      '<div class="annot-tip-footer">' +
+      '<button type="button" class="annot-tip-del">删除</button>' +
+      "</div>";
+    const colors = el.querySelector<HTMLElement>(".annot-tip-colors");
+    for (const c of ANNOT_COLORS) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "annot-tip-color";
+      b.dataset.color = c;
+      b.title = ANNOT_COLOR_LABELS[c];
+      b.addEventListener("click", () => {
+        const a = this.annotations.find((x) => x.id === this.annotTipId);
+        if (!a) { return; }
+        this.syncTipText(a);
+        a.color = c;
+        colors?.querySelectorAll<HTMLElement>(".annot-tip-color").forEach((x) => {
+          x.classList.toggle("active", x.dataset.color === c);
+        });
+        this.renderAllAnnots();
+        this.emitAnnotations();
+        void this.persistAnnot(a);
+      });
+      colors?.appendChild(b);
+    }
+    const file = el.querySelector<HTMLInputElement>(".annot-tip-file");
+    const text = el.querySelector<HTMLTextAreaElement>(".annot-tip-text");
+    el.querySelector<HTMLElement>(".annot-tip-close")?.addEventListener("click", () => this.finishAnnotTip());
+    el.querySelector<HTMLElement>(".annot-tip-link-btn")?.addEventListener("click", () => this.setTipLinkEditor(true));
+    el.querySelector<HTMLElement>(".annot-tip-link-cancel")?.addEventListener("click", () => this.setTipLinkEditor(false, true));
+    el.querySelector<HTMLElement>(".annot-tip-image-add")?.addEventListener("click", () => file?.click());
+    file?.addEventListener("change", () => {
+      const f = file.files?.[0] || null;
+      file.value = "";
+      if (f) { void this.addTipImage(f); }
+    });
+    // 笔记直接编辑，自动保存；粘贴图片 = 粘进当前笔记
+    text?.addEventListener("input", () => this.scheduleAnnotNoteSave());
+    el.addEventListener("paste", (ev) => {
+      const a = this.annotations.find((x) => x.id === this.annotTipId);
+      if (!a) { return; }
+      const item = Array.from(ev.clipboardData?.items || [])
+        .find((it) => it.kind === "file" && /^image\//i.test(it.type));
+      const f = item?.getAsFile();
+      if (!f) { return; }
+      ev.preventDefault();
+      void this.addTipImage(f);
+    });
+    el.querySelector<HTMLElement>(".annot-tip-link-add-btn")?.addEventListener("click", () => this.addTipLink());
+    el.querySelector<HTMLInputElement>(".annot-tip-url")?.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter") { return; }
+      ev.preventDefault();
+      this.addTipLink();
+    });
+    el.querySelector<HTMLElement>(".annot-tip-del")?.addEventListener("click", () => {
+      const id = this.annotTipId;
+      this.closeAnnotTip();
+      this.removeAnnotation(id);
+    });
+    (this.host.parentElement || document.body).appendChild(el);
+    this.annotTipEl = el;
+    this.annotTipOutside = (e: MouseEvent) => {
+      const t = e.target as Element | null;
+      if (t && t.closest && (t.closest(".annot-tip") || t.closest(".annot-mark"))) { return; }
+      this.finishAnnotTip();
+    };
+    document.addEventListener("mousedown", this.annotTipOutside, true);
+    this.annotTipKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") { return; }
+      const linkEditor = this.annotTipEl?.querySelector<HTMLElement>(".annot-tip-link-editor");
+      if (linkEditor && !linkEditor.hidden) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.setTipLinkEditor(false);
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      this.finishAnnotTip();
+    };
+    document.addEventListener("keydown", this.annotTipKey, true);
+    return el;
+  }
+
+  private closeAnnotTip(): void {
+    if (this.annotTipOutside) { document.removeEventListener("mousedown", this.annotTipOutside, true); this.annotTipOutside = null; }
+    if (this.annotTipKey) { document.removeEventListener("keydown", this.annotTipKey, true); this.annotTipKey = null; }
+    if (this.annotTipEl) { this.annotTipEl.remove(); this.annotTipEl = null; }
+    if (this.annotSaveTimer) { window.clearTimeout(this.annotSaveTimer); this.annotSaveTimer = 0; }
+    this.annotTipId = "";
+  }
+
+  private openAnnotTip(id: string, anchor?: Element | null, opts: { focus?: boolean } = {}): void {
+    const a = this.annotations.find((x) => x.id === id);
+    if (!a) { return; }
+    // 已经打开同一条（比如又点了它的标记）：不要重置输入状态
+    if (this.annotTipId === id && Object.keys(opts).length === 0) { return; }
+    // 切到另一条之前先保存当前笔记（空白草稿会在这里被清掉）
+    if (this.annotTipId && this.annotTipId !== id) { this.finishAnnotTip(); }
+    if (!this.annotations.some((x) => x.id === id)) { return; }
+    const el = this.ensureAnnotTip();
+    this.annotTipId = id;
+    const body = (a.note || "").trim();
+    const hasOther = !!(a.images && a.images.length) || !!(a.links && a.links.length);
+    const title = el.querySelector<HTMLElement>(".annot-tip-title");
+    if (title) {
+      title.textContent = ANNOT_LABELS[a.kind] + ((body || hasOther) && a.kind !== "note" ? " · 笔记" : "");
+    }
+    const colors = el.querySelector<HTMLElement>(".annot-tip-colors");
+    if (colors) {
+      colors.querySelectorAll<HTMLElement>(".annot-tip-color").forEach((b) => {
+        b.classList.toggle("active", b.dataset.color === (a.color || "yellow"));
+      });
+    }
+    const text = el.querySelector<HTMLTextAreaElement>(".annot-tip-text");
+    if (text) {
+      text.value = a.note || "";
+      text.placeholder = a.kind === "note" ? "点击这里写笔记…（可粘贴图片）" : "补充笔记…（可粘贴图片）";
+    }
+    const url = el.querySelector<HTMLInputElement>(".annot-tip-url");
+    if (url) { url.value = ""; }
+    this.renderTipImages(a);
+    this.renderTipLinks(a);
+    el.hidden = false;
+    this.setTipLinkEditor(false);
+    this.positionAnnotTip(el, (anchor as HTMLElement | undefined) || this.annotAnchor(a));
+    if (opts.focus && text) {
+      text.focus();
+      text.setSelectionRange(text.value.length, text.value.length);
+    }
+  }
+
+  private setTipLinkEditor(open: boolean, focusText = false): void {
+    const box = this.annotTipEl?.querySelector<HTMLElement>(".annot-tip-link-editor");
+    const input = this.annotTipEl?.querySelector<HTMLInputElement>(".annot-tip-url");
+    if (!box) { return; }
+    box.hidden = !open;
+    if (input) {
+      input.value = "";
+      if (open) { input.focus(); }
+    }
+    if (!open && focusText) {
+      this.annotTipEl?.querySelector<HTMLTextAreaElement>(".annot-tip-text")?.focus();
+    }
+    this.repositionAnnotTip();
+  }
+
+  private scheduleAnnotNoteSave(): void {
+    const a = this.annotations.find((x) => x.id === this.annotTipId);
+    const text = this.annotTipEl?.querySelector<HTMLTextAreaElement>(".annot-tip-text");
+    if (!a || !text) { return; }
+    a.note = text.value;
+    if (this.annotSaveTimer) { window.clearTimeout(this.annotSaveTimer); }
+    this.annotSaveTimer = window.setTimeout(() => {
+      this.annotSaveTimer = 0;
+      const cur = this.annotations.find((x) => x.id === this.annotTipId);
+      if (!cur) { return; }
+      this.renderAllAnnots();
+      this.emitAnnotations();
+      void this.persistAnnot(cur);
+    }, 400);
+  }
+
+  private flushAnnotNote(): void {
+    if (this.annotSaveTimer) { window.clearTimeout(this.annotSaveTimer); this.annotSaveTimer = 0; }
+    const a = this.annotations.find((x) => x.id === this.annotTipId);
+    const text = this.annotTipEl?.querySelector<HTMLTextAreaElement>(".annot-tip-text");
+    if (a && text) { a.note = text.value.trim(); }
+  }
+
+  // 关闭 / 点外面 / Esc：保存笔记；空白笔记直接移除，不留下标记
+  private finishAnnotTip(): void {
+    const a = this.annotations.find((x) => x.id === this.annotTipId);
+    if (a) {
+      this.flushAnnotNote();
+      const pendingLink = this.annotTipEl?.querySelector<HTMLInputElement>(".annot-tip-url");
+      if (pendingLink && pendingLink.value.trim()) { this.addTipLink(); }
+      if (a.kind === "note" && !(a.note || "").trim() && !(a.images && a.images.length) && !(a.links && a.links.length) && !this.tipImageBusy) {
+        this.removeAnnotation(a.id, "未填写内容的笔记已取消");
+        return;
+      }
+      this.renderAllAnnots();
+      this.emitAnnotations();
+      void this.persistAnnot(a);
+    }
+    this.closeAnnotTip();
+  }
+
+  private renderTipImages(a: PdfAnnotation): void {
+    const box = this.annotTipEl?.querySelector<HTMLElement>(".annot-tip-images");
+    if (!box) { return; }
+    const imgs = a.images || [];
+    box.hidden = imgs.length === 0;
+    box.innerHTML = "";
+    imgs.forEach((src, idx) => {
+      const fig = document.createElement("div");
+      fig.className = "annot-tip-image";
+      const img = document.createElement("img");
+      img.src = src;
+      img.alt = "";
+      fig.appendChild(img);
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "annot-tip-image-del";
+      del.title = "移除图片";
+      del.innerHTML = '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg>';
+      del.addEventListener("click", () => {
+        const cur = this.annotations.find((x) => x.id === a.id);
+        if (!cur) { return; }
+        this.syncTipText(cur);
+        cur.images = (cur.images || []).filter((_, i) => i !== idx);
+        if (!cur.images.length) { delete cur.images; }
+        this.renderTipImages(cur);
+        this.renderAllAnnots();
+        this.emitAnnotations();
+        this.repositionAnnotTip();
+        void this.persistAnnot(cur);
+      });
+      fig.appendChild(del);
+      box.appendChild(fig);
+    });
+  }
+
+  private renderTipLinks(a: PdfAnnotation): void {
+    const box = this.annotTipEl?.querySelector<HTMLElement>(".annot-tip-link-list");
+    if (!box) { return; }
+    const links = a.links || [];
+    box.hidden = links.length === 0;
+    box.innerHTML = "";
+    links.forEach((url, idx) => {
+      const row = document.createElement("div");
+      row.className = "annot-tip-link-row";
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "annot-tip-link";
+      open.title = "打开链接";
+      open.innerHTML = '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-link"></use></svg><span></span>';
+      const label = open.querySelector("span");
+      if (label) { label.textContent = url; }
+      open.addEventListener("click", (ev) => { ev.stopPropagation(); void window.api.openExternal(url); });
+      row.appendChild(open);
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "annot-tip-link-del";
+      del.title = "移除链接";
+      del.innerHTML = '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg>';
+      del.addEventListener("click", () => {
+        const cur = this.annotations.find((x) => x.id === a.id);
+        if (!cur) { return; }
+        this.syncTipText(cur);
+        cur.links = (cur.links || []).filter((_, i) => i !== idx);
+        if (!cur.links.length) { delete cur.links; }
+        this.renderTipLinks(cur);
+        this.emitAnnotations();
+        this.repositionAnnotTip();
+        void this.persistAnnot(cur);
+      });
+      row.appendChild(del);
+      box.appendChild(row);
+    });
+  }
+
+  private addTipLink(): void {
+    const a = this.annotations.find((x) => x.id === this.annotTipId);
+    const input = this.annotTipEl?.querySelector<HTMLInputElement>(".annot-tip-url");
+    if (!a || !input) { return; }
+    let v = input.value.trim();
+    if (!v) { return; }
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(v)) { v = "https://" + v; }
+    if (!/^(https?:|mailto:)/i.test(v)) {
+      this.toast("请输入网页或邮件链接");
+      return;
+    }
+    this.syncTipText(a);
+    if (!(a.links || []).includes(v)) { a.links = [...(a.links || []), v]; }
+    this.renderTipLinks(a);
+    this.setTipLinkEditor(false, true);
+    this.emitAnnotations();
+    void this.persistAnnot(a);
+  }
+
+  private async addTipImage(file: File): Promise<void> {
+    const a = this.annotations.find((x) => x.id === this.annotTipId);
+    if (!a) { return; }
+    this.tipImageBusy = true;
+    try {
+      const raw = await readImageFile(file);
+      const dataUrl = await normalizeImage(raw, 1400, 0.9);
+      if (!dataUrl) { return; }
+      if (!this.annotations.some((x) => x.id === a.id)) { return; }
+      // 面板已经切到另一条标注：不要把这边的文字写进旧笔记
+      const same = this.annotTipId === a.id;
+      if (this.annotTipId && !same) { return; }
+      if (same) { this.syncTipText(a); }
+      a.images = [...(a.images || []), dataUrl];
+      if (same) {
+        this.renderTipImages(a);
+        this.renderAllAnnots();
+        this.emitAnnotations();
+        this.repositionAnnotTip();
+      }
+      void this.persistAnnot(a);
+    } catch {
+      this.toast("图片读取失败");
+    } finally {
+      this.tipImageBusy = false;
+      if (!this.annotTipId && a.kind === "note" && !(a.note || "").trim() && !(a.images && a.images.length) && !(a.links && a.links.length)) {
+        this.removeAnnotation(a.id, "");
+      }
+    }
+  }
+
+  // 插图 / 移除图片前，先把文本框里的内容同步进标注，别把已写的字丢了
+  private syncTipText(a: PdfAnnotation): void {
+    const text = this.annotTipEl?.querySelector<HTMLTextAreaElement>(".annot-tip-text");
+    if (text) { a.note = text.value.trim(); }
+  }
+
+  // 跟着标注走：滚动时面板不要停在原地
+  private followAnnotTip(): void {
+    if (!this.annotTipEl || this.annotTipEl.hidden || !this.annotTipId) { return; }
+    const a = this.annotations.find((x) => x.id === this.annotTipId);
+    if (!a) { this.finishAnnotTip(); return; }
+    const anchor = this.annotAnchor(a);
+    if (!anchor) { return; }
+    const r = anchor.getBoundingClientRect();
+    const ar = this.root.getBoundingClientRect();
+    if (r.bottom < ar.top - 8 || r.top > ar.bottom + 8) {
+      this.finishAnnotTip();
+      return;
+    }
+    this.positionAnnotTip(this.annotTipEl, anchor);
+  }
+
+  private repositionAnnotTip(): void {
+    if (!this.annotTipEl || this.annotTipEl.hidden || !this.annotTipId) { return; }
+    const a = this.annotations.find((x) => x.id === this.annotTipId);
+    if (a) { this.positionAnnotTip(this.annotTipEl, this.annotAnchor(a)); }
+  }
+
+  private positionAnnotTip(el: HTMLElement, target: HTMLElement | null): void {
+    const area = this.root.getBoundingClientRect();
+    const r = target ? target.getBoundingClientRect() : area;
+    const w = el.offsetWidth, h = el.offsetHeight;
+    const GAP = 8, PAD = 8;
+    let left = r.right + GAP;
+    let top = r.top;
+    if (left + w > area.right - PAD) {
+      left = r.left - GAP - w;
+      if (left < area.left + PAD) {
+        left = Math.min(Math.max(area.left + PAD, r.left), Math.max(area.left + PAD, area.right - PAD - w));
+        top = r.bottom + GAP;
+        if (top + h > area.bottom - PAD) { top = r.top - GAP - h; }
+      }
+    }
+    left = Math.min(Math.max(left, area.left + PAD), Math.max(area.left + PAD, area.right - PAD - w));
+    top = Math.min(Math.max(top, area.top + PAD), Math.max(area.top + PAD, area.bottom - PAD - h));
+    el.style.left = Math.round(left - area.left) + "px";
+    el.style.top = Math.round(top - area.top) + "px";
+  }
+
   private async renderTextLayer(wrap: HTMLElement, page: any, baseWidth: number, refWidth: number): Promise<void> {
     const pdfjs = await getPdfjs();
     if (typeof pdfjs.renderTextLayer !== "function") { return; }
@@ -584,7 +1267,8 @@ export class ViewerEngine {
     if (this.leftDoc) { try { this.leftDoc.destroy(); } catch { /* */ } this.leftDoc = null; }
     if (this.rightDoc) { try { this.rightDoc.destroy(); } catch { /* */ } this.rightDoc = null; }
     this.hideBlockTip();
-    this.leftSlots = {}; this.rightSlots = {}; this.pageWrap = {}; this.blockLayer = {}; this.linkLayer = {}; this.rightLayer = {};
+    this.finishAnnotTip();
+    this.leftSlots = {}; this.rightSlots = {}; this.pageWrap = {}; this.blockLayer = {}; this.linkLayer = {}; this.rightLayer = {}; this.annotLayer = {};
     // blocksByPage belongs to the document, not to the DOM: keep it across rebuilds
     // (view/layout switches) so the block overlays can be re-rendered.
     this.pageSize = {}; this.renderedW = {}; this.renderedWR = {}; this.linksByPage = {};
@@ -642,6 +1326,9 @@ export class ViewerEngine {
           const citeLayer = document.createElement("div");
           citeLayer.className = "cite-layer";
           wrap.appendChild(citeLayer);
+          const annotLayer = document.createElement("div");
+          annotLayer.className = "annot-layer";
+          wrap.appendChild(annotLayer);
           const layer = document.createElement("div");
           layer.className = "block-layer" + (this.showBlocks() ? "" : " hidden");
           wrap.appendChild(layer);
@@ -651,6 +1338,7 @@ export class ViewerEngine {
           cell.appendChild(wrap);
           row.appendChild(cell);
           this.leftSlots[p] = canvas; this.pageWrap[p] = wrap; this.blockLayer[p] = layer; this.linkLayer[p] = linkLayer;
+          this.annotLayer[p] = annotLayer;
           await this.loadPageLinks(doc, page, p);
         }
         // right (translation)
@@ -714,6 +1402,7 @@ export class ViewerEngine {
         }
       }
       this.renderAllBlocks();
+      this.renderAllAnnots();
     } catch { /* ignore */ } finally { this.renderInFlight = false; }
   };
 
@@ -1200,8 +1889,8 @@ export class ViewerEngine {
     if (this.regionEl) { this.regionCancel?.(); }
     const target = e.target as Element | null;
     if (!target || !target.closest(".page-wrap")) { return; }
-    // 块框 / 内部链接有各自的点击行为
-    if (target.closest(".block-rect, .link-rect, .block-tip")) { return; }
+    // 块框 / 内部链接 / 标注有各自的点击行为
+    if (target.closest(".block-rect, .link-rect, .block-tip, .annot-rect, .annot-mark, .annot-tip")) { return; }
     if (!e.altKey && this.isTextAt(e.clientX, e.clientY)) { return; }
     this.beginRegionDrag(e);
   };
@@ -1492,11 +2181,15 @@ export class ViewerEngine {
   private async loadPageLinks(doc: any, pageProxy: any, page: number): Promise<void> {
     let annots: any[] = [];
     try { annots = await pageProxy.getAnnotations(); } catch { return; }
-    const entries: { page: number; rect: number[]; anchor: number }[] = [];
+    const entries: { page: number; rect: number[]; anchor: number; url?: string }[] = [];
     for (const a of annots) {
-      if (a.subtype !== "Link" || !a.dest) { continue; }
+      if (a.subtype !== "Link" || !Array.isArray(a.rect)) { continue; }
+      // PDF 自带的外链：直接交给系统浏览器打开
+      const raw = String(a.url || a.unsafeUrl || "").trim();
+      if (/^(https?:|mailto:)/i.test(raw)) { entries.push({ page: 0, rect: a.rect, anchor: 0, url: raw }); continue; }
+      if (!a.dest) { continue; }
       const resolved = await this.resolveDest(doc, a.dest);
-      if (resolved && Array.isArray(a.rect)) { entries.push({ page: resolved.page, rect: a.rect, anchor: resolved.anchor }); }
+      if (resolved) { entries.push({ page: resolved.page, rect: a.rect, anchor: resolved.anchor }); }
     }
     this.linksByPage[page] = entries;
   }
@@ -1540,7 +2233,12 @@ export class ViewerEngine {
       rect.dataset.anchor = String(item.anchor || 0);
       rect.style.left = x0 * sx + "px"; rect.style.top = (size.h - y1) * sy + "px";
       rect.style.width = (x1 - x0) * sx + "px"; rect.style.height = (y1 - y0) * sy + "px";
-      rect.addEventListener("click", (ev) => { ev.stopPropagation(); this.goToDest(item.page, item.anchor); });
+      if (item.url) {
+        rect.title = item.url;
+        rect.addEventListener("click", (ev) => { ev.stopPropagation(); void window.api.openExternal(item.url!); });
+      } else {
+        rect.addEventListener("click", (ev) => { ev.stopPropagation(); this.goToDest(item.page, item.anchor); });
+      }
       layer.appendChild(rect);
     }
   }
@@ -1626,6 +2324,20 @@ export class ViewerEngine {
     this.sourceUrl = payload.sourceUrl || "";
     this.docId = payload.docId || "";
     this.prepareSessionView(this.docId);
+    this.annotations = [];
+    if (this.docId) {
+      try {
+        const list = await window.api.annotationsList(this.docId);
+        this.annotations = list.filter((a) => !isEmptyAnnot(a));
+        // 顺手清掉旧版本留下的空白笔记 / 空链接
+        for (const a of list) {
+          if (isEmptyAnnot(a)) { void window.api.annotationsRemove(this.docId, a.id); }
+        }
+      } catch {
+        this.annotations = [];
+      }
+    }
+    this.emitAnnotations();
     const s = this.active;
     this.emit({
       title: this.sourceName, hasSource: true, hasTranslation: !!(s && (s.result || s.partial)),
@@ -1853,18 +2565,31 @@ export class ViewerEngine {
     this.active = null;
     this.sourceBytes = null; this.rightBytes = null; this.sourceName = ""; this.sourceUrl = ""; this.docId = "";
     this.blocksByPage = {};
+    this.annotations = [];
+    this.emitAnnotations();
     this.disposeBlockTip();
+    this.closeAnnotTip();
     this.resetDom();
     this.emit(this.blank());
   }
 
   // 卸载（关闭标签页）时调用：除了 reset，还要摘掉 document 上的选区监听
   dispose(): void {
+    // 卸载前把没保存的笔记落盘；此时不再回调 React（组件正在卸载）
+    this.onAnnotations = null;
+    this.finishAnnotTip();
     this.clearSelection();
+    this.closeAnnotTip();
     document.removeEventListener("selectionchange", this.onSelectionChange);
     document.removeEventListener("mouseup", this.onSelectionSettle);
     document.removeEventListener("pointerdown", this.onQuotePointerDown);
     this.root.removeEventListener("pointerdown", this.onPagePointerDown);
+    this.root.removeEventListener("pointerdown", this.onAnnotPointerDown);
+    this.root.removeEventListener("click", this.onAnnotClick);
+    this.root.removeEventListener("pointermove", this.onAnnotHover);
+    if (this.annotHoverRaf) { window.cancelAnimationFrame(this.annotHoverRaf); this.annotHoverRaf = 0; }
+    if (this.annotClickTimer) { window.clearTimeout(this.annotClickTimer); this.annotClickTimer = 0; }
+    this.onAnnotations = null;
     this.regionCancel?.();
     if (this.regionEl) { this.regionEl.remove(); this.regionEl = null; }
     this.reset();

@@ -121,6 +121,8 @@ export interface AgentChatRequest {
   // 区域里有什么字」告诉模型（截图里的公式/小字往往 OCR 不出来，这些上下文很关键）
   images?: { dataUrl: string; page?: number; anchor?: number; text?: string }[];
   refs?: string[];
+  // 本轮启用的技能 id（提示词 / 工作流程），完整说明由主进程注入上下文
+  skills?: string[];
   message: string;
   // 历史消息里的图片同样以 data URL 回传（仅 user 消息允许带图）
   history?: { role: "user" | "assistant"; content: string; images?: string[] }[];
@@ -202,7 +204,7 @@ export interface AppJobInfo {
 
 export interface AgentEvent {
   turnId: string;
-  type: "delta" | "reasoning" | "tool_call" | "tool_result" | "progress" | "confirmation" | "library_changed" | "papers" | "read" | "usage" | "done" | "error";
+  type: "delta" | "reasoning" | "tool_call" | "tool_result" | "progress" | "confirmation" | "library_changed" | "skills_changed" | "papers" | "read" | "usage" | "done" | "error";
   text?: string;
   name?: string;
   args?: string;
@@ -229,6 +231,8 @@ export interface ConvMessage {
   text: string;
   // 用户提问时附带的图片（data URL，随会话一起存本机）
   images?: string[];
+  // 用户这一轮启用的技能 id（用于在会话里显示技能名，并恢复后续追问的上下文）
+  skills?: string[];
   blocks?: ConvBlock[];
   tools?: ConvTool[];
   papers?: PaperHit[];
@@ -263,6 +267,18 @@ export interface ConversationSummary {
   title: string;
   updated_at: number;
   count: number;
+}
+
+// 用户自定义的 AI 技能：一套可复用的提示词 / 工作流程，启用后随提问注入上下文
+export interface Skill {
+  id: string;
+  name: string;
+  // 一句话说明"什么时候用"，会展示在技能列表里，也让模型判断该不该用
+  description: string;
+  // 完整的提示词 / 步骤
+  instructions: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface StorageEntry {
@@ -347,6 +363,38 @@ export interface TranslationRef {
   pages: string;
   created_at: number;
   name: string;
+}
+
+/** PDF 标注（存在文库文档目录里，不改动原 PDF 文件） */
+export type PdfAnnotKind = "highlight" | "underline" | "strike" | "note";
+
+/** 相对页面左上角的归一化矩形（0～1），缩放/换宽度时不用重算 */
+export interface PdfAnnotRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface PdfAnnotation {
+  id: string;
+  docId: string;
+  /** 1 起的页码 */
+  page: number;
+  kind: PdfAnnotKind;
+  /** yellow / green / blue / pink */
+  color: string;
+  rects: PdfAnnotRect[];
+  /** 选中的原文（笔记 / 链接的锚文本） */
+  text?: string;
+  /** 笔记内容 */
+  note?: string;
+  /** 笔记里的图片（data URL），随笔记一起保存 */
+  images?: string[];
+  /** 笔记里的链接 */
+  links?: string[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface LibraryDoc {
@@ -460,6 +508,9 @@ export interface Api {
   libraryReveal(id: string): Promise<boolean>;
   libraryAddTranslation(id: string, ref: TranslationRef): Promise<LibraryDoc | null>;
   libraryRemoveTranslation(id: string, cacheKey: string): Promise<LibraryDoc | null>;
+  annotationsList(id: string): Promise<PdfAnnotation[]>;
+  annotationsSave(id: string, annot: PdfAnnotation): Promise<PdfAnnotation | null>;
+  annotationsRemove(id: string, annotId: string): Promise<boolean>;
   backgroundPick(): Promise<{ name: string; source: string } | null>;
   backgroundClear(): Promise<boolean>;
   uiSettingsGet(): Promise<Record<string, unknown>>;
@@ -484,6 +535,9 @@ export interface Api {
   agentConversation(id: string): Promise<Conversation | null>;
   agentSaveConversation(conv: Conversation): Promise<void>;
   agentDeleteConversation(id: string): Promise<void>;
+  skillsList(): Promise<Skill[]>;
+  skillsSave(skill: { id?: string; name: string; description?: string; instructions: string }): Promise<Skill>;
+  skillsRemove(id: string): Promise<boolean>;
   getUpdateStatus(): Promise<UpdateStatus>;
   checkUpdate(): Promise<void>;
   downloadUpdate(): Promise<void>;

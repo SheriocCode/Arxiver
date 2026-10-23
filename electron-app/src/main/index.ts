@@ -7,11 +7,13 @@ import { Readable } from "node:stream";
 import * as config from "./config";
 import * as storage from "./storage";
 import * as library from "./library";
+import * as annotations from "./annotations";
 import * as paths from "./paths";
 import { EngineManager, clearTmpJobs, type PublicJob, type TransParams } from "./engine";
 import * as localModel from "./localmodel";
 import { AgentService, type AgentChatRequest } from "./agent/agent";
 import * as conversations from "./agent/conversations";
+import * as skills from "./agent/skills";
 import { getOutline } from "./outline";
 import { importPaper, fetchPdf } from "./importPaper";
 import { enrichDocMeta } from "./enrich";
@@ -582,6 +584,9 @@ function registerIpc(): void {
   ipcMain.handle("agent:conversation", (_event, id: string) => conversations.get(id));
   ipcMain.handle("agent:conversationSave", (_event, conv) => conversations.save(conv));
   ipcMain.handle("agent:conversationDelete", (_event, id: string) => conversations.remove(id));
+  ipcMain.handle("skills:list", () => skills.list());
+  ipcMain.handle("skills:save", (_event, input: { id?: string; name: string; description?: string; instructions: string }) => skills.save(input));
+  ipcMain.handle("skills:remove", (_event, id: string) => skills.remove(id));
 
   ipcMain.handle("storage:list", () => library.listTranslations());
   ipcMain.handle("logs:system", () => ({ entries: logger.list(), file: logger.logFile() }));
@@ -715,6 +720,9 @@ function registerIpc(): void {
   ipcMain.handle("library:recordOpen", (_event, id: string) => library.recordOpen(id));
   ipcMain.handle("library:addTranslation", (_event, id: string, ref) => library.addTranslation(id, ref));
   ipcMain.handle("library:removeTranslation", (_event, id: string, key: string) => library.removeTranslation(id, key));
+  ipcMain.handle("annotations:list", (_event, id: string) => annotations.list(id));
+  ipcMain.handle("annotations:save", (_event, id: string, annot) => annotations.save(id, annot));
+  ipcMain.handle("annotations:remove", (_event, id: string, annotId: string) => annotations.remove(id, annotId));
   ipcMain.handle("library:reveal", (_event, id: string) => {
     const file = library.sourcePath(id);
     if (!file) { return false; }

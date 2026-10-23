@@ -3,6 +3,7 @@ import * as text from "./text";
 import * as websearch from "../websearch";
 import { importPaper } from "../importPaper";
 import { get as getConfig, searchKey, searchProvider, readKeys } from "../config";
+import * as skills from "./skills";
 import type { ToolDef } from "./model";
 import type { PaperHit, PageRead } from "../../shared/types";
 
@@ -578,6 +579,81 @@ export const TOOLS: ToolImpl[] = [
       cols.add(col.id);
       library.updateDocument(doc.id, { collections: Array.from(cols) });
       return `已将《${doc.title}》加入分类「${name}」`;
+    }
+  },
+  {
+    def: {
+      name: "read_skill",
+      description: "读取某个自定义技能的完整提示词 / 步骤（按 id 或名称）。技能库的名称和说明已经在本轮上下文里；需要照着某个技能执行、但它的完整内容没被注入时用这个工具。",
+      parameters: {
+        type: "object",
+        properties: { name: { type: "string", description: "技能 id 或名称" } },
+        required: ["name"]
+      }
+    },
+    async run(args) {
+      const s = skills.get(String(args.name || ""));
+      if (!s) {
+        const all = skills.list();
+        return `没找到技能「${args.name || ""}」。现有技能：\n${all.map((x) => `- ${x.name}（id: ${x.id}）：${x.description || "无说明"}`).join("\n") || "（技能库为空）"}`;
+      }
+      return `技能「${s.name}」${s.description ? `（${s.description}）` : ""}\nid: ${s.id}\n\n${s.instructions}`;
+    }
+  },
+  {
+    write: true,
+    def: {
+      name: "save_skill",
+      description: "把一套可复用的提示词 / 工作流程保存成技能，或者更新已有技能。" +
+        "当用户说「把刚才这套做法存成技能」「以后都这样处理」「记住这个流程」，或要求你帮他建一个技能时调用。" +
+        "instructions 要写成以后能直接复用的通用指令，**不要**包含一次性的具体文献标题 / 页码 / 本次结果；把这些写成可替换的说明。" +
+        "属于写入操作，需用户批准。",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "简短名称，如「论文速读」「审稿式挑错」" },
+          description: { type: "string", description: "一句话说明什么时候用这个技能" },
+          instructions: { type: "string", description: "完整提示词 / 步骤，写给以后调用的你；可包含输出格式、检查清单、注意事项" },
+          id: { type: "string", description: "要覆盖更新的技能 id；新建时留空（同名也会更新）" }
+        },
+        required: ["name", "instructions"]
+      }
+    },
+    async run(args) {
+      try {
+        const saved = skills.save({
+          id: String(args.id || "").trim() || undefined,
+          name: String(args.name || ""),
+          description: String(args.description || ""),
+          instructions: String(args.instructions || "")
+        });
+        const list = skills.list();
+        return `技能「${saved.name}」已保存（id: ${saved.id}）${saved.description ? `\n说明：${saved.description}` : ""}` +
+          `\n技能库现在有 ${list.length} 个技能。用户可以在 AI 面板顶部的技能按钮里启用或继续编辑它。`;
+      } catch (err) {
+        return `保存技能失败：${(err as Error).message}`;
+      }
+    }
+  },
+  {
+    write: true,
+    def: {
+      name: "delete_skill",
+      description: "删除某个自定义技能（按 id 或名称）。属于写入操作，需用户批准。",
+      parameters: {
+        type: "object",
+        properties: { name: { type: "string", description: "技能 id 或名称" } },
+        required: ["name"]
+      }
+    },
+    async run(args) {
+      const s = skills.get(String(args.name || ""));
+      if (!s) {
+        const all = skills.list();
+        return `没找到技能「${args.name || ""}」。现有技能：${all.map((x) => x.name).join("、") || "（无）"}`;
+      }
+      skills.remove(s.id);
+      return `已删除技能「${s.name}」`;
     }
   }
 ];

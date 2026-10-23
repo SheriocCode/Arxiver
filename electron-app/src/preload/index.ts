@@ -58,6 +58,10 @@ const api = {
   libraryAddTranslation: (id: string, ref: unknown) => ipcRenderer.invoke("library:addTranslation", id, ref),
   libraryRemoveTranslation: (id: string, key: string) => ipcRenderer.invoke("library:removeTranslation", id, key),
 
+  annotationsList: (id: string) => ipcRenderer.invoke("annotations:list", id),
+  annotationsSave: (id: string, annot: unknown) => ipcRenderer.invoke("annotations:save", id, annot),
+  annotationsRemove: (id: string, annotId: string) => ipcRenderer.invoke("annotations:remove", id, annotId),
+
   backgroundPick: () => ipcRenderer.invoke("background:pick"),
   backgroundClear: () => ipcRenderer.invoke("background:clear"),
 
@@ -80,6 +84,9 @@ const api = {
   agentConversation: (id: string) => ipcRenderer.invoke("agent:conversation", id),
   agentSaveConversation: (conv: unknown) => ipcRenderer.invoke("agent:conversationSave", conv),
   agentDeleteConversation: (id: string) => ipcRenderer.invoke("agent:conversationDelete", id),
+  skillsList: () => ipcRenderer.invoke("skills:list"),
+  skillsSave: (skill: unknown) => ipcRenderer.invoke("skills:save", skill),
+  skillsRemove: (id: string) => ipcRenderer.invoke("skills:remove", id),
 
   getUpdateStatus: () => ipcRenderer.invoke("update:status"),
   checkUpdate: () => ipcRenderer.invoke("update:check"),

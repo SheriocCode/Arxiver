@@ -1,9 +1,10 @@
 import { EventEmitter } from "node:events";
 import crypto from "node:crypto";
-import type { AgentEvent, AgentChatRequest } from "../../shared/types";
+import type { AgentEvent, AgentChatRequest, Skill } from "../../shared/types";
 import * as library from "../library";
 import { runChat, modelConfigured, type ChatMessage, type ChatContentPart } from "./model";
 import { toolDefs, runTool, isWriteTool, webSearchState, type ToolContext } from "./tools";
+import * as skills from "./skills";
 
 export type { AgentChatRequest };
 
@@ -37,6 +38,10 @@ const SYSTEM_PROMPT = [
   "用户也可能随问题附上**图片**（PDF 区域截图或粘贴的图片）：直接依据图片内容回答，公式 / 图表 / 表格以图为准；不要声称看不到图片，也不要让用户重新输入图里的文字。",
   "写入操作（更新元数据、标签、星标/已读、移入回收站/恢复、加入或移出分类、改名/删除分类、增删笔记、把外部论文导入文库 import_paper）请直接调用对应工具：系统会先请用户批准，你无需再口头征询，直接调用即可。**不要声称自己没有这些能力**——用户让你导入论文、归类、加笔记、删分类，都用工具去做。",
   "导入与整理流水线：import_paper 拿到新文献 id 后，可继续 apply_tags / add_to_collection / add_note 等，完成「下载 → 归类 → 打标签 → 记笔记」这类多步操作；每一步都会单独请用户批准。",
+  "技能（skills）：用户可以把常用的提示词 / 工作流程存成技能，之后在 AI 面板一键启用。技能库的元数据每轮都会给出；用户启用某个技能时，它的完整说明会注入【本次启用的技能】，按它执行（与其它要求冲突时以技能为准）。你也可以用 read_skill 读取任意技能的完整内容。",
+  "  · 当用户说「把刚才这套做法存成技能」「以后都这样处理」「记住这个流程」，或者让你帮他建 / 改技能时，调用 save_skill：名称简短，description 写清什么时候用，instructions 写成以后可直接复用的通用步骤 / 提示词；不要把本次的具体文献标题、页码、一次性结果写死进去。要删技能用 delete_skill。这些写入都会先请用户批准。",
+  "  · 用户没有手动启用技能、但请求明显匹配某个技能的 description 时，先用 read_skill 读取并照它执行，回答开头用一句话说明「按技能《…》处理」；拿不准时不要擅自套用。",
+  "  · 如果用户只是第一次提出一个明显可复用的做法，先把任务做好；在回答末尾用一句话建议「可以存成技能」（不要主动调用 save_skill，除非用户同意或明确要求）。",
   "  · 用户给出的**分类名 / 标签名对不上**时（拼写差一点、记错了），先自己查：list_collections / list_library 看现有分类与标签，然后把最接近的候选直接摆出来让用户确认（如「库里没有 123124，最接近的是 124124，要删它吗？」）。**不要反过来要求用户去核对拼写**，也不要说「分类列表我这边没列出来」——你有 list_collections 工具。",
   "  · 指令有歧义或缺少信息时：先把**能确定的部分做完**（例如先把论文导入、先归类），再针对不确定的部分给出 A/B/C 这样的**具体可选项**并标明你的推荐（如「我建议 A：给这篇文献打标签 floorplan、reconstruction」）。不要只抛一个问题就停下，也不要臆测用户的意思。",
   "引用要求：每当陈述来自某段文献时，必须用 [[cite:文献id#页码|原文片段]] 标注来源（页码为 1 起）。片段是你所引用位置的一小段原文（约 10~60 字/词，从工具结果里**原样照抄**，不要改写、不要加省略号），前端会据此在 PDF 里定位并高亮该段；工具结果里已经给好的引用标记可直接复用，但若你引用的是同一段里的另一句，就把片段换成你实际引用的那句（仍从原文照抄）。确实无法摘出原文片段时才退回 [[cite:文献id#页码]]。",
@@ -99,6 +104,20 @@ export class AgentService extends EventEmitter {
       const lines = req.refs.map((id) => { const d = library.getDocument(id); return `- ${id} 《${d ? d.title : id}》`; });
       ctx.push(`【用户用 @ 额外引用的已打开文献（可作为对比/补充证据，需要用 read_document / search_in_document 读取）】\n${lines.join("\n")}`);
     }
+    // 技能库：把名称 / 说明给模型（方便判断该用哪个），启用的技能给完整说明
+    const allSkills = skills.list();
+    if (allSkills.length) {
+      ctx.push(`【用户的技能库（可复用提示词 / 工作流程）】\n` +
+        allSkills.map((s) => `- ${s.name}（id: ${s.id}）：${s.description || "（无说明）"}`).join("\n") +
+        `\n需要某个技能的具体步骤时用 read_skill 读取；不要凭空猜技能内容。`);
+    } else {
+      ctx.push(`【用户的技能库】目前为空。用户若需要固定流程，可以建议他把做法存成技能，或用 save_skill 帮他创建。`);
+    }
+    const activeSkills = (req.skills || []).map((id) => skills.get(id)).filter((s): s is Skill => !!s);
+    if (activeSkills.length) {
+      ctx.push(`【本次启用的技能（用户已选择，按其中的步骤 / 要求执行；与一般习惯冲突时以技能为准）】\n` +
+        activeSkills.map((s) => `## ${s.name}${s.description ? `（${s.description}）` : ""}\n${s.instructions}`).join("\n\n"));
+    }
     // 联网能力的三态：别让模型把「缺 Key」猜成「没开启」，也别在不可用时编造外部资料
     const web = webSearchState();
     if (!web.on) {
@@ -122,7 +141,7 @@ export class AgentService extends EventEmitter {
         "优先依据图片本身回答；需要精确定位或核对小字时，用上面的页码 / 纵向位置 / 区域文字去对照（必要时 read_document 读该页上下文）。" +
         "不要声称看不到图片；引用图片里的内容时说明是「截图中的…」。");
     }
-    ctx.push(`【用户问题】${req.message}`);
+    ctx.push(`【用户问题】${req.message.trim() || "（用户没有额外输入，请按本次启用的技能执行）"}`);
     messages.push({ role: "user", content: contentWithImages(ctx.join("\n"), images.map((i) => i.dataUrl)) });
     return messages;
   }
@@ -169,7 +188,11 @@ export class AgentService extends EventEmitter {
             if (signal.aborted) { throw new Error("已取消"); }
             if (decision.approved) {
               output = await runTool(call.name, decision.args || call.arguments, ctx);
-              this.emitEvent({ turnId, type: "library_changed" });
+              if (call.name === "save_skill" || call.name === "delete_skill") {
+                this.emitEvent({ turnId, type: "skills_changed" });
+              } else {
+                this.emitEvent({ turnId, type: "library_changed" });
+              }
             } else {
               output = "用户拒绝执行该操作，请勿重复尝试；如需可询问用户希望的修改。";
             }

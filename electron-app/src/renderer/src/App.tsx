@@ -54,6 +54,8 @@ export default function App(): JSX.Element {
   const stripRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const viewerRefs = useRef<Map<string, ViewerHandle>>(new Map());
+  // 每个文档上次选的译文：关闭标签页再打开时优先恢复（没有记录就优先全文）
+  const lastTranslationRef = useRef<Record<string, string>>({});
   const lib = useLibrary();
   const { settings, update: updateSettings } = useSettings();
   const libRef = useRef(lib);
@@ -173,11 +175,17 @@ export default function App(): JSX.Element {
 
   // Each open document owns its own mounted viewer (see the render below), so opening
   // a tab just adds it; the viewer loads its own source and translation.
-  const openDoc = useCallback((doc: { id: string; title: string; read: boolean; translations?: { cacheKey: string }[] }) => {
+  const openDoc = useCallback((doc: { id: string; title: string; read: boolean; translations?: { cacheKey: string; pages?: string }[] }) => {
     if (!doc) { return; }
     if (!doc.read) { void lib.update(doc.id, { read: true }); }
     lib.select(doc.id);
-    const key = (doc.translations && doc.translations[0]?.cacheKey) || "";
+    const list = doc.translations || [];
+    const remembered = lastTranslationRef.current[doc.id];
+    const key = (
+      list.find((t) => t.cacheKey === remembered)
+      || list.find((t) => !(t.pages || "").trim()) // 优先整篇译文，避免默认落到只翻了某几页的版本
+      || list[0]
+    )?.cacheKey || "";
     setDocs((prev) => (prev.find((d) => d.id === doc.id) ? prev : [...prev, { id: doc.id, name: doc.title || "文档", activeKey: key }]));
     setActiveDocId(doc.id);
     setActiveTab("doc");
@@ -208,6 +216,7 @@ export default function App(): JSX.Element {
   }, [lib, openDoc]);
 
   const selectTranslation = useCallback((key: string) => {
+    if (activeDocId) { lastTranslationRef.current[activeDocId] = key; }
     setDocs((prev) => prev.map((d) => (d.id === activeDocId ? { ...d, activeKey: key } : d)));
   }, [activeDocId]);
 
@@ -248,6 +257,7 @@ export default function App(): JSX.Element {
   // displayed, so its result still gets registered in the library.
   const onTranslationDone = useCallback((info: TranslationDoneInfo) => {
     const p = info.params;
+    lastTranslationRef.current[info.docId] = info.cacheKey;
     setDocs((prev) => prev.map((d) => (d.id === info.docId ? { ...d, activeKey: info.cacheKey } : d)));
     void window.api.libraryAddTranslation(info.docId, {
       cacheKey: info.cacheKey,

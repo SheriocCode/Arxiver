@@ -76,6 +76,11 @@ export function storageDir(): string {
   return path.join(userDataDir(), "storage");
 }
 
+// AI 助手的技能库（可复用的提示词 / 工作流程），只在本机保存。
+export function skillsPath(): string {
+  return path.join(userDataDir(), "skills.json");
+}
+
 // 用户自选的界面背景（图片/视频），由 arxiver-bg:// 协议提供给渲染端。
 export function backgroundDir(): string {
   return path.join(userDataDir(), "background");

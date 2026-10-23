@@ -62,6 +62,11 @@
   --accent-soft: rgba(16, 163, 127, 0.15);
   --accent-soft-2: rgba(16, 163, 127, 0.26);
   --star: #d9a441;
+  /* 页面标注用的颜色（高亮 / 下划线 / 链接 / 笔记） */
+  --annot-yellow: #e8b923;
+  --annot-green: #10a37f;
+  --annot-blue: #4c8dff;
+  --annot-pink: #e0639a;
   --radius-sm: 6px;
   --radius: 10px;
   --radius-lg: 14px;
@@ -99,6 +104,25 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: var(--pill); border: 3px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background: #4a4a4a; background-clip: padding-box; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* PDF 阅读区 / 标注侧栏 / AI 对话：滚动条稍微亮一点、宽一点，便于看到和抓取 */
+.reader-overlay .compare::-webkit-scrollbar,
+.reader-overlay .outline-body::-webkit-scrollbar,
+.ai-scroll::-webkit-scrollbar { width: 12px; height: 12px; }
+.reader-overlay .compare::-webkit-scrollbar-thumb,
+.reader-overlay .outline-body::-webkit-scrollbar-thumb,
+.ai-scroll::-webkit-scrollbar-thumb {
+  background: #5a5a5a;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+.reader-overlay .compare::-webkit-scrollbar-thumb:hover,
+.reader-overlay .outline-body::-webkit-scrollbar-thumb:hover,
+.ai-scroll::-webkit-scrollbar-thumb:hover { background: #7c7c7c; background-clip: padding-box; }
+.reader-overlay .compare::-webkit-scrollbar-button,
+.reader-overlay .outline-body::-webkit-scrollbar-button,
+.ai-scroll::-webkit-scrollbar-button { display: none; }
 
 /* ---------- 自定义下拉弹层（Chromium base-select）----------
    原生 <select> 的弹层由系统绘制、普通 CSS 改不动，所以用新的 base-select 把弹层暴露出来，
@@ -918,10 +942,16 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 }
 .reader-overlay .controls {
   display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0;
-  overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+  overflow-x: auto; overflow-y: hidden;
 }
-.reader-overlay .controls::-webkit-scrollbar { height: 6px; }
-.reader-overlay .controls::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 999px; }
+/* 工具栏横向滚动条：窄、圆、无箭头，别像一条横贯的"进度条" */
+.reader-overlay .controls::-webkit-scrollbar { height: 5px; }
+.reader-overlay .controls::-webkit-scrollbar-track { background: transparent; }
+.reader-overlay .controls::-webkit-scrollbar-thumb {
+  background: #484848; border: 0; border-radius: 999px; background-clip: border-box;
+}
+.reader-overlay .controls::-webkit-scrollbar-thumb:hover { background: #666; }
+.reader-overlay .controls::-webkit-scrollbar-button { display: none; }
 .reader-overlay .controls > * { flex: none; }
 .reader-overlay .field { display: inline-flex; flex-direction: row; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .reader-overlay select, .reader-overlay .navgroup input, .reader-overlay .menu-row input {
@@ -999,6 +1029,7 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .reader-overlay .workspace-body { position: relative; flex: 1; min-height: 0; display: flex; }
 .reader-overlay .viewer-stage { position: relative; flex: 1; min-width: 0; }
 .reader-overlay .outline-panel { flex: none; width: 248px; display: flex; flex-direction: column; min-height: 0; background: var(--bg-panel); border-right: 1px solid var(--border); }
+.reader-overlay .outline-panel.is-annots { width: 300px; }
 .reader-overlay .outline-tabs { display: flex; flex: none; border-bottom: 1px solid var(--border); }
 .reader-overlay .outline-tabs button { flex: 1; height: 36px; border-radius: 0; background: transparent; color: var(--muted); border-bottom: 2px solid transparent; }
 .reader-overlay .outline-tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
@@ -1015,6 +1046,35 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .reader-overlay .thumb:hover { background: var(--hover); }
 .reader-overlay .thumb.active { border-color: var(--accent); }
 .reader-overlay .thumb.active .thumb-no { color: var(--accent); }
+/* 标注列表（侧栏 → 标注） */
+.reader-overlay .annot-list { display: flex; flex-direction: column; gap: 2px; }
+.reader-overlay .annot-row { display: flex; align-items: stretch; gap: 2px; border-radius: var(--radius-sm); }
+.reader-overlay .annot-row:hover { background: var(--hover); }
+.reader-overlay .annot-row-main {
+  flex: 1; min-width: 0; height: auto; padding: 7px 8px; text-align: left;
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px;
+  background: transparent; color: var(--text-2); white-space: normal;
+}
+.reader-overlay .annot-row-head { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.reader-overlay .annot-row-kind { color: var(--text-2); }
+.reader-overlay .annot-row-meta { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); font-size: 11px; }
+.reader-overlay .annot-row-meta .icon { width: 12px; height: 12px; }
+.reader-overlay .annot-row-page { margin-left: auto; color: var(--faint); font-size: 11px; white-space: nowrap; }
+.reader-overlay .annot-row-text {
+  display: -webkit-box; overflow: hidden; text-align: left; white-space: normal;
+  font-size: 12px; line-height: 1.5;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word;
+}
+.reader-overlay .annot-row-text.is-note { color: var(--text); }
+.reader-overlay .annot-row-text.is-quote { color: var(--muted); }
+.reader-overlay .annot-row-text.is-meta { color: var(--faint); }
+.reader-overlay .annot-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--annot-color); flex: none; }
+.reader-overlay .annot-row-del {
+  flex: none; width: 26px; display: grid; place-items: center; height: auto; padding: 0;
+  background: transparent; color: var(--faint); border-radius: var(--radius-sm); opacity: 0;
+}
+.reader-overlay .annot-row:hover .annot-row-del { opacity: 1; }
+.reader-overlay .annot-row-del:hover { background: var(--surface-2); color: var(--text); }
 .reader-overlay .panel-btn.active { background: var(--accent); color: #fff; }
 .reader-overlay .maybe-empty { position: absolute; inset: 0; }
 
@@ -1040,6 +1100,37 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .reader-overlay .page-wrap .text-layer ::selection { background: transparent; }
 .reader-overlay .sel-layer { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .reader-overlay .sel-highlight { position: absolute; background: rgba(16,163,127,.35); border-radius: 1px; }
+
+/* ---- 标注层：高亮 / 下划线 / 删除线 / 笔记 ---- */
+.reader-overlay [data-color="yellow"] { --annot-color: var(--annot-yellow); }
+.reader-overlay [data-color="green"] { --annot-color: var(--annot-green); }
+.reader-overlay [data-color="blue"] { --annot-color: var(--annot-blue); }
+.reader-overlay [data-color="pink"] { --annot-color: var(--annot-pink); }
+.reader-overlay .annot-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.reader-overlay .compare.annots-hidden .annot-layer { display: none; }
+.reader-overlay .annot-rect { position: absolute; border-radius: 1px; }
+.reader-overlay .annot-rect[data-kind="highlight"] { background: color-mix(in srgb, var(--annot-color) 36%, transparent); }
+.reader-overlay .annot-rect[data-kind="note"] { background: color-mix(in srgb, var(--annot-color) 26%, transparent); }
+.reader-overlay .annot-rect[data-kind="underline"] { border-bottom: 2px solid var(--annot-color); }
+.reader-overlay .annot-rect[data-kind="strike"]::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1.5px;
+  background: var(--annot-color); opacity: .9;
+}
+.reader-overlay .annot-rect.is-hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--annot-color) 90%, transparent); }
+.reader-overlay .annot-rect.is-focus { animation: annot-flash 1.1s ease-out 1; }
+@keyframes annot-flash {
+  0% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--annot-color) 85%, transparent); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+.reader-overlay .annot-mark {
+  position: absolute; z-index: 1; display: grid; place-items: center;
+  width: 16px; height: 16px; padding: 0; border-radius: 50%;
+  border: 1px solid color-mix(in srgb, #000 22%, transparent);
+  background: var(--annot-color); color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.35);
+  pointer-events: auto; cursor: pointer;
+}
+.reader-overlay .annot-mark .icon { width: 10px; height: 10px; }
+.reader-overlay .annot-mark:hover { transform: scale(1.12); }
 /* AI 引用跳转后的定位高亮：用暖色和绿色选区区分开，闪一下，点别处消失 */
 .reader-overlay .cite-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .reader-overlay .cite-highlight { position: absolute; background: color-mix(in srgb, var(--star) 34%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--star) 78%, transparent); border-radius: 2px; animation: cite-flash .9s ease-out 1; }
@@ -1084,6 +1175,97 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .block-tip .tip-src-label { font-weight: 600; }
 .block-tip .tip-src-hint { color: var(--faint); }
 .block-tip .tip-src { margin-top: 4px; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+/* 标注面板：颜色、笔记、图片、链接都在同一层；笔记直接编辑并自动保存 */
+.annot-tip {
+  position: absolute; z-index: 97;
+  width: min(336px, 42vw); max-height: 52vh; overflow: auto;
+  padding: 8px 10px; background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); font-size: 12px; box-shadow: var(--shadow);
+}
+.annot-tip .annot-tip-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.annot-tip .annot-tip-title { flex: 1; font-size: 11px; color: var(--muted); }
+.annot-tip .annot-tip-close {
+  flex: none; display: grid; place-items: center; width: 20px; height: 20px;
+  border-radius: var(--radius-sm); color: var(--muted); background: transparent;
+}
+.annot-tip .annot-tip-close:hover { background: var(--hover); color: var(--text); }
+.annot-tip .annot-tip-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.annot-tip .annot-tip-colors { display: flex; align-items: center; gap: 6px; }
+.annot-tip .annot-tip-tools { display: flex; align-items: center; gap: 2px; }
+.annot-tip .annot-tip-icon-btn {
+  display: grid; place-items: center; width: 26px; height: 26px; padding: 0;
+  border-radius: var(--radius-sm); background: transparent; color: var(--muted);
+}
+.annot-tip .annot-tip-icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.annot-tip .annot-tip-color {
+  width: 16px; height: 16px; padding: 0; border-radius: 50%;
+  border: 2px solid transparent; background: var(--annot-color);
+}
+.annot-tip .annot-tip-color.active { border-color: var(--text); }
+/* 笔记里的链接：整行点击打开，右侧 × 移除 */
+.annot-tip .annot-tip-link-list { display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px; }
+.annot-tip .annot-tip-link-row {
+  display: flex; align-items: center; gap: 2px; max-width: 100%; height: 28px; padding: 0 3px 0 4px;
+  border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.annot-tip .annot-tip-link {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px;
+  height: 100%; padding: 0 4px; background: transparent; color: var(--text-2); text-align: left;
+}
+.annot-tip .annot-tip-link:hover { color: var(--text); }
+.annot-tip .annot-tip-link .icon { flex: none; color: var(--accent); }
+.annot-tip .annot-tip-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.annot-tip .annot-tip-link-del {
+  flex: none; display: grid; place-items: center; width: 20px; height: 20px;
+  padding: 0; border-radius: var(--radius-sm); background: transparent; color: var(--faint);
+}
+.annot-tip .annot-tip-link-del:hover { background: var(--surface-3); color: var(--text); }
+.annot-tip .annot-tip-link-editor { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; }
+.annot-tip .annot-tip-link-add-btn {
+  flex: none; height: 28px; padding: 0 9px; border-radius: var(--radius-sm);
+  background: var(--accent); color: #fff; font-size: 12px;
+}
+.annot-tip .annot-tip-link-add-btn:hover { background: var(--accent-strong-hover); }
+.annot-tip .annot-tip-link-cancel {
+  flex: none; display: grid; place-items: center; width: 24px; height: 24px;
+  padding: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted);
+}
+.annot-tip .annot-tip-link-cancel:hover { background: var(--surface-2); color: var(--text); }
+/* 笔记里的图片（作为笔记内容，不单独浮在页面上） */
+.annot-tip .annot-tip-images { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.annot-tip .annot-tip-image {
+  position: relative; width: 72px; height: 72px; overflow: hidden;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.annot-tip .annot-tip-image img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.annot-tip .annot-tip-image-del {
+  position: absolute; right: 2px; top: 2px; display: grid; place-items: center;
+  width: 16px; height: 16px; padding: 0; border-radius: 50%;
+  background: color-mix(in srgb, #000 58%, transparent); color: #fff;
+  opacity: 0; transition: opacity .12s ease;
+}
+.annot-tip .annot-tip-image:hover .annot-tip-image-del { opacity: 1; }
+.annot-tip .annot-tip-image-del:hover { background: color-mix(in srgb, #000 78%, transparent); }
+.annot-tip .annot-tip-text, .annot-tip .annot-tip-url {
+  display: block; width: 100%; padding: 7px 9px;
+  background: var(--surface-2); border: 1px solid transparent; border-radius: var(--radius-sm);
+  color: var(--text); font-size: 12px; line-height: 1.6; outline: none;
+}
+.annot-tip .annot-tip-text { min-height: 72px; resize: vertical; font-family: inherit; }
+.annot-tip .annot-tip-text::placeholder, .annot-tip .annot-tip-url::placeholder { color: var(--faint); }
+.annot-tip .annot-tip-text:hover { border-color: var(--border-strong); }
+.annot-tip .annot-tip-url { width: auto; flex: 1; min-width: 0; border-color: var(--border-strong); }
+.annot-tip .annot-tip-text:focus, .annot-tip .annot-tip-url:focus { border-color: var(--accent); }
+.annot-tip [hidden] { display: none !important; }
+.annot-tip .annot-tip-footer {
+  display: flex; align-items: center; justify-content: flex-end;
+  margin-top: 2px; padding-top: 8px; border-top: 1px solid var(--border);
+}
+.annot-tip .annot-tip-del {
+  height: 26px; padding: 0 8px; border-radius: var(--radius-sm);
+  background: transparent; color: #f0857b; font-size: 12px;
+}
+.annot-tip .annot-tip-del:hover { background: color-mix(in srgb, #f0857b 12%, transparent); }
 /* 公式 / 富文本占位符（{v0} / {{v0}}）：抽到公式文本就直接显示，抽不到就标出占位符 */
 .block-tip .vph {
   display: inline-block; max-width: 240px; margin: 0 1px; padding: 0 4px;
@@ -1421,13 +1603,30 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 .set-range-val { min-width: 36px; text-align: right; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 
 /* ---- AI agent ---- */
-.reader-overlay .sel-ask {
+/* 选字后的浮动工具条：高亮颜色 / 下划线 / 删除线 / 笔记 / 链接 / 问 AI */
+.reader-overlay .sel-tools {
   position: absolute; transform: translate(-100%, 0); z-index: 60;
-  display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px;
-  background: var(--accent-strong); color: #fff; border: 0; border-radius: 999px;
-  box-shadow: var(--shadow); cursor: pointer; font-size: 12px; white-space: nowrap;
+  display: flex; align-items: center; gap: 2px; height: 32px; padding: 2px 5px;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--pill); box-shadow: var(--shadow); white-space: nowrap;
 }
-.reader-overlay .sel-ask:hover { background: var(--accent-strong-hover); }
+.reader-overlay .sel-tool {
+  display: grid; place-items: center; width: 24px; height: 24px; padding: 0;
+  border-radius: 50%; background: transparent; color: var(--text-2);
+}
+.reader-overlay .sel-tool:hover { background: var(--hover); color: var(--text); }
+.reader-overlay .sel-tool.sel-dot {
+  width: 16px; height: 16px; margin: 0 1px; border-radius: 50%;
+  border: 1px solid var(--border-strong); background: var(--annot-color);
+}
+.reader-overlay .sel-tool.sel-dot:hover { border-color: var(--text); transform: scale(1.08); }
+.reader-overlay .sel-tool.sel-dot.active { border-color: var(--text); box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px var(--text-2); }
+.reader-overlay .sel-sep { width: 1px; height: 16px; margin: 0 2px; background: var(--border-strong); }
+.reader-overlay .sel-tool.sel-tool-wide {
+  display: inline-flex; align-items: center; gap: 4px; width: auto; padding: 0 9px;
+  border-radius: var(--pill); background: var(--accent-strong); color: #fff; font-size: 12px;
+}
+.reader-overlay .sel-tool.sel-tool-wide:hover { background: var(--accent-strong-hover); }
 .cite-chip { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; margin: 0 2px; border-radius: 999px; background: color-mix(in srgb, var(--star) 18%, transparent); color: var(--star); font-size: 11px; cursor: pointer; border: 0; vertical-align: baseline; }
 .cite-chip:hover { background: color-mix(in srgb, var(--star) 32%, transparent); }
 /* 带原文片段的引用：把页码和段落一起显示，太长时在胶囊里换行 */
@@ -1564,6 +1763,71 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 .ai-hist-meta { font-size: 10.5px; color: var(--faint); }
 .ai-hist-search { width: 100%; box-sizing: border-box; height: 30px; margin-bottom: 4px; padding: 0 8px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); outline: none; font-size: 12px; }
 .ai-brand { font-size: 13px; font-weight: 600; color: var(--text); }
+
+/* ---- AI skills（可复用的提示词 / 工作流程） ---- */
+.ai-skills-wrap { position: relative; }
+.ai-skills-pop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 45;
+  width: 300px; max-width: calc(100vw - 32px); max-height: min(540px, 72vh); overflow: auto;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 8px;
+}
+.ai-skills-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 6px; }
+.ai-skills-head h4 { flex: 1; margin: 0; font-size: 12.5px; font-weight: 600; color: var(--text); }
+.ai-skill-new { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-2); font-size: 11.5px; }
+.ai-skill-new:hover { background: var(--surface-3); color: var(--text); }
+.ai-skills-hint { padding: 0 4px 8px; font-size: 11px; line-height: 1.5; color: var(--faint); }
+.ai-skills-empty { padding: 10px 8px 14px; font-size: 12px; line-height: 1.6; color: var(--faint); text-align: center; }
+.ai-skills-list { display: flex; flex-direction: column; gap: 2px; }
+.ai-skill-item { display: flex; align-items: center; gap: 1px; border-radius: var(--radius-sm); }
+.ai-skill-item:hover { background: var(--hover); }
+.ai-skill-item.is-on { background: var(--accent-soft); }
+.ai-skill-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 7px 8px; background: transparent; color: var(--text-2); text-align: left; white-space: normal; }
+.ai-skill-name { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text); }
+.ai-skill-check { display: inline-flex; color: var(--accent); }
+.ai-skill-check .icon { width: 13px; height: 13px; }
+.ai-skill-desc { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
+.ai-skill-item .icon-btn { flex: none; width: 26px; height: 26px; opacity: .55; }
+.ai-skill-item:hover .icon-btn { opacity: 1; }
+.ai-skills-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.ai-skills-foot .btn { height: 26px; padding: 0 9px; font-size: 11.5px; }
+
+/* 新建 / 编辑技能：与技能列表共用同一个弹出层 */
+.ai-skill-form { display: flex; flex-direction: column; gap: 8px; }
+.ai-skill-field { display: flex; flex-direction: column; gap: 4px; }
+.ai-skill-field > span { font-size: 11px; color: var(--muted); }
+.ai-skill-field input, .ai-skill-field textarea {
+  width: 100%; box-sizing: border-box; padding: 6px 8px;
+  background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 12px; line-height: 1.55; outline: none; font-family: inherit;
+}
+.ai-skill-field textarea { min-height: 120px; resize: vertical; }
+.ai-skill-field input:focus, .ai-skill-field textarea:focus { border-color: var(--accent); }
+.ai-skill-field input::placeholder, .ai-skill-field textarea::placeholder { color: var(--faint); }
+.ai-skill-error { font-size: 11.5px; color: #f0857b; }
+.ai-skill-form-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.ai-skill-form-actions .btn { height: 26px; padding: 0 10px; font-size: 11.5px; }
+
+/* 用户消息 / 输入框里的已启用技能 */
+.msg-skills { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-bottom: 4px; }
+.msg-skill-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--text-2); font-size: 11px; }
+.msg-skill-chip .icon { width: 12px; height: 12px; color: var(--accent); }
+.ai-skill-chip { border: 1px solid var(--accent); background: var(--accent-soft); }
+.ai-skill-chip .icon { width: 12px; height: 12px; color: var(--accent); }
+
+/* 空会话里的技能快捷入口：不打开面板也能看到 / 启用 */
+.ai-skill-quick { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border); text-align: left; }
+.ai-skill-quick-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 11.5px; color: var(--muted); }
+.ai-skill-quick-head span { display: inline-flex; align-items: center; gap: 5px; }
+.ai-skill-manage { margin-left: auto; padding: 0; background: transparent; color: var(--accent); font-size: 11.5px; }
+.ai-skill-manage:hover { text-decoration: underline; }
+.ai-skill-quick-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-skill-quick-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; background: var(--surface-2); color: var(--text-2); font-size: 11.5px; }
+.ai-skill-quick-chip:hover { background: var(--surface-3); color: var(--text); }
+.ai-skill-quick-chip.is-on { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
+.ai-skill-quick-chip .icon { width: 12px; height: 12px; color: var(--accent); }
+.ai-skill-quick-empty { width: 100%; padding: 9px 10px; border: 1px dashed var(--border-strong); border-radius: var(--radius); background: transparent; color: var(--muted); font-size: 11.5px; text-align: left; }
+.ai-skill-quick-empty:hover { color: var(--text); border-color: var(--accent); }
 
 /* ---- AI panel fills height; composer pinned at bottom ---- */
 .tab-panel.ai-tab { height: 100%; padding: 0; display: flex; flex-direction: column; min-height: 0; }
