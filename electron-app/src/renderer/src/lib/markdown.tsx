@@ -6,7 +6,10 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 
 // [[cite:docId#page]] 或 [[cite:docId#page|原文片段]]（片段用于在 PDF 文本层里定位并高亮）
-const CITE = /\[\[cite:([0-9a-fA-F]*)#(\d+)(?:\|([^\]]*))?\]\]/g;
+// 片段是原文照抄，可能自带参考文献角标（如 [31]），所以不能用 [^\]]* 把它截断；
+// 结尾用 \]\](?!\]) 以兼容片段本身以 ] 结尾（如 “… [34]”）。模型偶尔还会把分隔符
+// 写成 ] 而不是 |，一起兼容。
+const CITE = /\[\[cite:([0-9a-fA-F]*)#(\d+)([\s\S]*?)\]\](?!\])/g;
 const CARD = /\[\[card:(\d+)\]\]/g;
 
 // 引用胶囊里展示的段落预览：太长就截断，完整内容放在 title 里
@@ -41,8 +44,8 @@ export function Markdown({ text, onCite, onCard }: {
   onCard?: (n: number) => void;
 }): JSX.Element {
   const prepared = String(text || "")
-    .replace(CITE, (_m, id: string, page: string, quote?: string) => {
-      const q = String(quote || "").replace(/\s+/g, " ").trim();
+    .replace(CITE, (_m, id: string, page: string, raw?: string) => {
+      const q = String(raw || "").replace(/^\s*[|\]]/, "").replace(/\s+/g, " ").trim();
       const href = `cite:${id}#${page}${q ? "|" + encodeQuote(q) : ""}`;
       return `[第 ${page} 页](${href})`;
     })

@@ -3,6 +3,7 @@ import type { AppConfig, PdfAnnotation, PdfAnnotKind, TransParams, TranslationRe
 import { ViewerEngine, type ViewerStatus, type TranslationDoneInfo, type RegionCapture } from "../viewer/engine";
 import { Icon } from "./Icons";
 import { LANGS } from "../lib/langs";
+import { PAGE_THEMES, type PageTheme } from "../state/settings";
 
 export interface ViewerHandle {
   goToPage(page: number, quote?: string): void;
@@ -40,15 +41,6 @@ function annotExcerpt(a: PdfAnnotation): { text: string; kind: "note" | "quote" 
   return { text: "空笔记", kind: "meta" };
 }
 
-type PageTheme = "original" | "green" | "beige" | "dark";
-
-const THEMES: [PageTheme, string, string][] = [
-  ["original", "原始", "#ffffff"],
-  ["green", "护眼", "#cce8cf"],
-  ["beige", "米黄", "#f3ead3"],
-  ["dark", "暗色", "#1a1a1a"]
-];
-
 interface Props {
   docId: string;
   visible: boolean;
@@ -57,6 +49,8 @@ interface Props {
   activeKey: string;
   showBlocksTranslating: boolean;
   showBlocksTranslation: boolean;
+  pageTheme: PageTheme;
+  onPageThemeChange: (theme: PageTheme) => void;
   onToggleBlocks: (which: "translating" | "viewing") => void;
   onSelectTranslation: (key: string) => void;
   onAskSelection?: (text: string, page: number) => void;
@@ -66,7 +60,7 @@ interface Props {
 }
 
 const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
-  { docId, visible, config, translations, activeKey, showBlocksTranslating, showBlocksTranslation, onToggleBlocks, onSelectTranslation, onAskSelection, onCaptureImage, captureEnabled = true, onTranslationDone }, ref
+  { docId, visible, config, translations, activeKey, showBlocksTranslating, showBlocksTranslation, pageTheme, onPageThemeChange, onToggleBlocks, onSelectTranslation, onAskSelection, onCaptureImage, captureEnabled = true, onTranslationDone }, ref
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
   const doneRef = useRef(onTranslationDone);
@@ -97,7 +91,6 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const [outlineGenerating, setOutlineGenerating] = useState(false);
   const [outlineGenerated, setOutlineGenerated] = useState(false);
   const thumbRefs = useRef<(HTMLCanvasElement | null)[]>([]);
-  const [theme, setTheme] = useState<PageTheme>("original");
   const [themeOpen, setThemeOpen] = useState(false);
   const [themePos, setThemePos] = useState<{ left: number; top: number } | null>(null);
   const themeRef = useRef<HTMLDivElement>(null);
@@ -492,22 +485,22 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   }
 
   return (
-    <div className="workspace" data-page-theme={theme} hidden={!hasSource || !visible}>
+    <div className="workspace" data-page-theme={pageTheme} hidden={!hasSource || !visible}>
       <header className="toolbar">
         <div className="controls">
           <button type="button" className={"panel-btn" + (panel ? " active" : "")} title="目录 / 缩略图" onClick={() => setPanel(panel ? null : "toc")}><Icon name="panel-left" small /></button>
 
           <div className="theme-menu" ref={themeRef}>
             <button type="button" className="theme-btn" title="页面背景" onClick={toggleTheme}>
-              <span className="swatch" style={{ background: THEMES.find((t) => t[0] === theme)?.[2] }} />
+              <span className="swatch" style={{ background: PAGE_THEMES.find((t) => t[0] === pageTheme)?.[2] }} />
             </button>
             {themeOpen && (
               <div className="menu-pop theme-pop" style={{ left: themePos?.left, top: themePos?.top }}>
-                {THEMES.map(([id, label, color]) => (
-                  <button key={id} type="button" className={"theme-item" + (theme === id ? " active" : "")} onClick={() => { setTheme(id); setThemeOpen(false); }}>
+                {PAGE_THEMES.map(([id, label, color]) => (
+                  <button key={id} type="button" className={"theme-item" + (pageTheme === id ? " active" : "")} onClick={() => { onPageThemeChange(id); setThemeOpen(false); }}>
                     <span className="swatch" style={{ background: color }} />
                     <span className="theme-label">{label}</span>
-                    {theme === id && <Icon name="check" small />}
+                    {pageTheme === id && <Icon name="check" small />}
                   </button>
                 ))}
               </div>

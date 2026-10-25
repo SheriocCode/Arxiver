@@ -2,7 +2,7 @@ import { useEffect, useState, type JSX } from "react";
 import type { AppConfig, AppInfo, LocalModelStatus, UpdateStatus } from "../../../shared/types";
 import { Icon } from "./Icons";
 import { LANGS } from "../lib/langs";
-import { ACCENTS, type AppSettings } from "../state/settings";
+import { ACCENTS, PAGE_THEMES, type AppSettings } from "../state/settings";
 import { Markdown } from "../lib/markdown";
 import SystemPanel from "./SystemPanel";
 
@@ -204,6 +204,13 @@ export default function SettingsView({
                           style={{ background: ACCENTS[k].a }} onClick={() => updateSettings({ accent: k })} />
                       ))}
                     </div>
+                  </Row>
+                </Group>
+                <Group title="PDF 页面">
+                  <Row label="页面背景" desc="所有文档共用同一配色；也可以在阅读器工具栏的色块按钮里切换">
+                    <select value={settings.pageTheme} onChange={(e) => updateSettings({ pageTheme: e.target.value as AppSettings["pageTheme"] })}>
+                      {PAGE_THEMES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                    </select>
                   </Row>
                 </Group>
                 <Group title="显示">

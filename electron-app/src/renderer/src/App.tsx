@@ -452,6 +452,8 @@ export default function App(): JSX.Element {
                     activeKey={d.activeKey}
                     showBlocksTranslating={settings.showBlocksTranslating}
                     showBlocksTranslation={settings.showBlocksTranslation}
+                    pageTheme={settings.pageTheme}
+                    onPageThemeChange={(pageTheme) => updateSettings({ pageTheme })}
                     onToggleBlocks={(which) => updateSettings(which === "translating"
                       ? { showBlocksTranslating: !settings.showBlocksTranslating }
                       : { showBlocksTranslation: !settings.showBlocksTranslation })}

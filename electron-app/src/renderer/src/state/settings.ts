@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 
 export type Accent = "green" | "blue" | "orange";
+export type PageTheme = "original" | "green" | "beige" | "dark";
+
+// PDF 页面背景是全局设置：所有打开的文档共用同一个配色
+export const PAGE_THEMES: [PageTheme, string, string][] = [
+  ["original", "原始", "#ffffff"],
+  ["green", "护眼", "#cce8cf"],
+  ["beige", "米黄", "#f3ead3"],
+  ["dark", "暗色", "#1a1a1a"]
+];
 
 export interface AppSettings {
   defaultTab: "info" | "notes" | "tags" | "ai";
@@ -17,6 +26,7 @@ export interface AppSettings {
   backgroundEnabled: boolean;
   backgroundFile: string;
   backgroundOpacity: number;
+  pageTheme: PageTheme;
 }
 
 const DEFAULTS: AppSettings = {
@@ -33,7 +43,8 @@ const DEFAULTS: AppSettings = {
   splashEnabled: true,
   backgroundEnabled: false,
   backgroundFile: "",
-  backgroundOpacity: 0.9
+  backgroundOpacity: 0.9,
+  pageTheme: "original"
 };
 
 export const ACCENTS: Record<Accent, { a: string; strong: string; strongHover: string; soft: string; soft2: string }> = {
