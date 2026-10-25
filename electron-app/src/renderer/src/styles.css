@@ -1762,6 +1762,12 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 .ai-hist-title { font-size: 12.5px; }
 .ai-hist-meta { font-size: 10.5px; color: var(--faint); }
 .ai-hist-search { width: 100%; box-sizing: border-box; height: 30px; margin-bottom: 4px; padding: 0 8px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); outline: none; font-size: 12px; }
+.ai-hist-rename {
+  flex: 1; min-width: 0; height: 30px; padding: 0 8px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--accent); border-radius: var(--radius-sm); outline: none;
+  font-size: 12.5px;
+}
 .ai-brand { font-size: 13px; font-weight: 600; color: var(--text); }
 
 /* ---- AI skills（可复用的提示词 / 工作流程） ---- */

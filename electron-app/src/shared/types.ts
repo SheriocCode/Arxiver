@@ -534,6 +534,7 @@ export interface Api {
   agentConversations(filter: { scope: "paper" | "library"; docId?: string }): Promise<ConversationSummary[]>;
   agentConversation(id: string): Promise<Conversation | null>;
   agentSaveConversation(conv: Conversation): Promise<void>;
+  agentRenameConversation(id: string, title: string): Promise<boolean>;
   agentDeleteConversation(id: string): Promise<void>;
   skillsList(): Promise<Skill[]>;
   skillsSave(skill: { id?: string; name: string; description?: string; instructions: string }): Promise<Skill>;

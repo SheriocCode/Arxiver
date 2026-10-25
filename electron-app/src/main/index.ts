@@ -583,6 +583,7 @@ function registerIpc(): void {
   ipcMain.handle("agent:conversations", (_event, filter: { scope: "paper" | "library"; docId?: string }) => conversations.list(filter));
   ipcMain.handle("agent:conversation", (_event, id: string) => conversations.get(id));
   ipcMain.handle("agent:conversationSave", (_event, conv) => conversations.save(conv));
+  ipcMain.handle("agent:conversationRename", (_event, id: string, title: string) => conversations.rename(id, title));
   ipcMain.handle("agent:conversationDelete", (_event, id: string) => conversations.remove(id));
   ipcMain.handle("skills:list", () => skills.list());
   ipcMain.handle("skills:save", (_event, input: { id?: string; name: string; description?: string; instructions: string }) => skills.save(input));

@@ -716,6 +716,10 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   // 选中 AI 回答后出现的浮动入口（fixed 定位，不占正文空间）
   const [selAsk, setSelAsk] = useState<{ left: number; top: number; text: string } | null>(null);
   const [histQuery, setHistQuery] = useState("");
+  // 历史对话重命名：只作用于列表里的标题，不改动对话内容与排序
+  const [renamingId, setRenamingId] = useState("");
+  const [renameText, setRenameText] = useState("");
+  const renameCancelRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // 输入框随内容长高（最多 120px，超过就内部滚动）。
   // 注意：面板隐藏时 scrollHeight=0，不能把 0 写进 height，否则输入框变成 0 高、没法点击。
@@ -1261,6 +1265,19 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     setConvList(await window.api.agentConversations({ scope: "library" }));
     if (id === convIdRef.current) { newConv(); }
   };
+  const startRename = (c: ConversationSummary): void => {
+    renameCancelRef.current = false;
+    setRenamingId(c.id);
+    setRenameText(c.title || "");
+  };
+  const finishRename = async (c: ConversationSummary): Promise<void> => {
+    if (renameCancelRef.current) { renameCancelRef.current = false; return; }
+    const title = renameText.trim();
+    setRenamingId("");
+    if (!title || title === c.title) { return; }
+    await window.api.agentRenameConversation(c.id, title);
+    setConvList(await window.api.agentConversations({ scope: "library" }));
+  };
 
   return (
     <div className="ai-panel">
@@ -1304,11 +1321,37 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
                 const para = titles.slice(0, 2).join(" · ") + (titles.length > 2 ? ` +${titles.length - 2}` : "");
                 return (
                   <div key={c.id} className={"ai-hist-item" + (c.id === convId ? " active" : "")}>
-                    <button type="button" className="ai-hist-open" onClick={() => { void openConv(c.id); }}>
-                      <span className="ai-hist-title od-truncate">{c.title}</span>
-                      <span className="ai-hist-meta od-truncate">{para ? para + " · " : ""}{c.count} 问 · {fmtConvTime(c.updated_at)}</span>
-                    </button>
-                    <button type="button" className="icon-btn" title="删除" onClick={() => { void delConv(c.id); }}><Icon name="trash" small /></button>
+                    {renamingId === c.id ? (
+                      <input
+                        className="ai-hist-rename"
+                        value={renameText}
+                        maxLength={80}
+                        autoFocus
+                        aria-label="重命名对话"
+                        onChange={(e) => setRenameText(e.target.value)}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+                          else if (e.key === "Escape") {
+                            e.preventDefault();
+                            renameCancelRef.current = true;
+                            setRenamingId("");
+                          }
+                        }}
+                        onBlur={() => { void finishRename(c); }}
+                      />
+                    ) : (
+                      <button type="button" className="ai-hist-open" onClick={() => { void openConv(c.id); }}>
+                        <span className="ai-hist-title od-truncate">{c.title}</span>
+                        <span className="ai-hist-meta od-truncate">{para ? para + " · " : ""}{c.count} 问 · {fmtConvTime(c.updated_at)}</span>
+                      </button>
+                    )}
+                    {renamingId !== c.id && (
+                      <button type="button" className="icon-btn" title="重命名" onClick={() => startRename(c)}><Icon name="pencil" small /></button>
+                    )}
+                    {renamingId !== c.id && (
+                      <button type="button" className="icon-btn" title="删除" onClick={() => { void delConv(c.id); }}><Icon name="trash" small /></button>
+                    )}
                   </div>
                 );
               })}

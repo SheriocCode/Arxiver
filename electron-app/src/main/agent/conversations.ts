@@ -47,10 +47,22 @@ export function get(id: string): Conversation | null {
 }
 
 export function save(conv: Conversation): void {
-  const next: Conversation = { ...conv, updated_at: Date.now() / 1000 };
-  const target = file(next.id);
+  write({ ...conv, updated_at: Date.now() / 1000 });
+}
+
+// 重命名只改标题，不动 updated_at：否则会在历史列表里因为改名而跳到最前面
+export function rename(id: string, title: string): boolean {
+  const conv = get(id);
+  const next = String(title || "").trim().slice(0, 120);
+  if (!conv || !next) { return false; }
+  write({ ...conv, title: next });
+  return true;
+}
+
+function write(conv: Conversation): void {
+  const target = file(conv.id);
   const tmp = target + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(next), "utf8");
+  fs.writeFileSync(tmp, JSON.stringify(conv), "utf8");
   fs.renameSync(tmp, target);
 }
 

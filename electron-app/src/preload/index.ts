@@ -83,6 +83,7 @@ const api = {
   agentConversations: (filter: unknown) => ipcRenderer.invoke("agent:conversations", filter),
   agentConversation: (id: string) => ipcRenderer.invoke("agent:conversation", id),
   agentSaveConversation: (conv: unknown) => ipcRenderer.invoke("agent:conversationSave", conv),
+  agentRenameConversation: (id: string, title: string) => ipcRenderer.invoke("agent:conversationRename", id, title),
   agentDeleteConversation: (id: string) => ipcRenderer.invoke("agent:conversationDelete", id),
   skillsList: () => ipcRenderer.invoke("skills:list"),
   skillsSave: (skill: unknown) => ipcRenderer.invoke("skills:save", skill),
