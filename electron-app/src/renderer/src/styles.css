@@ -1865,6 +1865,47 @@ textarea.ai-confirm-args { width: 100%; min-height: 96px; border: 0; outline: no
 .ai-panel { position: relative; }
 .ai-jump { position: absolute; right: 16px; bottom: 76px; z-index: 15; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 999px; background: var(--surface-3); color: var(--text); border: 1px solid var(--border-strong); box-shadow: var(--shadow); cursor: pointer; }
 .ai-jump:hover { background: var(--hover-strong); }
+
+/* ---------- 顺便问一下（/btw）小窗 ---------- */
+.btw-layer { position: fixed; inset: 0; z-index: 160; }
+.btw-panel {
+  position: absolute; right: 20px; bottom: 20px;
+  width: min(440px, calc(100vw - 32px)); height: min(560px, calc(100vh - 40px));
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg-panel); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow);
+}
+.btw-head {
+  display: flex; align-items: center; gap: 8px; flex: none;
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  font-size: 13px; color: var(--text-2);
+}
+.btw-title { font-weight: 600; color: var(--text); }
+.btw-badge { padding: 1px 7px; border-radius: var(--pill); background: var(--accent-soft); color: var(--accent); font-size: 11px; white-space: nowrap; }
+.btw-scroll { padding: 8px 14px 12px; }
+.btw-empty { padding: 22px 6px 8px; color: var(--muted); font-size: 12.5px; }
+.btw-empty p { margin: 0; }
+.btw-empty p + p { margin-top: 6px; color: var(--faint); font-size: 12px; }
+.btw-composer { padding: 10px 12px 12px; flex: none; }
+.btw-composer-hint { color: var(--faint); font-size: 11.5px; }
+.btw-quote {
+  display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px;
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--muted); font-size: 12px;
+}
+.btw-quote-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.btw-quote-inline {
+  margin: 4px 0; padding: 4px 8px; border-left: 2px solid var(--border-strong);
+  color: var(--muted); font-size: 12px; overflow-wrap: anywhere;
+}
+.btw-running { display: flex; align-items: center; gap: 6px; margin: 6px 0; color: var(--muted); font-size: 11.5px; }
+.btw-sel-ask {
+  position: fixed; z-index: 170; transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px;
+  border-radius: var(--pill); background: var(--surface); border: 1px solid var(--border-strong);
+  color: var(--text); font-size: 12px; box-shadow: var(--shadow); white-space: nowrap;
+}
+.btw-sel-ask:hover { background: var(--hover-strong); }
 .ai-qnav { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); z-index: 12; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 8px 4px; }
 .ai-qnav-bar { display: flex; align-items: center; justify-content: flex-end; height: 4px; padding: 0; border: 0; background: transparent; cursor: pointer; }
 .ai-qnav-line { flex: none; width: 18px; height: 1px; border-radius: 2px; background: var(--faint); transform-origin: right center; will-change: transform; transition: transform .12s ease, height .12s, background .12s; }

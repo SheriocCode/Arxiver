@@ -8,6 +8,7 @@ import { tagColor } from "../state/tagColors";
 import type { AppSettings } from "../state/settings";
 import { Markdown } from "../lib/markdown";
 import { normalizeImage, readImageFile } from "../lib/images";
+import BtwPanel, { type BtwSeed } from "./BtwPanel";
 
 function arxivId(url: string): string {
   const match = /arxiv\.org\/(?:abs|pdf)\/([^?#\s]+?)(?:v\d+)?(?:\.pdf)?$/i.exec(String(url || ""));
@@ -710,6 +711,10 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   const [libProgress, setLibProgress] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const [atOpen, setAtOpen] = useState(false);
+  // 「顺便问一下」小窗：btwSeed 变化即换一个新窗口（key 随之重挂载）
+  const [btwSeed, setBtwSeed] = useState<BtwSeed | null>(null);
+  // 选中 AI 回答后出现的浮动入口（fixed 定位，不占正文空间）
+  const [selAsk, setSelAsk] = useState<{ left: number; top: number; text: string } | null>(null);
   const [histQuery, setHistQuery] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // 输入框随内容长高（最多 120px，超过就内部滚动）。
@@ -810,6 +815,53 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     }
     setPendingJump(n);
   };
+
+  // 打开「顺便问一下」小窗：把主对话最近的内容作为只读背景，不写入主会话
+  const openBtw = (question: string, quote: string): void => {
+    const history = turnsRef.current
+      .filter((t) => t.text.trim())
+      .slice(-12)
+      .map((t) => ({ role: t.role, content: t.text.slice(0, 4000) }));
+    const cardBase = turnsRef.current.reduce((n, t) => n + papersOf(t.blocks || []).length, 0);
+    setSelAsk(null);
+    setBtwSeed({
+      id: "btw" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      question, quote, history, cardBase
+    });
+  };
+
+  // 在 AI 回答里选中文字 → 在选区下方浮出「顺便问」入口
+  const onAnswerMouseUp = (): void => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) { return; }
+    const text = sel.toString().replace(/\s+/g, " ").trim();
+    if (!text || text.length > 4000) { setSelAsk(null); return; }
+    const node = sel.anchorNode;
+    const el = node ? (node.nodeType === 3 ? node.parentElement : node as Element) : null;
+    if (!el || !el.closest(".msg-assistant")) { setSelAsk(null); return; }
+    const range = sel.rangeCount ? sel.getRangeAt(0) : null;
+    const rect = range?.getBoundingClientRect();
+    if (!rect || (!rect.width && !rect.height)) { return; }
+    setSelAsk({
+      left: Math.max(90, Math.min(rect.left + rect.width / 2, window.innerWidth - 90)),
+      top: Math.min(rect.bottom + 8, window.innerHeight - 40),
+      text
+    });
+  };
+
+  useEffect(() => {
+    if (!selAsk) { return; }
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as Element | null;
+      if (t && t.closest && t.closest(".btw-sel-ask")) { return; }
+      setSelAsk(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [selAsk]);
+
+  // 切文献时关掉小窗，避免把上一篇的上下文带过去
+  useEffect(() => { setBtwSeed(null); setSelAsk(null); }, [doc.id]);
 
   useEffect(() => {
     if (!pendingJump) { return; }
@@ -934,6 +986,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     if (!el) { return; }
     const near = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
     if (near !== atBottomRef.current) { atBottomRef.current = near; setShowJump(!near); }
+    if (selAsk) { setSelAsk(null); }
   };
   const jumpToBottom = (): void => {
     const el = scrollRef.current;
@@ -1043,7 +1096,16 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   }, []);
 
   const send = (preset?: string): void => {
-    const q = (preset !== undefined ? preset : input).trim();
+    const raw = (preset !== undefined ? preset : input).trim();
+    // /btw：另开小窗问，不打断正在生成的主回答，也不写进主对话
+    const btw = /^\/btw(?:\s+([\s\S]*))?$/i.exec(raw);
+    if (btw) {
+      setInput("");
+      setAtOpen(false);
+      openBtw((btw[1] || "").trim(), selection?.text.trim() || "");
+      return;
+    }
+    const q = raw;
     const imgs = images;
     const skillIds = attached;
     if ((!q && !imgs.length && !skillIds.length) || sending) { return; }
@@ -1254,7 +1316,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
           )}
         </div>
       </div>
-      <div className={"ai-scroll" + (anchors.length >= 2 ? " has-qnav" : "")} ref={scrollRef} onScroll={onScroll}>
+      <div className={"ai-scroll" + (anchors.length >= 2 ? " has-qnav" : "")} ref={scrollRef} onScroll={onScroll} onMouseUp={onAnswerMouseUp}>
         {turns.length === 0 ? (
           <div className="ai-intro">
             <div className="ai-mark"><Icon name="arxiver" /></div>
@@ -1428,6 +1490,22 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
           ))
         )}
       </div>
+      {selAsk && (
+        <button
+          type="button"
+          className="btw-sel-ask"
+          style={{ left: selAsk.left, top: selAsk.top }}
+          title="就选中内容另开小窗提问，不写入主对话"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            const text = selAsk.text;
+            window.getSelection()?.removeAllRanges();
+            openBtw("", text);
+          }}
+        >
+          <Icon name="message" small /> 顺便问
+        </button>
+      )}
       {showJump && (
         <button type="button" className="ai-jump" title="回到底部" onClick={jumpToBottom}><Icon name="chev-down" small /></button>
       )}
@@ -1492,7 +1570,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
         >
           <textarea
             ref={inputRef}
-            placeholder="随心输入，@ 引用已打开文献；可粘贴 / 上传图片"
+            placeholder="随心输入，@ 引用已打开文献；/btw 另开小窗问；可粘贴 / 上传图片"
             rows={1}
             value={input}
             onChange={(e) => {
@@ -1519,6 +1597,22 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
             >
               <Icon name="image" small />
             </button>
+            <button
+              type="button"
+              className="composer-icon-btn"
+              title="顺便问一下（/btw）：另开小窗，不写入主对话"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                e.preventDefault();
+                const picked = window.getSelection();
+                const pickedText = picked && !picked.isCollapsed ? picked.toString().replace(/\s+/g, " ").trim() : "";
+                const q = input.trim();
+                if (q) { setInput(""); }
+                openBtw(q, pickedText || (selection?.text.trim() || ""));
+              }}
+            >
+              <Icon name="message" small />
+            </button>
             <span className="od-fill" />
             {sending
               ? <button type="button" className="send-btn" title="停止" onClick={(e) => { e.preventDefault(); stop(); }}><Icon name="x" small /></button>
@@ -1526,6 +1620,19 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
           </div>
         </form>
       </div>
+      {btwSeed && (
+        <BtwPanel
+          key={btwSeed.id}
+          seed={btwSeed}
+          docId={doc.id}
+          docTitle={doc.title}
+          aiReady={aiReady}
+          onClose={() => setBtwSeed(null)}
+          onCite={onCite}
+          onCard={jumpToCard}
+          onOpenSettings={openAiSettings}
+        />
+      )}
     </div>
   );
 }
