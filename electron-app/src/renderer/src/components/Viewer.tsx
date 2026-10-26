@@ -803,7 +803,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
                     ))
                 : Array.from({ length: s?.numPages || 0 }, (_, i) => i + 1).map((p) => (
                   <button key={p} type="button" className={"thumb" + (p === (s?.displayPage ?? -1) ? " active" : "")} onClick={() => engineRef.current?.goToNumberedPage(p)}>
-                    <canvas ref={(el) => { thumbRefs.current[p - 1] = el; }} />
+                    <span className="thumb-page"><canvas ref={(el) => { thumbRefs.current[p - 1] = el; }} /></span>
                     <span className="thumb-no">{p}</span>
                   </button>
                 ))}

@@ -1090,13 +1090,30 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .reader-overlay .workspace[data-page-theme="green"] .compare,
 .reader-overlay .workspace[data-page-theme="beige"] .compare { background: #2a2a2a; }
 .reader-overlay .workspace[data-page-theme="dark"] .compare { background: #0f0f0f; }
+.reader-overlay .workspace[data-page-theme="green"] .thumb-page { background: #cce8cf; }
+.reader-overlay .workspace[data-page-theme="green"] .thumb-page canvas { mix-blend-mode: multiply; }
+.reader-overlay .workspace[data-page-theme="beige"] .thumb-page { background: #f3ead3; }
+.reader-overlay .workspace[data-page-theme="beige"] .thumb-page canvas { mix-blend-mode: multiply; }
+.reader-overlay .workspace[data-page-theme="dark"] .thumb-page { background: #1a1a1a; }
+.reader-overlay .workspace[data-page-theme="dark"] .thumb-page canvas { filter: invert(1) hue-rotate(180deg); }
 
 .reader-overlay .workspace-body { position: relative; flex: 1; min-height: 0; display: flex; }
 .reader-overlay .viewer-stage { position: relative; flex: 1; min-width: 0; }
 .reader-overlay .outline-panel { flex: none; width: 300px; display: flex; flex-direction: column; min-height: 0; background: var(--bg-panel); border-right: 1px solid var(--border); }
 .reader-overlay .outline-tabs { display: flex; flex: none; border-bottom: 1px solid var(--border); }
-.reader-overlay .outline-tabs button { flex: 1; height: 36px; border-radius: 0; background: transparent; color: var(--muted); border-bottom: 2px solid transparent; }
-.reader-overlay .outline-tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+.reader-overlay .outline-tabs button {
+  flex: 1; height: 36px; border-radius: 0; position: relative;
+  justify-content: center; background: transparent; color: var(--muted);
+}
+.reader-overlay .outline-tabs button:hover { color: var(--text-2); }
+.reader-overlay .outline-tabs button.active { color: var(--text); }
+/* 选中指示条只占文字下方一小段并居中，和标签居中对齐 */
+.reader-overlay .outline-tabs button::after {
+  content: ""; position: absolute; left: 50%; bottom: 0; width: 24px; height: 2px;
+  border-radius: 2px; background: transparent; transform: translateX(-50%);
+  transition: background var(--dur) var(--ease);
+}
+.reader-overlay .outline-tabs button.active::after { background: var(--accent); }
 .reader-overlay .outline-body { flex: 1; min-height: 0; overflow: auto; padding: 8px; }
 .reader-overlay .outline-empty { padding: 16px 12px; color: var(--faint); font-size: 12px; }
 .reader-overlay .outline-note { padding: 6px 10px 8px; margin-bottom: 4px; color: var(--faint); font-size: 11.5px; border-bottom: 1px dashed var(--border); }
@@ -1105,7 +1122,9 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .reader-overlay .toc-item.active { background: var(--surface-2); color: var(--text); }
 .reader-overlay .toc-item[disabled] { color: var(--faint); opacity: .7; }
 .reader-overlay .thumb { display: block; width: 100%; height: auto; padding: 4px; margin-bottom: 6px; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); }
-.reader-overlay .thumb canvas { width: 100%; height: auto; display: block; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+/* 缩略图用和正文页一样的底色，左上角的小页随页面主题一起变色 */
+.reader-overlay .thumb-page { display: block; background: #fff; isolation: isolate; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+.reader-overlay .thumb-page canvas { width: 100%; height: auto; display: block; }
 .reader-overlay .thumb .thumb-no { display: block; text-align: center; font-size: 11px; color: var(--muted); margin-top: 3px; }
 .reader-overlay .thumb:hover { background: var(--hover); }
 .reader-overlay .thumb.active { border-color: var(--accent); }
