@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type JSX, type MutableRefObject } from "react";
+import { createPortal } from "react-dom";
 import type { LibraryDoc, Conversation, ConversationSummary, PaperHit, ConvBlock, AppConfig, Skill } from "../../../shared/types";
 import { Icon } from "./Icons";
 import { formatDate } from "../lib/format";
@@ -592,6 +593,12 @@ function SkillsMenu({ skills, attached, onToggle, onSave, onDelete, onAskAi }: {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // 同名检测：新建时同名会覆盖已有技能（主进程按名称 upsert），编辑时则不允许改成别人的名字
+  const editingSkill = editing && editing !== "new" ? editing : null;
+  const typedName = form.name.trim().toLowerCase();
+  const dup = typedName ? skills.find((s) => s.name.trim().toLowerCase() === typedName && s.id !== editingSkill?.id) : undefined;
+  const overwrite = !!dup && !editingSkill;
+
   const startEdit = (skill?: Skill): void => {
     setForm(skill
       ? { name: skill.name, description: skill.description, instructions: skill.instructions }
@@ -607,9 +614,12 @@ function SkillsMenu({ skills, attached, onToggle, onSave, onDelete, onAskAi }: {
     const instructions = form.instructions.trim();
     if (!name) { setError("给技能起个名字"); return; }
     if (!instructions) { setError("技能里要写清楚提示词 / 步骤"); return; }
+    // 编辑时改名撞上另一个技能：直接拦住，避免把别人覆盖掉
+    if (dup && editingSkill) { setError(`已有同名技能「${dup.name}」，请换个名称`); return; }
     setBusy(true);
     try {
-      await onSave({ id: editing === "new" ? undefined : (editing as Skill).id, name, description: form.description.trim(), instructions });
+      // 新建遇到同名时，明确沿用已有那条的 id（覆盖保存）
+      await onSave({ id: editingSkill?.id ?? dup?.id, name, description: form.description.trim(), instructions });
       setEditing(null);
       setError("");
     } catch (err) {
@@ -621,38 +631,56 @@ function SkillsMenu({ skills, attached, onToggle, onSave, onDelete, onAskAi }: {
 
   if (editing) {
     const isNew = editing === "new";
-    return (
-      <div className="ai-skills-pop">
-        <form className="ai-skill-form" onSubmit={(e) => void submit(e)}>
-          <div className="ai-skills-head">
-            <h4>{isNew ? "新建技能" : "编辑技能"}</h4>
-            <button type="button" className="icon-btn" title="返回技能列表" onClick={() => { setEditing(null); setError(""); }}><Icon name="chev-left" small /></button>
+    const closeEdit = (): void => { setEditing(null); setError(""); };
+    return createPortal(
+      <div
+        className="modal-root"
+        onMouseDown={(e) => { if (e.target === e.currentTarget) { closeEdit(); } }}
+        onKeyDown={(e) => { if (e.key === "Escape") { closeEdit(); } }}
+      >
+        <form className="modal skill-modal" role="dialog" aria-label={isNew ? "新建技能" : "编辑技能"} onSubmit={(e) => void submit(e)}>
+          <div className="modal-head">
+            <h2>{isNew ? "新建技能" : "编辑技能"}</h2>
+            <button type="button" className="icon-btn" title="关闭" onClick={closeEdit}><Icon name="x" small /></button>
           </div>
-          <label className="ai-skill-field">
-            <span>名称</span>
-            <input value={form.name} maxLength={80} placeholder="如：论文速读" onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
-          </label>
-          <label className="ai-skill-field">
-            <span>什么时候用（一句话）</span>
-            <input value={form.description} maxLength={400} placeholder="如：快速判断一篇论文值不值得精读" onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
-          </label>
-          <label className="ai-skill-field">
-            <span>提示词 / 步骤</span>
-            <textarea
-              value={form.instructions}
-              rows={7}
-              maxLength={12000}
-              placeholder={"写清楚希望 AI 怎么做，例如：\n1. 先用三句话概括问题与贡献\n2. 列出方法与关键实验\n3. 指出局限，并给出值得追的参考文献"}
-              onChange={(e) => setForm((f) => ({ ...f, instructions: e.target.value }))}
-            />
-          </label>
-          {error ? <div className="ai-skill-error">{error}</div> : null}
-          <div className="ai-skill-form-actions">
-            <button type="button" className="btn" onClick={() => { setEditing(null); setError(""); }}>取消</button>
-            <button type="submit" className="btn primary" disabled={busy}>{busy ? "保存中…" : "保存"}</button>
+          <div className="modal-body">
+            <div className="field">
+              <label>名称</label>
+              <input value={form.name} autoFocus maxLength={80} placeholder="如：论文速读" onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+              {dup && (
+                <span className={"hint " + (editingSkill ? "is-bad" : "is-warn")}>
+                  {editingSkill
+                    ? `已有同名技能「${dup.name}」，请换个名称`
+                    : `已有同名技能「${dup.name}」，保存会覆盖它的内容`}
+                </span>
+              )}
+            </div>
+            <div className="field">
+              <label>什么时候用（一句话）</label>
+              <input value={form.description} maxLength={400} placeholder="如：快速判断一篇论文值不值得精读" onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+            </div>
+            <div className="field">
+              <label>提示词 / 步骤</label>
+              <textarea
+                value={form.instructions}
+                rows={10}
+                maxLength={12000}
+                placeholder={"写清楚希望 AI 怎么做，例如：\n1. 先用三句话概括问题与贡献\n2. 列出方法与关键实验\n3. 指出局限，并给出值得追的参考文献"}
+                onChange={(e) => setForm((f) => ({ ...f, instructions: e.target.value }))}
+              />
+              <span className="hint">支持多行；保存后可在技能列表里点选启用，本轮对话会把这段提示词附加在消息后面。</span>
+            </div>
+            {error ? <div className="ai-skill-error">{error}</div> : null}
+          </div>
+          <div className="modal-foot">
+            <button type="button" className="btn btn-ghost" onClick={closeEdit}>取消</button>
+            <button type="submit" className="btn btn-primary" disabled={busy || (!!dup && !!editingSkill)}>
+              {busy ? "保存中…" : overwrite ? "覆盖保存" : "保存技能"}
+            </button>
           </div>
         </form>
-      </div>
+      </div>,
+      document.body
     );
   }
 

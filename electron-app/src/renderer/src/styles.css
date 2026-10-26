@@ -2045,21 +2045,21 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 .ai-skills-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
 .ai-skills-foot .btn { height: 26px; padding: 0 9px; font-size: 11.5px; }
 
-/* 新建 / 编辑技能：与技能列表共用同一个弹出层 */
-.ai-skill-form { display: flex; flex-direction: column; gap: 8px; }
-.ai-skill-field { display: flex; flex-direction: column; gap: 4px; }
-.ai-skill-field > span { font-size: 11px; color: var(--muted); }
-.ai-skill-field input, .ai-skill-field textarea {
-  width: 100%; box-sizing: border-box; padding: 6px 8px;
-  background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
-  color: var(--text); font-size: 12px; line-height: 1.55; outline: none; font-family: inherit;
+/* 新建 / 编辑技能：独立的大弹窗，不再挤在 300px 宽的下拉层里 */
+.skill-modal { width: min(680px, 100%); }
+.skill-modal .modal-body { gap: 16px; }
+.skill-modal textarea {
+  width: 100%; box-sizing: border-box; min-height: 240px; max-height: 46vh; resize: vertical;
+  padding: 10px 12px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  font: inherit; font-size: 12.5px; line-height: 1.7; outline: none;
 }
-.ai-skill-field textarea { min-height: 120px; resize: vertical; }
-.ai-skill-field input:focus, .ai-skill-field textarea:focus { border-color: var(--accent); }
-.ai-skill-field input::placeholder, .ai-skill-field textarea::placeholder { color: var(--faint); }
+.skill-modal textarea:focus { border-color: var(--accent); }
+.skill-modal input::placeholder, .skill-modal textarea::placeholder { color: var(--faint); }
+.skill-modal .hint.is-warn { color: var(--star); }
+.skill-modal .hint.is-bad { color: #f0857b; }
 .ai-skill-error { font-size: 11.5px; color: #f0857b; }
-.ai-skill-form-actions { display: flex; justify-content: flex-end; gap: 6px; }
-.ai-skill-form-actions .btn { height: 26px; padding: 0 10px; font-size: 11.5px; }
 
 /* 用户消息 / 输入框里的已启用技能 */
 .msg-skills { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-bottom: 4px; }
