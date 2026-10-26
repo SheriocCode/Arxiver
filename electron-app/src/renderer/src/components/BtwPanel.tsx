@@ -79,8 +79,8 @@ export default function BtwPanel({
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== "Escape") { return; }
-      // 设置等模态框在上层时，Esc 先关它
-      if (document.querySelector(".modal-root")) { return; }
+      // 设置等模态框 / 图片灯箱在上层时，Esc 先关它
+      if (document.querySelector(".modal-root") || document.querySelector(".img-lightbox")) { return; }
       e.stopPropagation();
       close();
     };

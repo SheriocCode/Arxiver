@@ -3,7 +3,7 @@ import path from "node:path";
 import { docDir } from "./storage";
 import type { PdfAnnotation, PdfAnnotKind, PdfAnnotRect } from "../shared/types";
 
-const KINDS: PdfAnnotKind[] = ["highlight", "underline", "strike", "note"];
+const KINDS: PdfAnnotKind[] = ["highlight", "underline", "strike", "note", "ink"];
 
 function file(id: string): string {
   return path.join(docDir(id), "annotations.json");
@@ -15,6 +15,18 @@ function isRect(v: unknown): v is PdfAnnotRect {
   return ["x", "y", "w", "h"].every((k) => typeof r[k] === "number" && isFinite(r[k] as number));
 }
 
+function isInkStroke(v: unknown): boolean {
+  if (!v || typeof v !== "object") { return false; }
+  const s = v as Record<string, unknown>;
+  if (typeof s.color !== "string" || typeof s.width !== "number" || !isFinite(s.width)) { return false; }
+  if (!Array.isArray(s.points) || !s.points.length) { return false; }
+  return s.points.every((p) => {
+    if (!p || typeof p !== "object") { return false; }
+    const q = p as Record<string, unknown>;
+    return typeof q.x === "number" && isFinite(q.x) && typeof q.y === "number" && isFinite(q.y);
+  });
+}
+
 function isAnnotation(v: unknown, docId: string): v is PdfAnnotation {
   if (!v || typeof v !== "object") { return false; }
   const a = v as Record<string, unknown>;
@@ -23,6 +35,7 @@ function isAnnotation(v: unknown, docId: string): v is PdfAnnotation {
   if (typeof a.page !== "number" || a.page < 1) { return false; }
   if (!KINDS.includes(a.kind as PdfAnnotKind)) { return false; }
   if (!Array.isArray(a.rects) || !a.rects.every(isRect)) { return false; }
+  if (a.strokes !== undefined && (!Array.isArray(a.strokes) || !a.strokes.every(isInkStroke))) { return false; }
   if (a.images !== undefined && (!Array.isArray(a.images) || !a.images.every((s) => typeof s === "string"))) { return false; }
   if (a.links !== undefined && (!Array.isArray(a.links) || !a.links.every((s) => typeof s === "string"))) { return false; }
   return true;

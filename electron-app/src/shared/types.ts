@@ -366,7 +366,7 @@ export interface TranslationRef {
 }
 
 /** PDF 标注（存在文库文档目录里，不改动原 PDF 文件） */
-export type PdfAnnotKind = "highlight" | "underline" | "strike" | "note";
+export type PdfAnnotKind = "highlight" | "underline" | "strike" | "note" | "ink";
 
 /** 相对页面左上角的归一化矩形（0～1），缩放/换宽度时不用重算 */
 export interface PdfAnnotRect {
@@ -374,6 +374,13 @@ export interface PdfAnnotRect {
   y: number;
   w: number;
   h: number;
+}
+
+/** 页面上的自由手写笔迹：points 归一化到页面，width 是相对页宽的线宽 */
+export interface PdfInkStroke {
+  color: string;
+  width: number;
+  points: { x: number; y: number }[];
 }
 
 export interface PdfAnnotation {
@@ -393,6 +400,10 @@ export interface PdfAnnotation {
   images?: string[];
   /** 笔记里的链接 */
   links?: string[];
+  // 区域标注（框选图片/空白区域）：高亮只描矩形边框；普通标注按文字排版渲染
+  region?: boolean;
+  // 自由手写（kind = "ink"）的笔迹
+  strokes?: PdfInkStroke[];
   createdAt: number;
   updatedAt: number;
 }

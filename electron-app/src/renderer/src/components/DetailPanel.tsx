@@ -8,6 +8,7 @@ import { tagColor } from "../state/tagColors";
 import type { AppSettings } from "../state/settings";
 import { Markdown } from "../lib/markdown";
 import { normalizeImage, readImageFile } from "../lib/images";
+import { zoomImage } from "../lib/lightbox";
 import BtwPanel, { type BtwSeed } from "./BtwPanel";
 
 function arxivId(url: string): string {
@@ -1418,7 +1419,15 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
                     {t.text ? <div className="msg-content">{t.text}</div> : null}
                     {t.images && t.images.length ? (
                       <div className="msg-imgs">
-                        {t.images.map((src, k) => <img key={k} src={src} alt={`附图 ${k + 1}`} />)}
+                        {t.images.map((src, k) => (
+                          <img
+                            key={k}
+                            src={src}
+                            alt={`附图 ${k + 1}`}
+                            title="点击放大"
+                            onClick={() => zoomImage(src, `附图 ${k + 1}`)}
+                          />
+                        ))}
                       </div>
                     ) : null}
                   </>
@@ -1587,7 +1596,12 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
             ))}
             {images.map((img, k) => (
               <span key={img.id} className="ai-img-chip" title={img.page ? `第 ${img.page} 页截图` : "粘贴 / 选择的图片"}>
-                <img src={img.dataUrl} alt="" />
+                <img
+                  src={img.dataUrl}
+                  alt=""
+                  title="点击放大"
+                  onClick={() => zoomImage(img.dataUrl, img.page ? `第 ${img.page} 页截图` : "图片")}
+                />
                 <span className="ai-img-label">{img.page ? `第 ${img.page} 页` : `图片 ${k + 1}`}</span>
                 <button type="button" className="ai-ref-x" title="移除" onClick={() => setImages((prev) => prev.filter((x) => x.id !== img.id))}><Icon name="x" small /></button>
               </span>

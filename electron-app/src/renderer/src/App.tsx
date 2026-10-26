@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import type { AppConfig, AppInfo, UpdateStatus } from "../../shared/types";
 import { IconDefs, Icon } from "./components/Icons";
 import AppBackground from "./components/AppBackground";
+import ImageLightbox from "./components/ImageLightbox";
 import TitleBar from "./components/TitleBar";
 import Rail from "./components/Rail";
 import Sidebar from "./components/Sidebar";
@@ -469,6 +470,8 @@ export default function App(): JSX.Element {
           </div>
         </div>
       </div>
+
+      <ImageLightbox />
 
       {settingsOpen && (
         <SettingsView

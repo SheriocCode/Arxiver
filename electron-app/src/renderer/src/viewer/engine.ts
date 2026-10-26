@@ -1,6 +1,7 @@
 import { getPdfjs } from "../lib/pdf";
 import { normalizeImage, readImageFile } from "../lib/images";
-import type { BlockEvent, JobSummary, PdfAnnotation, PdfAnnotKind, PdfAnnotRect, TransParams } from "../../../shared/types";
+import type { BlockEvent, JobSummary, PdfAnnotation, PdfAnnotKind, PdfAnnotRect, PdfInkStroke, TransParams } from "../../../shared/types";
+import { zoomImage } from "../lib/lightbox";
 
 export type View = "source" | "target" | "compare";
 export type Layout = "single" | "double";
@@ -73,17 +74,26 @@ interface SelSegment {
 
 const ANNOT_COLORS = ["yellow", "green", "blue", "pink"] as const;
 const ANNOT_LABELS: Record<PdfAnnotKind, string> = {
-  highlight: "高亮", underline: "下划线", strike: "删除线", note: "笔记"
+  highlight: "高亮", underline: "下划线", strike: "删除线", note: "笔记", ink: "画笔"
 };
 const ANNOT_COLOR_LABELS: Record<string, string> = { yellow: "黄色", green: "绿色", blue: "蓝色", pink: "粉色" };
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 function annotId(): string {
   return "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 function clamp01(n: number): number { return Math.min(1, Math.max(0, n)); }
+function distToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = dx * dx + dy * dy;
+  if (!len) { return Math.hypot(px - x1, py - y1); }
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
 
 // 空白笔记 / 没填链接的标注：不留在页面和侧栏里（历史版本可能存过）
 function isEmptyAnnot(a: PdfAnnotation): boolean {
+  if (a.kind === "ink") { return !(a.strokes && a.strokes.length); }
   if (a.kind !== "note") { return false; }
   return !(a.note || "").trim() && !(a.images && a.images.length) && !(a.links && a.links.length);
 }
@@ -202,6 +212,12 @@ export class ViewerEngine {
   private tipImageBusy = false;
   // 面板里的笔记直接编辑、自动保存（没有独立的"编辑 / 保存 / 取消"模式）
   private annotSaveTimer = 0;
+  // 画笔模式（自由手写）
+  private inkMode = false;
+  private inkColor = "yellow";
+  private inkWidth = 4;
+  private inkLiveCancel: (() => void) | null = null;
+  private lastInkPage = 0;
 
   private rows: HTMLElement[] = [];
   private rowFirstPage: number[] = [];
@@ -674,6 +690,196 @@ export class ViewerEngine {
     return first.id;
   }
 
+  // 区域标注：把框选的矩形存成一条标注。高亮只描边框；笔记复用同一套编辑面板。
+  annotateRegion(kind: "highlight" | "note", color: string, sel: { left: number; top: number; right: number; bottom: number }): string | null {
+    if (!this.docId) { return null; }
+    const wrap = document.elementsFromPoint((sel.left + sel.right) / 2, (sel.top + sel.bottom) / 2)
+      .map((el) => el.closest(".page-wrap"))
+      .find((el): el is HTMLElement => el instanceof HTMLElement) || null;
+    const wr = wrap?.getBoundingClientRect();
+    if (!wrap || !wr || !wr.width || !wr.height) { return null; }
+    const left = Math.max(sel.left, wr.left), top = Math.max(sel.top, wr.top);
+    const right = Math.min(sel.right, wr.right), bottom = Math.min(sel.bottom, wr.bottom);
+    if (right - left < 4 || bottom - top < 4) { return null; }
+    const now = Date.now();
+    const a: PdfAnnotation = {
+      id: annotId(), docId: this.docId, page: Number(wrap.dataset.page || 0), kind, color,
+      rects: [{
+        x: clamp01((left - wr.left) / wr.width),
+        y: clamp01((top - wr.top) / wr.height),
+        w: clamp01((right - left) / wr.width),
+        h: clamp01((bottom - top) / wr.height)
+      }],
+      region: true,
+      text: this.regionText(wrap, sel).slice(0, 600),
+      note: kind === "note" ? "" : undefined,
+      createdAt: now, updatedAt: now
+    };
+    this.annotations.push(a);
+    this.emitAnnotations();
+    this.renderAllAnnots();
+    void this.persistAnnot(a);
+    if (kind === "note") {
+      window.setTimeout(() => this.openAnnotTip(a.id, undefined, { focus: true }), 30);
+    } else {
+      this.toast("已添加区域高亮");
+    }
+    return a.id;
+  }
+
+  // ---- 画笔模式 ----
+  setInkMode(on: boolean): void {
+    this.inkMode = on;
+    this.root.classList.toggle("ink-mode", on);
+    this.finishAnnotTip();
+    this.cancelInkLive();
+  }
+
+  setInkColor(color: string): void {
+    this.inkColor = (ANNOT_COLORS as readonly string[]).includes(color) ? color : "yellow";
+  }
+
+  setInkWidth(width: number): void {
+    this.inkWidth = Math.max(1, Math.min(32, width));
+  }
+
+  undoInk(): void {
+    const page = this.lastInkPage;
+    const a = page
+      ? [...this.annotations].reverse().find((x) => x.kind === "ink" && x.page === page)
+      : null;
+    if (!a || !a.strokes?.length) { this.toast("没有可撤销的画笔"); return; }
+    a.strokes = a.strokes.slice(0, -1);
+    if (!a.strokes.length) {
+      this.removeAnnotation(a.id, "已撤销画笔");
+      this.lastInkPage = 0;
+      return;
+    }
+    a.rects = [this.inkBounds(a.strokes)];
+    a.updatedAt = Date.now();
+    this.emitAnnotations();
+    this.renderAllAnnots();
+    void this.persistAnnot(a);
+  }
+
+  clearInk(page = this.lastInkPage): void {
+    const targets = page ? this.annotations.filter((a) => a.kind === "ink" && a.page === page) : [];
+    if (!targets.length) { this.toast("本页没有画笔"); return; }
+    for (const a of targets) { this.removeAnnotation(a.id, ""); }
+    this.toast("已清除本页画笔");
+    if (page === this.lastInkPage) { this.lastInkPage = 0; }
+  }
+
+  private inkBounds(strokes: PdfInkStroke[]): PdfAnnotRect {
+    let minX = 1, minY = 1, maxX = 0, maxY = 0, maxW = 0;
+    for (const s of strokes) {
+      maxW = Math.max(maxW, s.width || 0);
+      for (const p of s.points) {
+        minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+      }
+    }
+    if (maxX < minX || maxY < minY) { return { x: 0, y: 0, w: 0.01, h: 0.01 }; }
+    const pad = Math.max(0.003, maxW / 2);
+    return {
+      x: clamp01(minX - pad), y: clamp01(minY - pad),
+      w: clamp01(maxX - minX + pad * 2), h: clamp01(maxY - minY + pad * 2)
+    };
+  }
+
+  private commitInkStroke(page: number, strokes: PdfInkStroke[]): void {
+    if (!this.docId || !strokes.length) { return; }
+    const now = Date.now();
+    let a = [...this.annotations].reverse().find((x) => x.kind === "ink" && x.page === page) || null;
+    const color = strokes[strokes.length - 1].color;
+    if (!a) {
+      a = {
+        id: annotId(), docId: this.docId, page, kind: "ink", color,
+        rects: [this.inkBounds(strokes)], strokes: [], createdAt: now, updatedAt: now
+      };
+      this.annotations.push(a);
+    }
+    a.strokes = [...(a.strokes || []), ...strokes];
+    a.color = color;
+    a.rects = [this.inkBounds(a.strokes)];
+    a.updatedAt = now;
+    this.lastInkPage = page;
+    this.emitAnnotations();
+    this.renderAllAnnots();
+    void this.persistAnnot(a);
+  }
+
+  private cancelInkLive(): void {
+    this.inkLiveCancel?.();
+    this.inkLiveCancel = null;
+  }
+
+  private beginInkStroke(e: PointerEvent, wrap: HTMLElement): void {
+    e.preventDefault();
+    document.getSelection()?.removeAllRanges();
+    this.cancelInkLive();
+    const wr = wrap.getBoundingClientRect();
+    if (!wr.width || !wr.height) { return; }
+    const page = Number(wrap.dataset.page || 0);
+    if (!page) { return; }
+    const color = this.inkColor;
+    const widthPx = this.inkWidth;
+
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", "annot-ink-live");
+    svg.setAttribute("viewBox", `0 0 ${wr.width} ${wr.height}`);
+    svg.setAttribute("preserveAspectRatio", "none");
+    svg.setAttribute("data-color", color);
+    const path = document.createElementNS(SVG_NS, "path");
+    path.style.fill = "none";
+    path.style.stroke = "var(--annot-color)";
+    path.style.strokeWidth = `${widthPx}px`;
+    path.style.strokeLinecap = "round";
+    path.style.strokeLinejoin = "round";
+    svg.appendChild(path);
+    wrap.appendChild(svg);
+
+    const points: { x: number; y: number }[] = [];
+    const add = (ev: PointerEvent): void => {
+      const x = clamp01((ev.clientX - wr.left) / wr.width);
+      const y = clamp01((ev.clientY - wr.top) / wr.height);
+      const last = points[points.length - 1];
+      if (last && Math.abs(last.x - x) * wr.width + Math.abs(last.y - y) * wr.height < 0.8) { return; }
+      points.push({ x, y });
+      const d = points.map((p, i) => `${i ? "L" : "M"}${(p.x * wr.width).toFixed(2)} ${(p.y * wr.height).toFixed(2)}`).join(" ");
+      path.setAttribute("d", d);
+    };
+    add(e);
+
+    const cleanup = (): void => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      svg.remove();
+      this.inkLiveCancel = null;
+    };
+    const onMove = (ev: PointerEvent): void => {
+      if (ev.pointerId !== e.pointerId) { return; }
+      ev.preventDefault();
+      add(ev);
+    };
+    const onUp = (ev: PointerEvent): void => {
+      if (ev.pointerId !== e.pointerId) { return; }
+      cleanup();
+      if (!points.length) { return; }
+      const stroke: PdfInkStroke = { color, width: widthPx / wr.width, points };
+      this.commitInkStroke(page, [stroke]);
+    };
+    const onCancel = (ev: PointerEvent): void => {
+      if (ev.pointerId !== e.pointerId) { return; }
+      cleanup();
+    };
+    this.inkLiveCancel = cleanup;
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+  }
+
   private renderAllAnnots(): void {
     this.root.classList.toggle("annots-hidden", !this.annotVisible);
     const pages = Object.keys(this.annotLayer).map((k) => parseInt(k, 10));
@@ -698,11 +904,45 @@ export class ViewerEngine {
         el.dataset.kind = a.kind;
         el.dataset.color = color;
         el.dataset.annot = a.id;
+        if (a.region) { el.dataset.region = "1"; }
         el.style.left = r.x * w + "px";
         el.style.top = r.y * h + "px";
         el.style.width = r.w * w + "px";
         el.style.height = r.h * h + "px";
         layer.appendChild(el);
+      }
+      if (a.kind === "ink" && a.strokes?.length) {
+        const svg = document.createElementNS(SVG_NS, "svg");
+        svg.setAttribute("class", "annot-ink");
+        svg.setAttribute("data-annot", a.id);
+        svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+        svg.setAttribute("preserveAspectRatio", "none");
+        for (const s of a.strokes) {
+          if (!s.points.length) { continue; }
+          // 每笔可能有不同颜色：用 <g> 挂 data-color，子元素通过 --annot-color 继承
+          const g = document.createElementNS(SVG_NS, "g");
+          g.setAttribute("data-color", s.color || color);
+          const strokeW = Math.max(0.75, (s.width || 0) * w);
+          if (s.points.length === 1) {
+            const dot = document.createElementNS(SVG_NS, "circle");
+            dot.setAttribute("cx", String(s.points[0].x * w));
+            dot.setAttribute("cy", String(s.points[0].y * h));
+            dot.setAttribute("r", String(strokeW / 2));
+            dot.style.fill = "var(--annot-color)";
+            g.appendChild(dot);
+          } else {
+            const path = document.createElementNS(SVG_NS, "path");
+            path.setAttribute("d", s.points.map((p, i) => `${i ? "L" : "M"}${p.x * w} ${p.y * h}`).join(" "));
+            path.style.fill = "none";
+            path.style.stroke = "var(--annot-color)";
+            path.style.strokeWidth = `${strokeW}px`;
+            path.style.strokeLinecap = "round";
+            path.style.strokeLinejoin = "round";
+            g.appendChild(path);
+          }
+          svg.appendChild(g);
+        }
+        layer.appendChild(svg);
       }
       // 只有真的写了内容（文字 / 图片 / 链接）才显示"笔记"小标：空白草稿关掉就没了
       if ((a.note && a.note.trim()) || (a.images && a.images.length) || (a.links && a.links.length)) {
@@ -717,7 +957,7 @@ export class ViewerEngine {
         mark.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-note"></use></svg>';
         mark.style.left = Math.max(0, Math.min(w - 16, (last.x + last.w) * w + 2)) + "px";
         mark.style.top = Math.max(0, Math.min(h - 16, last.y * h - 2)) + "px";
-        mark.addEventListener("click", (ev) => { ev.stopPropagation(); this.openAnnotTip(a.id, mark); });
+        mark.addEventListener("click", (ev) => { ev.stopPropagation(); if (this.inkMode) { return; } this.openAnnotTip(a.id, mark); });
         layer.appendChild(mark);
       }
     }
@@ -749,12 +989,13 @@ export class ViewerEngine {
   // 高亮本身不能吃 pointer-events（否则没法在标注上继续选字），所以用几何命中判断：
   // 只有"没拖动、没形成选区"的单击才算点击标注。
   private onAnnotPointerDown = (e: PointerEvent): void => {
-    if (e.button !== 0) { return; }
+    if (this.inkMode || e.button !== 0) { return; }
     this.annotDown = { x: e.clientX, y: e.clientY };
     if (this.annotClickTimer) { window.clearTimeout(this.annotClickTimer); this.annotClickTimer = 0; }
   };
 
   private onAnnotClick = (e: MouseEvent): void => {
+    if (this.inkMode) { return; }
     const down = this.annotDown;
     this.annotDown = null;
     if (!down) { return; }
@@ -776,6 +1017,7 @@ export class ViewerEngine {
 
   // 鼠标移到已有标注上时描一圈，提示"这里可以点"
   private onAnnotHover = (e: PointerEvent): void => {
+    if (this.inkMode) { return; }
     if (this.annotHoverRaf) { return; }
     const x = e.clientX, y = e.clientY;
     this.annotHoverRaf = requestAnimationFrame(() => {
@@ -805,12 +1047,32 @@ export class ViewerEngine {
       const items = this.annotations.filter((a) => a.page === Number(key));
       for (let i = items.length - 1; i >= 0; i--) {
         const a = items[i];
-        if (a.rects.some((rect) => nx >= rect.x && nx <= rect.x + rect.w && ny >= rect.y && ny <= rect.y + rect.h)) {
-          return a;
-        }
+        const hit = a.kind === "ink"
+          ? this.inkHit(a, nx, ny, wrap)
+          : a.rects.some((rect) => nx >= rect.x && nx <= rect.x + rect.w && ny >= rect.y && ny <= rect.y + rect.h);
+        if (hit) { return a; }
       }
     }
     return null;
+  }
+
+  private inkHit(a: PdfAnnotation, nx: number, ny: number, wrap: HTMLElement): boolean {
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h) { return false; }
+    const x = nx * w, y = ny * h;
+    for (const s of a.strokes || []) {
+      const r = Math.max(1, (s.width || 0) * w / 2) + 4;
+      const pts = s.points;
+      if (!pts.length) { continue; }
+      if (pts.length === 1) {
+        if (Math.hypot(x - pts[0].x * w, y - pts[0].y * h) <= r) { return true; }
+        continue;
+      }
+      for (let i = 1; i < pts.length; i++) {
+        if (distToSegment(x, y, pts[i - 1].x * w, pts[i - 1].y * h, pts[i].x * w, pts[i].y * h) <= r) { return true; }
+      }
+    }
+    return false;
   }
 
   // 从侧栏 / 笔记列表点过来：切回原文、定位到标注位置，并闪一下
@@ -893,6 +1155,9 @@ export class ViewerEngine {
         if (!a) { return; }
         this.syncTipText(a);
         a.color = c;
+        if (a.kind === "ink" && a.strokes?.length) {
+          a.strokes = a.strokes.map((s) => ({ ...s, color: c }));
+        }
         colors?.querySelectorAll<HTMLElement>(".annot-tip-color").forEach((x) => {
           x.classList.toggle("active", x.dataset.color === c);
         });
@@ -940,12 +1205,14 @@ export class ViewerEngine {
     this.annotTipEl = el;
     this.annotTipOutside = (e: MouseEvent) => {
       const t = e.target as Element | null;
-      if (t && t.closest && (t.closest(".annot-tip") || t.closest(".annot-mark"))) { return; }
+      if (t && t.closest && (t.closest(".annot-tip") || t.closest(".annot-mark") || t.closest(".img-lightbox"))) { return; }
       this.finishAnnotTip();
     };
     document.addEventListener("mousedown", this.annotTipOutside, true);
     this.annotTipKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") { return; }
+      // 大图查看在更上层：Esc 先关灯箱，别把笔记面板一起关掉
+      if (document.querySelector(".img-lightbox")) { return; }
       const linkEditor = this.annotTipEl?.querySelector<HTMLElement>(".annot-tip-link-editor");
       if (linkEditor && !linkEditor.hidden) {
         e.preventDefault();
@@ -1077,6 +1344,8 @@ export class ViewerEngine {
       const img = document.createElement("img");
       img.src = src;
       img.alt = "";
+      img.title = "点击放大";
+      img.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); zoomImage(src, "笔记图片"); });
       fig.appendChild(img);
       const del = document.createElement("button");
       del.type = "button";
@@ -1850,7 +2119,7 @@ export class ViewerEngine {
       rect.className = "block-rect";
       rect.style.left = x0 * sx + "px"; rect.style.top = (size.h - y1) * sy + "px";
       rect.style.width = (x1 - x0) * sx + "px"; rect.style.height = (y1 - y0) * sy + "px";
-      rect.addEventListener("click", () => this.toggleBlockTip(rect, page, i, item.src || "", item.dst || "", item.vars));
+      rect.addEventListener("click", () => { if (this.inkMode) { return; } this.toggleBlockTip(rect, page, i, item.src || "", item.dst || "", item.vars); });
       // rects are recreated on every render pass; re-mark and re-anchor the pinned one,
       // and drop the panel once its block has scrolled out of sight
       if (this.blockTipKey && this.blockTipKey.page === page && this.blockTipKey.index === i) {
@@ -1884,10 +2153,18 @@ export class ViewerEngine {
   // 直接拖框选中一块，松开后从该页渲染 canvas 裁出来（类似 WPS，不需要先点按钮）。
   // 按住 Alt 可以在文字上强制截图。
   private onPagePointerDown = (e: PointerEvent): void => {
-    if (e.button !== 0 || !this.onCapture) { return; }
+    if (e.button !== 0) { return; }
+    const target = e.target as Element | null;
+    // 画笔模式：在页面上按下即开始手写（优先于选字 / 区域截图）
+    if (this.inkMode) {
+      if (!target || target.closest(".annot-mark, .annot-tip, .sel-tools, .region-menu")) { return; }
+      const wrap = target.closest(".page-wrap") as HTMLElement | null;
+      if (wrap && wrap.querySelector("canvas.pdf-canvas")) { this.beginInkStroke(e, wrap); }
+      return;
+    }
+    if (!this.onCapture) { return; }
     // 上一次框选没收尾（指针在窗口外松开等）：先取消，再开始新的
     if (this.regionEl) { this.regionCancel?.(); }
-    const target = e.target as Element | null;
     if (!target || !target.closest(".page-wrap")) { return; }
     // 块框 / 内部链接 / 标注有各自的点击行为
     if (target.closest(".block-rect, .link-rect, .block-tip, .annot-rect, .annot-mark, .annot-tip")) { return; }
@@ -1947,6 +2224,7 @@ export class ViewerEngine {
     let handle = "";
     let base: { left: number; top: number; right: number; bottom: number } | null = null;
     let basePoint = { x: 0, y: 0 };
+    let regionColor = "yellow";
 
     const cleanup = (): void => {
       window.removeEventListener("pointermove", onMove);
@@ -2002,21 +2280,44 @@ export class ViewerEngine {
       overlay.className = "region-capture";
       const handles = ["nw", "n", "ne", "e", "se", "s", "sw", "w"]
         .map((h) => `<span class="region-handle" data-h="${h}"></span>`).join("");
+      const colorBtns = ANNOT_COLORS.map((c) =>
+        `<button type="button" class="sel-tool sel-dot${c === regionColor ? " active" : ""}" data-color="${c}" title="标注颜色：${ANNOT_COLOR_LABELS[c]}"></button>`
+      ).join("");
       overlay.innerHTML =
         `<div class="region-box">${handles}</div>` +
-        '<div class="region-menu" hidden>' +
-        '<button type="button" class="region-add" title="添加到对话"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-arxiver"></use></svg></button>' +
-        '<button type="button" class="region-close" title="取消（Esc）"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg></button>' +
+        '<div class="sel-tools region-menu" hidden>' +
+        colorBtns +
+        '<span class="sel-sep"></span>' +
+        '<button type="button" class="sel-tool region-highlight" title="高亮区域边框"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-highlight"></use></svg></button>' +
+        '<button type="button" class="sel-tool region-underline" disabled title="区域标注不支持下划线"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-underline"></use></svg></button>' +
+        '<button type="button" class="sel-tool region-strike" disabled title="区域标注不支持删除线"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-strike"></use></svg></button>' +
+        '<button type="button" class="sel-tool region-note" title="添加笔记（可写文字 / 插图片 / 加链接）"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-note"></use></svg></button>' +
+        '<span class="sel-sep"></span>' +
+        '<button type="button" class="sel-tool sel-tool-wide region-add" title="把选中区域发给 AI 助手"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-arxiver"></use></svg> 问</button>' +
         "</div>";
       host.appendChild(overlay);
       this.regionEl = overlay;
       box = overlay.querySelector<HTMLElement>(".region-box");
       menu = overlay.querySelector<HTMLElement>(".region-menu");
+      menu?.querySelectorAll<HTMLElement>(".sel-dot").forEach((btn) => {
+        btn.addEventListener("click", (ev) => {
+          ev.preventDefault(); ev.stopPropagation();
+          regionColor = btn.dataset.color || "yellow";
+          menu?.querySelectorAll<HTMLElement>(".sel-dot").forEach((x) => x.classList.toggle("active", x === btn));
+        });
+      });
+      const applyRegion = (kind: "highlight" | "note"): void => {
+        this.annotateRegion(kind, regionColor, normalize());
+        cleanup();
+      };
+      overlay.querySelector<HTMLElement>(".region-highlight")?.addEventListener("click", (ev) => {
+        ev.preventDefault(); ev.stopPropagation(); applyRegion("highlight");
+      });
+      overlay.querySelector<HTMLElement>(".region-note")?.addEventListener("click", (ev) => {
+        ev.preventDefault(); ev.stopPropagation(); applyRegion("note");
+      });
       overlay.querySelector<HTMLElement>(".region-add")?.addEventListener("click", (ev) => {
         ev.preventDefault(); ev.stopPropagation(); commit();
-      });
-      overlay.querySelector<HTMLElement>(".region-close")?.addEventListener("click", (ev) => {
-        ev.preventDefault(); ev.stopPropagation(); cleanup();
       });
       // 选中后：拖手柄改大小、拖框内移动、点空白取消
       overlay.addEventListener("pointerdown", (ev) => {
@@ -2235,7 +2536,7 @@ export class ViewerEngine {
       rect.style.width = (x1 - x0) * sx + "px"; rect.style.height = (y1 - y0) * sy + "px";
       if (item.url) {
         rect.title = item.url;
-        rect.addEventListener("click", (ev) => { ev.stopPropagation(); void window.api.openExternal(item.url!); });
+        rect.addEventListener("click", (ev) => { ev.stopPropagation(); if (this.inkMode) { return; } void window.api.openExternal(item.url!); });
       } else {
         rect.addEventListener("click", (ev) => { ev.stopPropagation(); this.goToDest(item.page, item.anchor); });
       }
@@ -2592,6 +2893,7 @@ export class ViewerEngine {
     this.onAnnotations = null;
     this.regionCancel?.();
     if (this.regionEl) { this.regionEl.remove(); this.regionEl = null; }
+    this.cancelInkLive();
     this.reset();
   }
 

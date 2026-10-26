@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import { zoomImage } from "./lightbox";
 
 // [[cite:docId#page]] 或 [[cite:docId#page|原文片段]]（片段用于在 PDF 文本层里定位并高亮）
 // 片段是原文照抄，可能自带参考文献角标（如 [31]），所以不能用 [^\]]* 把它截断；
@@ -53,6 +54,19 @@ export function Markdown({ text, onCite, onCard }: {
     .replace(CARD, (_m, n: string) => `[卡片 ${n}](card:${n})`);
 
   const components: Components = {
+    img({ src, alt }) {
+      const url = typeof src === "string" ? src : "";
+      if (!url) { return <img src={src} alt={alt || ""} />; }
+      return (
+        <img
+          src={url}
+          alt={alt || "图片"}
+          className="ai-md-img"
+          title="点击放大"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); zoomImage(url, alt); }}
+        />
+      );
+    },
     a({ href, children }) {
       const cite = parseCiteHref(href);
       if (cite) {

@@ -23,21 +23,24 @@ const ANNOT_COLORS: [string, string][] = [
   ["pink", "粉色"]
 ];
 const ANNOT_KIND_LABEL: Record<PdfAnnotKind, string> = {
-  highlight: "高亮", underline: "下划线", strike: "删除线", note: "笔记"
+  highlight: "高亮", underline: "下划线", strike: "删除线", note: "笔记", ink: "画笔"
 };
 const ANNOT_KIND_ICON: Record<PdfAnnotKind, string> = {
-  highlight: "highlight", underline: "underline", strike: "strike", note: "note"
+  highlight: "highlight", underline: "underline", strike: "strike", note: "note", ink: "pencil"
 };
+const INK_WIDTHS = [2, 4, 8] as const;
 
 // 侧栏一行里优先显示笔记正文（最常用来找内容），没有笔记时退回选中原文 / 图片链接数量
 function annotExcerpt(a: PdfAnnotation): { text: string; kind: "note" | "quote" | "meta" } {
   const note = (a.note || "").trim();
   if (note) { return { text: note, kind: "note" }; }
+  if (a.kind === "ink") { return { text: a.strokes?.length ? `${a.strokes.length} 笔手写` : "手写标注", kind: "meta" }; }
   const bits: string[] = [];
   if (a.text) { bits.push(a.text); }
   if (a.links?.length) { bits.push(a.links.length === 1 ? a.links[0] : `${a.links.length} 个链接`); }
   if (a.images?.length) { bits.push(`${a.images.length} 张图片`); }
   if (bits.length) { return { text: bits.join(" · "), kind: a.text ? "quote" : "meta" }; }
+  if (a.region) { return { text: a.kind === "note" ? "区域笔记" : "区域高亮", kind: "meta" }; }
   return { text: "空笔记", kind: "meta" };
 }
 
@@ -81,6 +84,9 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
   const [annotVisible, setAnnotVisible] = useState(true);
   const [annotColor, setAnnotColor] = useState("yellow");
+  const [inkOn, setInkOn] = useState(false);
+  const [inkColor, setInkColor] = useState("yellow");
+  const [inkWidth, setInkWidth] = useState<number>(4);
   const [sourceLang, setSourceLang] = useState("en");
   const [targetLang, setTargetLang] = useState("zh-CN");
   const [variant, setVariant] = useState("dual");
@@ -444,6 +450,27 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
     const next = !annotVisible;
     setAnnotVisible(next);
     engineRef.current?.setAnnotVisible(next);
+    if (!next && inkOn) {
+      setInkOn(false);
+      engineRef.current?.setInkMode(false);
+    }
+  }
+
+  function toggleInk(): void {
+    const next = !inkOn;
+    setInkOn(next);
+    engineRef.current?.setInkMode(next);
+    if (next) {
+      setSelPop(null);
+      setThemeOpen(false);
+      setMenuOpen(false);
+      if (!annotVisible) { setAnnotVisible(true); engineRef.current?.setAnnotVisible(true); }
+    }
+  }
+
+  function closeInk(): void {
+    setInkOn(false);
+    engineRef.current?.setInkMode(false);
   }
 
   function start(): void {
@@ -527,6 +554,15 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
             onClick={toggleAnnots}
           >
             <Icon name="highlight" small />
+          </button>
+          <button
+            type="button"
+            className={"panel-btn" + (inkOn ? " active" : "")}
+            aria-pressed={inkOn}
+            title={inkOn ? "退出画笔" : "画笔：在 PDF 上自由绘制"}
+            onClick={toggleInk}
+          >
+            <Icon name="pencil" small />
           </button>
           <div className="translate-menu" ref={menuRef}>
             <div className="split">
@@ -646,7 +682,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
             <div className="outline-body">
               {panel === "annots" ? (
                 annotSorted.length === 0
-                  ? <div className="outline-empty">选中正文文字即可添加高亮或笔记；点击页面上的标注可直接改颜色、写笔记、插图或加链接。左侧列表只负责定位。</div>
+                  ? <div className="outline-empty">选中正文文字可添加高亮或笔记；用工具栏的画笔可在页面上自由绘制；点击页面上的标注可改颜色、写笔记、插图或加链接。</div>
                   : (
                     <div className="annot-list">
                       {annotSorted.map((a) => {
@@ -658,7 +694,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
                                 <span className="annot-dot" data-color={a.color || "yellow"} />
                                 <Icon name={ANNOT_KIND_ICON[a.kind]} small />
                                 <span className="annot-row-kind">
-                                  {ANNOT_KIND_LABEL[a.kind]}{a.kind !== "note" && a.note?.trim() ? " · 笔记" : ""}
+                                  {ANNOT_KIND_LABEL[a.kind]}{a.region ? "（区域）" : ""}{a.kind !== "note" && a.note?.trim() ? " · 笔记" : ""}
                                 </span>
                                 {!!a.images?.length && (
                                   <span className="annot-row-meta" title={`${a.images.length} 张图片`}>
@@ -765,6 +801,42 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
             >
               <div className="citation-head">第 {citation.page} 页</div>
               <div className="citation-body" ref={citationBodyRef}><canvas ref={citationCanvasRef} /></div>
+            </div>
+          )}
+          {inkOn && (
+            <div className="ink-bar" role="toolbar" aria-label="画笔工具">
+              <span className="ink-bar-label"><Icon name="pencil" small />画笔</span>
+              <span className="ink-sep" />
+              <span className="ink-dots">
+                {ANNOT_COLORS.map(([color, label]) => (
+                  <button
+                    key={color}
+                    type="button"
+                    className={"ink-dot" + (inkColor === color ? " active" : "")}
+                    data-color={color}
+                    title={`画笔颜色：${label}`}
+                    onClick={() => { setInkColor(color); engineRef.current?.setInkColor(color); }}
+                  />
+                ))}
+              </span>
+              <span className="ink-sep" />
+              <span className="ink-sizes">
+                {INK_WIDTHS.map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    className={"ink-size" + (inkWidth === w ? " active" : "")}
+                    title={`笔触 ${w}px`}
+                    onClick={() => { setInkWidth(w); engineRef.current?.setInkWidth(w); }}
+                  >
+                    <span className="ink-size-dot" style={{ width: w + 2, height: w + 2 }} />
+                  </button>
+                ))}
+              </span>
+              <span className="ink-sep" />
+              <button type="button" className="icon-btn ink-bar-btn" title="撤销最后一笔" onClick={() => engineRef.current?.undoInk()}><Icon name="undo" small /></button>
+              <button type="button" className="icon-btn ink-bar-btn" title="清除本页画笔" onClick={() => engineRef.current?.clearInk(s?.displayPage)}><Icon name="trash" small /></button>
+              <button type="button" className="icon-btn ink-bar-btn" title="退出画笔" onClick={closeInk}><Icon name="x" small /></button>
             </div>
           )}
         </div>
