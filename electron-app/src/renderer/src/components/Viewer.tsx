@@ -504,10 +504,6 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
     setMenuOpen((o) => !o);
   }
 
-  function onMainClick(): void {
-    if (hasTranslation) { toggleMenu(); } else { start(); }
-  }
-
   function toggleTheme(): void {
     if (!themeOpen && themeRef.current) {
       const r = themeRef.current.getBoundingClientRect();
@@ -587,12 +583,36 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
           <span className="tb-sep" />
 
           <div className="translate-menu" ref={menuRef}>
-            <div className="split">
-              <button className="split-main" disabled={running} onClick={onMainClick}>{hasTranslation ? "已翻译" : "翻译"}</button>
-              <button className="split-caret" title="翻译选项" aria-label="翻译选项" onClick={toggleMenu}>
-                <Icon name="chev-down" small />
-              </button>
-            </div>
+            {hasTranslation || running ? (
+              /* 有译文（或正在翻译）时：视图切换就是主控件，箭头直接开译文菜单，不再单独放一个"翻译"按钮 */
+              <div className={"segmented" + (hasTranslation ? " view-seg" : "")} role="group" aria-label="视图">
+                {(["source", "compare", "target"] as const).map((v) => (
+                  <button key={v} type="button" className={s?.view === v ? "active" : ""} aria-pressed={s?.view === v} disabled={!canView(v)} onClick={() => engineRef.current?.setView(v)}>
+                    {v === "source" ? "原文" : v === "compare" ? "对照" : "译文"}
+                  </button>
+                ))}
+                {hasTranslation && (
+                  <button
+                    type="button"
+                    className="view-more"
+                    title="译文文件与翻译选项"
+                    aria-label="译文文件与翻译选项"
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    onClick={toggleMenu}
+                  >
+                    <Icon name="chev-down" small />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="split">
+                <button className="split-main" onClick={start}>翻译</button>
+                <button className="split-caret" title="翻译选项" aria-label="翻译选项" aria-haspopup="menu" aria-expanded={menuOpen} onClick={toggleMenu}>
+                  <Icon name="chev-down" small />
+                </button>
+              </div>
+            )}
             {menuOpen && (
               <div className="menu-pop" style={{ left: menuPos?.left, top: menuPos?.top }}>
                 {translations.length > 0 && (
@@ -644,16 +664,6 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
                 )}
               </div>
             )}
-          </div>
-
-          <span className="tb-sep" />
-
-          <div className="segmented" role="group" aria-label="视图">
-            {(["source", "compare", "target"] as const).map((v) => (
-              <button key={v} type="button" className={s?.view === v ? "active" : ""} aria-pressed={s?.view === v} disabled={!canView(v)} onClick={() => engineRef.current?.setView(v)}>
-                {v === "source" ? "原文" : v === "compare" ? "对照" : "译文"}
-              </button>
-            ))}
           </div>
 
           <span className="tb-sep" />

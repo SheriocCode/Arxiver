@@ -972,7 +972,7 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .reader-overlay button.primary:hover { background: var(--accent-strong-hover); }
 .reader-overlay button.danger { background: rgba(239,83,80,.16); color: #f3a9a1; }
 .reader-overlay button[disabled] { opacity: .45; cursor: default; }
-/* 图标开关：默认透明，开启时用强调色淡底；实心强调色只留给"翻译" */
+/* 图标开关：默认透明，开启时用强调色淡底 */
 .reader-overlay .toolbar .panel-btn,
 .reader-overlay .toolbar .theme-btn {
   width: 30px; padding: 0; justify-content: center; background: transparent; color: var(--muted);
@@ -987,12 +987,20 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
   display: inline-flex; align-items: center; gap: 1px; height: 30px; padding: 2px;
   background: var(--surface); border-radius: var(--pill);
 }
+/* 尾部带下拉箭头的视图组：右边多留一点，避免箭头贴着圆角看起来偏右 */
+.reader-overlay .segmented.view-seg { padding-right: 6px; }
 .reader-overlay .segmented button {
   height: 24px; padding: 0 10px; border-radius: var(--pill); background: transparent; color: var(--muted);
 }
 .reader-overlay .segmented button:hover { background: var(--surface-2); color: var(--text); }
 .reader-overlay .segmented button.active { background: var(--accent-soft); color: var(--accent); }
 .reader-overlay .segmented button.active:hover { background: var(--accent-soft-2); color: var(--accent); }
+/* 视图组尾部的下拉：只有箭头本身，不占一个文字段的宽度 */
+.reader-overlay .segmented button.view-more {
+  width: 18px; padding: 0; justify-content: center;
+  background: transparent; color: var(--muted);
+}
+.reader-overlay .segmented button.view-more:hover { background: transparent; color: var(--text); }
 /* 翻页 / 缩放：一整块胶囊，中间的数字是唯一可编辑的地方 */
 .reader-overlay .navgroup {
   display: inline-flex; align-items: center; gap: 1px; height: 30px; padding: 0 3px;
@@ -1027,19 +1035,23 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .reader-overlay .run-bar-pct { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .reader-overlay .run-bar-text { position: relative; display: flex; align-items: center; gap: 14px; height: 100%; padding: 0 12px; font-size: 12px; color: var(--text-2); }
 .reader-overlay .run-bar-phase { color: var(--accent); font-weight: 600; }
-.reader-overlay .translate-menu { position: relative; display: inline-flex; }
-/* 翻译 + 选项：与「原文 / 对照 / 译文」同一套胶囊，主操作只用强调色文字强调 */
+/* 翻译 + 选项：与「原文 / 对照 / 译文」同一套胶囊；只在还没有译文时出现 */
+.reader-overlay .translate-menu { position: relative; display: inline-flex; align-items: center; gap: 2px; }
 .reader-overlay .translate-menu .split {
-  display: inline-flex; align-items: center; gap: 1px; height: 30px; padding: 2px;
-  background: var(--surface); border-radius: var(--pill);
+  display: inline-flex; align-items: center; gap: 1px; height: 30px;
+  padding: 2px 6px 2px 2px; background: var(--surface); border-radius: var(--pill);
 }
 .reader-overlay .translate-menu .split button {
-  height: 24px; padding: 0 11px; border-radius: var(--pill);
-  background: transparent; color: var(--accent); font-weight: 500;
+  height: 24px; padding: 0 10px; border-radius: var(--pill);
+  background: transparent; color: var(--muted);
 }
-.reader-overlay .translate-menu .split button:hover { background: var(--surface-2); color: var(--accent); }
-.reader-overlay .translate-menu .split-caret { padding: 0 6px; color: var(--muted); }
-.reader-overlay .translate-menu .split-caret:hover { color: var(--text); }
+.reader-overlay .translate-menu .split button:hover { background: var(--surface-2); color: var(--text); }
+/* 下拉箭头只保留图标本身：18px 宽、悬停只变色，不画一个和文字等大的方块 */
+.reader-overlay .translate-menu .split button.split-caret {
+  width: 18px; padding: 0; justify-content: center;
+  background: transparent; color: var(--muted);
+}
+.reader-overlay .translate-menu .split button.split-caret:hover { background: transparent; color: var(--text); }
 .reader-overlay .menu-pop {
   position: fixed; z-index: 120; min-width: 232px; max-height: 70vh; overflow: auto;
   display: grid; gap: 10px; padding: 12px; background: var(--surface);
