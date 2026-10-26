@@ -45,6 +45,37 @@ function linkLabel(url: string): string {
   return url.replace(/^[a-z]+:\/\//i, "").replace(/\/$/, "");
 }
 
+// 缩略图缓存是白底 JPEG；读回来后画进 canvas，再由页面主题做着色
+function drawThumbImage(canvas: HTMLCanvasElement, url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { resolve(false); return; }
+      ctx.drawImage(img, 0, 0);
+      resolve(true);
+    };
+    img.onerror = () => resolve(false);
+    img.src = url;
+  });
+}
+
+function thumbJpeg(canvas: HTMLCanvasElement): string | null {
+  if (!canvas.width || !canvas.height) { return null; }
+  const out = document.createElement("canvas");
+  out.width = canvas.width; out.height = canvas.height;
+  const ctx = out.getContext("2d");
+  if (!ctx) { return null; }
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(canvas, 0, 0);
+  const url = out.toDataURL("image/jpeg", 0.85);
+  out.width = 0; out.height = 0;
+  return url;
+}
+
 interface Props {
   docId: string;
   visible: boolean;
@@ -102,6 +133,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const [outlineGenerating, setOutlineGenerating] = useState(false);
   const [outlineGenerated, setOutlineGenerated] = useState(false);
   const thumbRefs = useRef<(HTMLCanvasElement | null)[]>([]);
+  const thumbBodyRef = useRef<HTMLDivElement>(null);
   const [themeOpen, setThemeOpen] = useState(false);
   const [themePos, setThemePos] = useState<{ left: number; top: number } | null>(null);
   const themeRef = useRef<HTMLDivElement>(null);
@@ -395,19 +427,57 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
     return () => { cancelled = true; };
   }, [panel, status?.numPages]);
 
+  // 缩略图只渲染滚动到可见区域的那些：一次开 15 页文档时不再把 PDF worker 占满
+  // （原来会把整本文档的缩略图一次性排队渲染，和正文渲染抢 worker，跳页要等很久）。
   useEffect(() => {
     if (panel !== "thumbs") { return; }
+    const total = status?.numPages || 0;
+    if (!total) { return; }
     let cancelled = false;
-    (async () => {
-      const total = status?.numPages || 0;
-      for (let p = 1; p <= total; p++) {
-        if (cancelled) { return; }
+    let timer = 0;
+    const queue: number[] = [];
+    let running = false;
+    const pump = async (): Promise<void> => {
+      if (running) { return; }
+      running = true;
+      while (queue.length && !cancelled) {
+        const p = queue.shift()!;
         const canvas = thumbRefs.current[p - 1];
-        if (canvas) { await engineRef.current?.renderThumbnail(p, canvas); }
+        if (!canvas || canvas.dataset.rendered === "1") { continue; }
+        try {
+          // 先读磁盘缓存；没有再用 PDF 渲染一次并写回
+          const cached = await window.api.viewerThumb(docId, p);
+          if (cancelled) { return; }
+          if (cached && await drawThumbImage(canvas, cached)) {
+            canvas.dataset.rendered = "1";
+            continue;
+          }
+          const ok = await engineRef.current?.renderThumbnail(p, canvas);
+          if (cancelled) { return; }
+          if (!ok) { continue; }
+          canvas.dataset.rendered = "1";
+          const jpeg = thumbJpeg(canvas);
+          if (jpeg) { void window.api.viewerThumbSave(docId, p, jpeg).catch(() => undefined); }
+        } catch { /* ignore */ }
       }
-    })();
-    return () => { cancelled = true; };
-  }, [panel, status?.numPages]);
+      running = false;
+    };
+    const obs = new IntersectionObserver((entries) => {
+      for (const en of entries) {
+        if (!en.isIntersecting) { continue; }
+        const p = Number((en.target as HTMLElement).dataset.page || 0);
+        if (!p) { continue; }
+        const canvas = thumbRefs.current[p - 1];
+        if (!canvas || canvas.dataset.rendered === "1" || queue.includes(p)) { continue; }
+        queue.push(p);
+      }
+      // 稍微延后：先让正文（尤其是跳页时）拿到 PDF worker
+      clearTimeout(timer);
+      timer = window.setTimeout(() => void pump(), 150);
+    }, { root: thumbBodyRef.current, rootMargin: "300px 0px" });
+    for (const c of thumbRefs.current) { if (c) { obs.observe(c); } }
+    return () => { cancelled = true; clearTimeout(timer); obs.disconnect(); };
+  }, [panel, status?.numPages, docId]);
 
   useImperativeHandle(ref, () => ({
     goToPage: (page: number, quote?: string) => {
@@ -732,7 +802,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
               <button type="button" className={panel === "thumbs" ? "active" : ""} onClick={() => setPanel("thumbs")}>缩略图</button>
               <button type="button" className={panel === "annots" ? "active" : ""} onClick={() => setPanel("annots")}>标注</button>
             </div>
-            <div className="outline-body">
+            <div className="outline-body" ref={thumbBodyRef}>
               {panel === "annots" ? (
                 annotSorted.length === 0
                   ? <div className="outline-empty">选中正文文字可添加高亮或笔记；用工具栏的画笔可在页面上自由绘制；点击页面上的标注可改颜色、写笔记、插图或加链接。</div>
@@ -803,7 +873,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
                     ))
                 : Array.from({ length: s?.numPages || 0 }, (_, i) => i + 1).map((p) => (
                   <button key={p} type="button" className={"thumb" + (p === (s?.displayPage ?? -1) ? " active" : "")} onClick={() => engineRef.current?.goToNumberedPage(p)}>
-                    <span className="thumb-page"><canvas ref={(el) => { thumbRefs.current[p - 1] = el; }} /></span>
+                    <span className="thumb-page"><canvas data-page={p} ref={(el) => { thumbRefs.current[p - 1] = el; }} /></span>
                     <span className="thumb-no">{p}</span>
                   </button>
                 ))}

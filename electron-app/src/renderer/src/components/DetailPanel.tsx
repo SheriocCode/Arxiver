@@ -1712,12 +1712,18 @@ function DocPreview({ doc }: { doc: LibraryDoc }): JSX.Element {
         if (!data.bytes) { return; }
         const pdfjs = await getPdfjs();
         const pdf = await pdfjs.getDocument({ data: new Uint8Array(data.bytes) }).promise;
-        if (cancelled) { return; }
+        if (cancelled) { try { pdf.destroy(); } catch { /* */ } return; }
         docRef.current = pdf;
         setNumPages(pdf.numPages);
       } catch { /* ignore */ }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      // 预览用的 PDFDocumentProxy 也要销毁，否则切文献会一直累积
+      if (docRef.current) { try { docRef.current.destroy(); } catch { /* */ } docRef.current = null; }
+      const canvas = canvasRef.current;
+      if (canvas) { canvas.width = 0; canvas.height = 0; }
+    };
   }, [doc.id]);
 
   useEffect(() => {
@@ -1725,15 +1731,17 @@ function DocPreview({ doc }: { doc: LibraryDoc }): JSX.Element {
     if (!pdf) { return; }
     let cancelled = false;
     (async () => {
-      const p = await pdf.getPage(page);
-      if (cancelled) { return; }
-      const base = p.getViewport({ scale: 1 });
-      const viewport = p.getViewport({ scale: (300 * zoom) / base.width });
-      const canvas = canvasRef.current;
-      if (!canvas) { return; }
-      canvas.width = Math.floor(viewport.width);
-      canvas.height = Math.floor(viewport.height);
-      await p.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+      try {
+        const p = await pdf.getPage(page);
+        if (cancelled) { return; }
+        const base = p.getViewport({ scale: 1 });
+        const viewport = p.getViewport({ scale: (300 * zoom) / base.width });
+        const canvas = canvasRef.current;
+        if (!canvas) { return; }
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        await p.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+      } catch { /* 切换文献时旧 doc 已销毁，忽略 */ }
     })();
     return () => { cancelled = true; };
   }, [numPages, page, zoom]);

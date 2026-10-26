@@ -78,6 +78,8 @@ const ANNOT_LABELS: Record<PdfAnnotKind, string> = {
 };
 const ANNOT_COLOR_LABELS: Record<string, string> = { yellow: "黄色", green: "绿色", blue: "蓝色", pink: "粉色" };
 const SVG_NS = "http://www.w3.org/2000/svg";
+// 单页画布的最大像素数（约 64MB RGBA）：缩放到很大时宁可让浏览器放大画布，也不无限占内存
+const MAX_RENDER_PIXELS = 16_000_000;
 
 function annotId(): string {
   return "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -247,6 +249,10 @@ export class ViewerEngine {
   private regionEl: HTMLElement | null = null;
   private regionCancel: (() => void) | null = null;
   private renderInFlight = false;
+  private renderPending = false;
+  private renderSeq = 0;
+  private linksLoading = new Set<number>();
+  private resizeObs: ResizeObserver | null = null;
   private renderTimer = 0;
   private selRaf = 0;
   private settling = false;
@@ -282,17 +288,22 @@ export class ViewerEngine {
     let raf = 0;
     this.root.addEventListener("scroll", () => {
       if (raf) { return; }
-      raf = requestAnimationFrame(() => { raf = 0; this.updateCurrentPage(); this.followBlockTip(); this.followAnnotTip(); this.scheduleRender(120); });
+      raf = requestAnimationFrame(() => { raf = 0; this.updateCurrentPage(); this.followBlockTip(); this.followAnnotTip(); this.scheduleRender(40); });
     });
     if (typeof ResizeObserver !== "undefined") {
-      new ResizeObserver(() => {
+      this.resizeObs = new ResizeObserver(() => {
         this.followBlockTip();
         if (!this.leftDoc) { return; }
         const cw = this.root.clientWidth;
         if (cw <= 0) { return; }
         const w = this.computeFitWidth();
-        if (Math.abs(w - this.basePageW) > 1) { this.basePageW = w; this.applyPageWidth(); this.scheduleRender(60); }
-      }).observe(this.root);
+        if (Math.abs(w - this.basePageW) > 1) {
+          this.basePageW = w;
+          this.applyPageWidth();
+          this.scheduleRender(60);
+        }
+      });
+      this.resizeObs.observe(this.root);
     }
   }
 
@@ -345,10 +356,13 @@ export class ViewerEngine {
   }
 
   private async renderCell(canvas: HTMLCanvasElement, doc: any, page: number, width: number): Promise<void> {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const p = await doc.getPage(page);
     const base = p.getViewport({ scale: 1 });
-    const viewport = p.getViewport({ scale: (width / base.width) * dpr });
+    // 缩放很大时限制单页像素数，避免一张画布吃掉几百 MB（放大的清晰度由 CSS 补齐）
+    const wantScale = (width / base.width) * dpr;
+    const capScale = Math.sqrt(MAX_RENDER_PIXELS / (base.width * base.height));
+    const viewport = p.getViewport({ scale: Math.min(wantScale, Math.max(1, capScale)) });
     const w = Math.max(1, Math.floor(viewport.width));
     const h = Math.max(1, Math.floor(viewport.height));
     const scratch = document.createElement("canvas");
@@ -358,12 +372,22 @@ export class ViewerEngine {
     const ctx = canvas.getContext("2d")!;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(scratch, 0, 0);
+    // 临时画布立刻还给浏览器，别等 GC
+    scratch.width = 0; scratch.height = 0;
     const wrap = canvas.parentElement;
     if (wrap) {
       const existing = wrap.querySelector<HTMLElement>(".text-layer");
       if (!existing || existing.dataset.refw !== String(this.basePageW)) {
         await this.renderTextLayer(wrap, p, base.width, this.basePageW);
       }
+    }
+    // 页面链接也按需加载（打开文档时不再为每一页解析一遍链接，明显加快首屏）
+    if (this.leftSlots[page] === canvas && this.linksByPage[page] === undefined && !this.linksLoading.has(page)) {
+      this.linksLoading.add(page);
+      void this.loadPageLinks(doc, p, page)
+        .then(() => { this.renderPageLinks(page); })
+        .catch(() => undefined)
+        .finally(() => { this.linksLoading.delete(page); });
     }
   }
 
@@ -1533,6 +1557,12 @@ export class ViewerEngine {
   }
 
   private resetDom(): void {
+    if (this.renderTimer) { window.clearTimeout(this.renderTimer); this.renderTimer = 0; }
+    // 旧 DOM 的渲染可能还在等 PDF.js；重建后不能让它把新一轮渲染卡住
+    this.renderSeq++;
+    this.renderInFlight = false;
+    // 关闭标签页 / 重排前把画布位图还给浏览器；只清 DOM 的话大画布要等 GC 才释放
+    this.root.querySelectorAll("canvas").forEach((c) => { c.width = 1; c.height = 1; });
     if (this.leftDoc) { try { this.leftDoc.destroy(); } catch { /* */ } this.leftDoc = null; }
     if (this.rightDoc) { try { this.rightDoc.destroy(); } catch { /* */ } this.rightDoc = null; }
     this.hideBlockTip();
@@ -1540,7 +1570,7 @@ export class ViewerEngine {
     this.leftSlots = {}; this.rightSlots = {}; this.pageWrap = {}; this.blockLayer = {}; this.linkLayer = {}; this.rightLayer = {}; this.annotLayer = {};
     // blocksByPage belongs to the document, not to the DOM: keep it across rebuilds
     // (view/layout switches) so the block overlays can be re-rendered.
-    this.pageSize = {}; this.renderedW = {}; this.renderedWR = {}; this.linksByPage = {};
+    this.pageSize = {}; this.renderedW = {}; this.renderedWR = {}; this.linksByPage = {}; this.linksLoading.clear();
     this.quotePage = 0; this.quoteText = "";
     this.rows = []; this.rowFirstPage = []; this.currentPageIndex = 0; this.totalPages = 0;
     this.root.innerHTML = "";
@@ -1573,10 +1603,12 @@ export class ViewerEngine {
     const perRow = this.perRow();
     const width = this.pageWidth();
     for (let start = 1; start <= total; start += perRow) {
+      if (gen !== this.buildGen) { return; }
       const row = document.createElement("div");
       row.className = "compare-row";
       for (let p = start; p < start + perRow && p <= total; p++) {
         const page = await doc.getPage(p);
+        if (gen !== this.buildGen) { return; }
         const base = page.getViewport({ scale: 1 });
         this.pageSize[p] = { w: base.width, h: base.height };
         // left (source)
@@ -1608,7 +1640,6 @@ export class ViewerEngine {
           row.appendChild(cell);
           this.leftSlots[p] = canvas; this.pageWrap[p] = wrap; this.blockLayer[p] = layer; this.linkLayer[p] = linkLayer;
           this.annotLayer[p] = annotLayer;
-          await this.loadPageLinks(doc, page, p);
         }
         // right (translation)
         if (this.view !== "source") {
@@ -1653,6 +1684,8 @@ export class ViewerEngine {
   private renderVisible = async (): Promise<void> => {
     if (this.renderInFlight || this.root.hidden || !this.leftDoc) { return; }
     this.renderInFlight = true;
+    this.renderPending = false;
+    const seq = ++this.renderSeq;
     try {
       const width = this.pageWidth();
       const perRow = this.perRow();
@@ -1664,18 +1697,34 @@ export class ViewerEngine {
         if (row.offsetTop > bottom + 400) { break; }
         const first = this.rowFirstPage[i] || i + 1;
         for (let p = first; p < first + perRow && p <= this.totalPages; p++) {
+          // 单页渲染失败不要连累后面的页
           const left = this.leftSlots[p];
-          if (left && this.renderedW[p] !== width) { await this.renderCell(left, this.leftDoc, p, width); this.renderedW[p] = width; }
+          if (left && this.renderedW[p] !== width) {
+            try { await this.renderCell(left, this.leftDoc, p, width); this.renderedW[p] = width; } catch { /* skip */ }
+          }
           const right = this.rightSlots[p];
-          if (right && this.rightDoc && this.renderedWR[p] !== width) { await this.renderCell(right, this.rightDoc, p, width); this.renderedWR[p] = width; }
+          if (right && this.rightDoc && this.renderedWR[p] !== width) {
+            try { await this.renderCell(right, this.rightDoc, p, width); this.renderedWR[p] = width; } catch { /* skip */ }
+          }
         }
       }
       this.renderAllBlocks();
       this.renderAllAnnots();
-    } catch { /* ignore */ } finally { this.renderInFlight = false; }
+    } catch { /* ignore */ } finally {
+      // 期间如果已经 rebuild / 开始了新一轮渲染，别把新任务的 in-flight 标志清掉
+      if (seq === this.renderSeq) {
+        this.renderInFlight = false;
+        // 渲染期间又发生了滚动 / 跳页：补一轮，否则新位置会一直空着
+        if (this.renderPending) { this.renderPending = false; this.scheduleRender(0); }
+      }
+    }
   };
 
-  private scheduleRender(d: number): void { clearTimeout(this.renderTimer); this.renderTimer = window.setTimeout(() => void this.renderVisible(), d); }
+  private scheduleRender(d: number): void {
+    clearTimeout(this.renderTimer);
+    this.renderPending = true;
+    this.renderTimer = window.setTimeout(() => { this.renderTimer = 0; void this.renderVisible(); }, d);
+  }
 
   private updateCurrentPage(): void {
     if (!this.rows.length) { return; }
@@ -1738,7 +1787,7 @@ export class ViewerEngine {
     if (this.view === "target") {
       this.view = this.rightBytes ? "compare" : "source";
       if (this.view === "compare") { this.layout = "single"; }
-      void this.build();
+      void this.build().catch(() => undefined);
     }
     for (let i = 0; i < 120 && !this.pageWrap[page]; i++) { await delay(80); }
     this.goToNumberedPage(page);
@@ -1943,9 +1992,9 @@ export class ViewerEngine {
     if (v === this.view) { return; }
     this.view = v;
     if (v === "compare") { this.layout = "single"; }
-    void this.build();
+    void this.build().catch(() => undefined);
   }
-  setLayout(l: Layout): void { if (l === this.layout) { return; } this.layout = l; void this.build(); }
+  setLayout(l: Layout): void { if (l === this.layout) { return; } this.layout = l; void this.build().catch(() => undefined); }
 
   // Block overlays have two independent switches: one for the live translation
   // preview, one for viewing a finished translation. The active session decides
@@ -2427,8 +2476,10 @@ export class ViewerEngine {
     if (!ctx) { return null; }
     ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
     try {
+      const dataUrl = out.toDataURL("image/jpeg", 0.92);
+      out.width = 0; out.height = 0;
       return {
-        dataUrl: out.toDataURL("image/jpeg", 0.92),
+        dataUrl,
         page: Number(wrap.dataset.page || 0),
         // 页面纵向位置（0 = 顶部）：模型据此知道选的是页面上半/中间/下半
         anchor: Math.min(1, Math.max(0, (top - cr.top) / cr.height)),
@@ -2492,6 +2543,8 @@ export class ViewerEngine {
       const resolved = await this.resolveDest(doc, a.dest);
       if (resolved) { entries.push({ page: resolved.page, rect: a.rect, anchor: resolved.anchor }); }
     }
+    // 旧文档的异步结果不要写进新文档的缓存（切文献/重建时）
+    if (doc !== this.leftDoc) { return; }
     this.linksByPage[page] = entries;
   }
 
@@ -2578,6 +2631,7 @@ export class ViewerEngine {
       canvas.height = scratch.height;
       const ctx = canvas.getContext("2d")!;
       ctx.drawImage(scratch, sx, 0, sw, scratch.height, 0, 0, sw, scratch.height);
+      scratch.width = 0; scratch.height = 0;
     } catch { /* ignore */ }
   }
 
@@ -2662,6 +2716,23 @@ export class ViewerEngine {
   async outline(onGenerating?: () => void): Promise<{ items: { title: string; page: number; level: number; anchor: number }[]; generated: boolean }> {
     const out: { title: string; page: number; level: number; anchor: number }[] = [];
     if (!this.leftDoc) { return { items: out, generated: false }; }
+    // 目录也走磁盘缓存：第一次解析后保存（带页内 anchor），之后直接读。
+    if (this.docId) {
+      try {
+        const cached = await window.api.viewerOutline(this.docId);
+        if (cached && cached.items && cached.items.length) {
+          return {
+            items: cached.items.map((it) => ({
+              title: it.title,
+              page: it.page,
+              level: it.level,
+              anchor: typeof it.anchor === "number" ? it.anchor : 0
+            })),
+            generated: !!cached.generated
+          };
+        }
+      } catch { /* 缓存不可用时回退到解析 */ }
+    }
     let raw: any[] | null = null;
     try { raw = await this.leftDoc.getOutline(); } catch { raw = null; }
     const walk = async (items: any[], level: number): Promise<void> => {
@@ -2687,6 +2758,7 @@ export class ViewerEngine {
     };
     if (raw) { await walk(raw, 0); }
     // No embedded bookmarks: fall back to a generated outline (engine-side heuristic).
+    let generated = false;
     if (!out.length && this.docId) {
       onGenerating?.();
       try {
@@ -2697,14 +2769,17 @@ export class ViewerEngine {
             anchor: typeof it.anchor === "number" ? it.anchor : 0
           });
         }
-        return { items: out, generated: res.source === "heuristic" && out.length > 0 };
+        generated = res.source === "heuristic" && out.length > 0;
       } catch { /* ignore */ }
     }
-    return { items: out, generated: false };
+    if (this.docId && out.length) {
+      void window.api.viewerOutlineSave(this.docId, { items: out, generated }).catch(() => undefined);
+    }
+    return { items: out, generated };
   }
 
-  async renderThumbnail(page: number, canvas: HTMLCanvasElement): Promise<void> {
-    if (!this.leftDoc) { return; }
+  async renderThumbnail(page: number, canvas: HTMLCanvasElement): Promise<boolean> {
+    if (!this.leftDoc) { return false; }
     try {
       const p = await this.leftDoc.getPage(page);
       const base = p.getViewport({ scale: 1 });
@@ -2712,7 +2787,8 @@ export class ViewerEngine {
       canvas.width = Math.max(1, Math.floor(viewport.width));
       canvas.height = Math.max(1, Math.floor(viewport.height));
       await p.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
-    } catch { /* ignore */ }
+      return true;
+    } catch { return false; }
   }
 
   async loadBlocks(docId: string, cacheKey: string): Promise<void> {
@@ -2876,8 +2952,16 @@ export class ViewerEngine {
 
   // 卸载（关闭标签页）时调用：除了 reset，还要摘掉 document 上的选区监听
   dispose(): void {
+    // 让还在跑的 build / 渲染任务尽快收尾，别在关闭标签后继续分配大画布
+    this.buildGen++;
+    if (this.selRaf) { window.cancelAnimationFrame(this.selRaf); this.selRaf = 0; }
+    if (this.annotSaveTimer) { window.clearTimeout(this.annotSaveTimer); this.annotSaveTimer = 0; }
+    // 不 disconnect 的话 observer 会一直握着 engine 和整个 root（关闭标签后内存不释放）
+    this.resizeObs?.disconnect();
+    this.resizeObs = null;
     // 卸载前把没保存的笔记落盘；此时不再回调 React（组件正在卸载）
     this.onAnnotations = null;
+    this.onDone = null;
     this.finishAnnotTip();
     this.clearSelection();
     this.closeAnnotTip();

@@ -15,6 +15,7 @@ import { AgentService, type AgentChatRequest } from "./agent/agent";
 import * as conversations from "./agent/conversations";
 import * as skills from "./agent/skills";
 import { getOutline } from "./outline";
+import * as viewerCache from "./viewerCache";
 import { importPaper, fetchPdf } from "./importPaper";
 import { enrichDocMeta } from "./enrich";
 import * as logger from "./logger";
@@ -653,6 +654,10 @@ function registerIpc(): void {
   ipcMain.handle("library:result", (_event, id: string, cacheKey: string, variant?: string) => storage.readTranslation(id, cacheKey, variant));
   ipcMain.handle("library:blocks", (_event, id: string, cacheKey: string) => storage.readBlocks(id, cacheKey));
   ipcMain.handle("doc:outline", (_event, id: string) => getOutline(id));
+  ipcMain.handle("viewer:outline", (_event, id: string) => viewerCache.readViewerOutline(id));
+  ipcMain.handle("viewer:outlineSave", (_event, id: string, data: unknown) => viewerCache.saveViewerOutline(id, data as viewerCache.ViewerOutline));
+  ipcMain.handle("viewer:thumb", (_event, id: string, page: number) => viewerCache.readThumb(id, page));
+  ipcMain.handle("viewer:thumbSave", (_event, id: string, page: number, dataUrl: string) => viewerCache.saveThumb(id, page, dataUrl));
 
   ipcMain.handle("library:state", () => library.list());
   ipcMain.handle("library:add", async (_event, payload: SourcePayload & { type?: string; collections?: string[] }) => {

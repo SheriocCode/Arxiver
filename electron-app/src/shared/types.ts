@@ -485,6 +485,10 @@ export interface Api {
   readTranslation(id: string, cacheKey: string, variant?: string): Promise<Uint8Array | null>;
   readBlocks(id: string, cacheKey: string): Promise<BlockEvent[]>;
   docOutline(id: string): Promise<DocOutline>;
+  viewerOutline(id: string): Promise<{ items: OutlineItem[]; generated: boolean } | null>;
+  viewerOutlineSave(id: string, data: { items: OutlineItem[]; generated: boolean }): Promise<boolean>;
+  viewerThumb(id: string, page: number): Promise<string | null>;
+  viewerThumbSave(id: string, page: number, dataUrl: string): Promise<boolean>;
   saveResult(id: string, variant?: string): Promise<string | null>;
   listStorage(): Promise<{ entries: StorageEntry[]; total: number }>;
   logsTranslation(): Promise<TranslationLogEntry[]>;
