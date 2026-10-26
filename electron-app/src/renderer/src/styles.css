@@ -940,8 +940,9 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
   display: flex; align-items: center; gap: 10px; height: 52px; flex: none;
   padding: 0 12px; background: var(--bg-panel); border-bottom: 1px solid var(--border);
 }
+/* 工具栏：左边阅读 / 翻译操作，右边翻页与缩放；组间用细线分隔，控件统一 30px 高 */
 .reader-overlay .controls {
-  display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0;
+  flex: 1 1 auto; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0;
   overflow-x: auto; overflow-y: hidden;
 }
 /* 工具栏横向滚动条：窄、圆、无箭头，别像一条横贯的"进度条" */
@@ -953,8 +954,11 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .reader-overlay .controls::-webkit-scrollbar-thumb:hover { background: #666; }
 .reader-overlay .controls::-webkit-scrollbar-button { display: none; }
 .reader-overlay .controls > * { flex: none; }
+.reader-overlay .tb-group { display: inline-flex; align-items: center; gap: 2px; }
+.reader-overlay .tb-sep { flex: none; width: 1px; height: 18px; background: var(--border-strong); }
+.reader-overlay .controls > .tb-spacer { flex: 1 1 0; min-width: 10px; }
 .reader-overlay .field { display: inline-flex; flex-direction: row; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
-.reader-overlay select, .reader-overlay .navgroup input, .reader-overlay .menu-row input {
+.reader-overlay select, .reader-overlay .menu-row input {
   height: 30px; padding: 0 8px; background: var(--surface); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: var(--radius); outline: none; font: inherit; font-size: 12px;
 }
@@ -968,14 +972,54 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .reader-overlay button.primary:hover { background: var(--accent-strong-hover); }
 .reader-overlay button.danger { background: rgba(239,83,80,.16); color: #f3a9a1; }
 .reader-overlay button[disabled] { opacity: .45; cursor: default; }
-.reader-overlay .segmented { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; }
-.reader-overlay .segmented button { border-radius: 0; background: transparent; color: var(--muted); }
-.reader-overlay .segmented button.active { background: var(--accent); color: #fff; }
-.reader-overlay .navgroup { display: inline-flex; align-items: center; gap: 2px; height: 30px; padding: 0 4px; border: 1px solid var(--border-strong); border-radius: var(--radius); }
-.reader-overlay .navgroup button { background: transparent; padding: 0 6px; height: 24px; }
-.reader-overlay .navgroup input { width: 48px; min-width: 48px; text-align: center; padding: 0 4px; background: transparent; border: 0; }
-.reader-overlay .nav-muted { color: var(--muted); font-size: 12px; padding: 0 2px; }
-.reader-overlay .block-btn.active { background: var(--accent); color: #fff; }
+/* 图标开关：默认透明，开启时用强调色淡底；实心强调色只留给"翻译" */
+.reader-overlay .toolbar .panel-btn,
+.reader-overlay .toolbar .theme-btn {
+  width: 30px; padding: 0; justify-content: center; background: transparent; color: var(--muted);
+}
+.reader-overlay .toolbar .panel-btn:hover,
+.reader-overlay .toolbar .theme-btn:hover { background: var(--surface-2); color: var(--text); }
+.reader-overlay .toolbar .panel-btn.active { background: var(--accent-soft); color: var(--accent); }
+.reader-overlay .toolbar .panel-btn.active:hover { background: var(--accent-soft-2); }
+.reader-overlay .toolbar .panel-btn[disabled]:hover { background: transparent; color: var(--muted); }
+/* 分段切换：凹槽里的胶囊，选中态同样是淡绿 */
+.reader-overlay .segmented {
+  display: inline-flex; align-items: center; gap: 1px; height: 30px; padding: 2px;
+  background: var(--surface); border-radius: var(--pill);
+}
+.reader-overlay .segmented button {
+  height: 24px; padding: 0 10px; border-radius: var(--pill); background: transparent; color: var(--muted);
+}
+.reader-overlay .segmented button:hover { background: var(--surface-2); color: var(--text); }
+.reader-overlay .segmented button.active { background: var(--accent-soft); color: var(--accent); }
+.reader-overlay .segmented button.active:hover { background: var(--accent-soft-2); color: var(--accent); }
+/* 翻页 / 缩放：一整块胶囊，中间的数字是唯一可编辑的地方 */
+.reader-overlay .navgroup {
+  display: inline-flex; align-items: center; gap: 1px; height: 30px; padding: 0 3px;
+  background: var(--surface); border-radius: var(--pill);
+}
+.reader-overlay .navgroup button {
+  width: 26px; height: 24px; padding: 0; justify-content: center;
+  border-radius: var(--pill); background: transparent; color: var(--muted);
+}
+.reader-overlay .navgroup button:hover { background: var(--surface-3); color: var(--text); }
+.reader-overlay .navgroup button[disabled]:hover { background: transparent; color: var(--muted); }
+.reader-overlay .navgroup input {
+  width: 2ch; min-width: 0; height: 22px; padding: 0 2px; text-align: center;
+  background: transparent; border: 0; border-radius: var(--radius-sm); outline: none;
+  color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.reader-overlay .navgroup input:focus { background: var(--surface-3); }
+.reader-overlay .navgroup .zoom-level {
+  width: auto; min-width: 52px; padding: 0 8px; color: var(--text-2);
+  font-variant-numeric: tabular-nums; font-weight: 500;
+}
+.reader-overlay .navgroup .zoom-level:hover { color: var(--text); }
+.reader-overlay .nav-total {
+  padding: 0 5px 0 2px; color: var(--muted); font-size: 12px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 /* 翻译进度条：与深色界面统一（深底 + 深灰进度），强调色只落在底部 2px 进度线和阶段文字上。 */
 .reader-overlay .run-bar { position: relative; flex: none; height: 30px; background: var(--bg-panel); border-bottom: 1px solid var(--border); overflow: hidden; }
 .reader-overlay .run-bar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--surface-2); transition: width .3s var(--ease); }
@@ -984,9 +1028,18 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .reader-overlay .run-bar-text { position: relative; display: flex; align-items: center; gap: 14px; height: 100%; padding: 0 12px; font-size: 12px; color: var(--text-2); }
 .reader-overlay .run-bar-phase { color: var(--accent); font-weight: 600; }
 .reader-overlay .translate-menu { position: relative; display: inline-flex; }
-.reader-overlay .translate-menu .split { display: inline-flex; }
-.reader-overlay .translate-menu .split-main { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-.reader-overlay .translate-menu .split-caret { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: 1px; padding: 0 6px; }
+/* 翻译 + 选项：与「原文 / 对照 / 译文」同一套胶囊，主操作只用强调色文字强调 */
+.reader-overlay .translate-menu .split {
+  display: inline-flex; align-items: center; gap: 1px; height: 30px; padding: 2px;
+  background: var(--surface); border-radius: var(--pill);
+}
+.reader-overlay .translate-menu .split button {
+  height: 24px; padding: 0 11px; border-radius: var(--pill);
+  background: transparent; color: var(--accent); font-weight: 500;
+}
+.reader-overlay .translate-menu .split button:hover { background: var(--surface-2); color: var(--accent); }
+.reader-overlay .translate-menu .split-caret { padding: 0 6px; color: var(--muted); }
+.reader-overlay .translate-menu .split-caret:hover { color: var(--text); }
 .reader-overlay .menu-pop {
   position: fixed; z-index: 120; min-width: 232px; max-height: 70vh; overflow: auto;
   display: grid; gap: 10px; padding: 12px; background: var(--surface);
@@ -1075,7 +1128,6 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 }
 .reader-overlay .annot-row:hover .annot-row-del { opacity: 1; }
 .reader-overlay .annot-row-del:hover { background: var(--surface-2); color: var(--text); }
-.reader-overlay .panel-btn.active { background: var(--accent); color: #fff; }
 .reader-overlay .maybe-empty { position: absolute; inset: 0; }
 
 .reader-overlay .compare { position: absolute; inset: 0; overflow: auto; background: #161616; padding: 16px; }

@@ -91,6 +91,10 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const [targetLang, setTargetLang] = useState("zh-CN");
   const [variant, setVariant] = useState("dual");
   const [pages, setPages] = useState("");
+  // 页码输入框的草稿：回车 / 失焦才跳转，避免输入 "22" 的过程中先跳到第 2 页
+  const [pageDraft, setPageDraft] = useState<string | null>(null);
+  // Esc 取消时 blur 会立刻触发 onBlur，用这个标记别把取消当成提交
+  const pageCancelRef = useRef(false);
   const [panel, setPanel] = useState<"toc" | "thumbs" | "annots" | null>(null);
   const [outline, setOutline] = useState<{ title: string; page: number; level: number; anchor: number }[]>([]);
   const [outlineLoading, setOutlineLoading] = useState(false);
@@ -144,6 +148,8 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
       ? (capture) => captureRef.current?.(capture)
       : null;
   }, [captureEnabled]);
+
+  useEffect(() => { setPageDraft(null); }, [status?.displayPage]);
 
   // Load this document's source once, on mount.
   useEffect(() => {
@@ -473,6 +479,17 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
     engineRef.current?.setInkMode(false);
   }
 
+  // 页码输入：只在回车 / 失焦时提交，空值、Esc 或越界就回到当前页
+  function commitPage(): void {
+    const raw = pageCancelRef.current ? "" : (pageDraft || "").trim();
+    pageCancelRef.current = false;
+    setPageDraft(null);
+    const n = parseInt(raw, 10);
+    if (isNaN(n)) { return; }
+    const page = Math.min(Math.max(1, n), numPages || 1);
+    if (page !== (s?.displayPage ?? 1)) { engineRef.current?.goToNumberedPage(page); }
+  }
+
   function start(): void {
     setMenuOpen(false);
     engineRef.current?.start({ source_lang: sourceLang, target_lang: targetLang, output_variant: variant, pages } as Partial<TransParams>);
@@ -515,59 +532,64 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
     <div className="workspace" data-page-theme={pageTheme} hidden={!hasSource || !visible}>
       <header className="toolbar">
         <div className="controls">
-          <button type="button" className={"panel-btn" + (panel ? " active" : "")} title="目录 / 缩略图" onClick={() => setPanel(panel ? null : "toc")}><Icon name="panel-left" small /></button>
+          <div className="tb-group">
+            <button type="button" className={"panel-btn" + (panel ? " active" : "")} title="目录 / 缩略图" aria-pressed={!!panel} onClick={() => setPanel(panel ? null : "toc")}><Icon name="panel-left" small /></button>
 
-          <div className="theme-menu" ref={themeRef}>
-            <button type="button" className="theme-btn" title="页面背景" onClick={toggleTheme}>
-              <span className="swatch" style={{ background: PAGE_THEMES.find((t) => t[0] === pageTheme)?.[2] }} />
+            <div className="theme-menu" ref={themeRef}>
+              <button type="button" className="theme-btn" title="页面背景" onClick={toggleTheme}>
+                <span className="swatch" style={{ background: PAGE_THEMES.find((t) => t[0] === pageTheme)?.[2] }} />
+              </button>
+              {themeOpen && (
+                <div className="menu-pop theme-pop" style={{ left: themePos?.left, top: themePos?.top }}>
+                  {PAGE_THEMES.map(([id, label, color]) => (
+                    <button key={id} type="button" className={"theme-item" + (pageTheme === id ? " active" : "")} onClick={() => { onPageThemeChange(id); setThemeOpen(false); }}>
+                      <span className="swatch" style={{ background: color }} />
+                      <span className="theme-label">{label}</span>
+                      {pageTheme === id && <Icon name="check" small />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 块框：直接在阅读界面切换（对应 设置 → 外观 里的两个开关） */}
+            <button
+              type="button"
+              className={"panel-btn" + (blocksOn ? " active" : "")}
+              aria-pressed={blocksOn}
+              disabled={!canShowBlocks}
+              title={!canShowBlocks ? "暂无译文，没有可显示的块框" : (running ? "翻译时显示块框" : "查看译文时显示块框") + "（点击块框查看原文 / 译文）"}
+              onClick={() => onToggleBlocks(running ? "translating" : "viewing")}
+            >
+              <Icon name="layers" small />
             </button>
-            {themeOpen && (
-              <div className="menu-pop theme-pop" style={{ left: themePos?.left, top: themePos?.top }}>
-                {PAGE_THEMES.map(([id, label, color]) => (
-                  <button key={id} type="button" className={"theme-item" + (pageTheme === id ? " active" : "")} onClick={() => { onPageThemeChange(id); setThemeOpen(false); }}>
-                    <span className="swatch" style={{ background: color }} />
-                    <span className="theme-label">{label}</span>
-                    {pageTheme === id && <Icon name="check" small />}
-                  </button>
-                ))}
-              </div>
-            )}
+
+            <button
+              type="button"
+              className={"panel-btn" + (annotVisible ? " active" : "")}
+              aria-pressed={annotVisible}
+              title={annotVisible ? "隐藏标注" : "显示标注"}
+              onClick={toggleAnnots}
+            >
+              <Icon name="highlight" small />
+            </button>
+            <button
+              type="button"
+              className={"panel-btn" + (inkOn ? " active" : "")}
+              aria-pressed={inkOn}
+              title={inkOn ? "退出画笔" : "画笔：在 PDF 上自由绘制"}
+              onClick={toggleInk}
+            >
+              <Icon name="pencil" small />
+            </button>
           </div>
 
-          {/* 块框：直接在阅读界面切换（对应 设置 → 外观 里的两个开关） */}
-          <button
-            type="button"
-            className={"panel-btn" + (blocksOn ? " active" : "")}
-            aria-pressed={blocksOn}
-            disabled={!canShowBlocks}
-            title={!canShowBlocks ? "暂无译文，没有可显示的块框" : (running ? "翻译时显示块框" : "查看译文时显示块框") + "（点击块框查看原文 / 译文）"}
-            onClick={() => onToggleBlocks(running ? "translating" : "viewing")}
-          >
-            <Icon name="layers" small />
-          </button>
+          <span className="tb-sep" />
 
-          <button
-            type="button"
-            className={"panel-btn" + (annotVisible ? " active" : "")}
-            aria-pressed={annotVisible}
-            title={annotVisible ? "隐藏标注" : "显示标注"}
-            onClick={toggleAnnots}
-          >
-            <Icon name="highlight" small />
-          </button>
-          <button
-            type="button"
-            className={"panel-btn" + (inkOn ? " active" : "")}
-            aria-pressed={inkOn}
-            title={inkOn ? "退出画笔" : "画笔：在 PDF 上自由绘制"}
-            onClick={toggleInk}
-          >
-            <Icon name="pencil" small />
-          </button>
           <div className="translate-menu" ref={menuRef}>
             <div className="split">
-              <button className="primary split-main" disabled={running} onClick={onMainClick}>{hasTranslation ? "已翻译" : "翻译"}</button>
-              <button className="primary split-caret" title="翻译选项" onClick={toggleMenu}>
+              <button className="split-main" disabled={running} onClick={onMainClick}>{hasTranslation ? "已翻译" : "翻译"}</button>
+              <button className="split-caret" title="翻译选项" aria-label="翻译选项" onClick={toggleMenu}>
                 <Icon name="chev-down" small />
               </button>
             </div>
@@ -624,32 +646,52 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
             )}
           </div>
 
-          <div className="segmented">
+          <span className="tb-sep" />
+
+          <div className="segmented" role="group" aria-label="视图">
             {(["source", "compare", "target"] as const).map((v) => (
-              <button key={v} type="button" className={s?.view === v ? "active" : ""} disabled={!canView(v)} onClick={() => engineRef.current?.setView(v)}>
+              <button key={v} type="button" className={s?.view === v ? "active" : ""} aria-pressed={s?.view === v} disabled={!canView(v)} onClick={() => engineRef.current?.setView(v)}>
                 {v === "source" ? "原文" : v === "compare" ? "对照" : "译文"}
               </button>
             ))}
           </div>
 
-          <div className="segmented">
-            <button type="button" className={s?.layout === "single" ? "active" : ""} title="单页" onClick={() => engineRef.current?.setLayout("single")}>单页</button>
-            <button type="button" className={s?.layout === "double" ? "active" : ""} onClick={() => engineRef.current?.setLayout("double")}>双页</button>
+          <span className="tb-sep" />
+
+          <div className="segmented" role="group" aria-label="版面">
+            <button type="button" className={s?.layout === "single" ? "active" : ""} aria-pressed={s?.layout === "single"} title="单页" onClick={() => engineRef.current?.setLayout("single")}>单页</button>
+            <button type="button" className={s?.layout === "double" ? "active" : ""} aria-pressed={s?.layout === "double"} title="双页" onClick={() => engineRef.current?.setLayout("double")}>双页</button>
           </div>
 
+          <span className="tb-spacer" />
+
           {numPages > 0 && (
-            <div className="navgroup">
-              <button type="button" title="上一页" onClick={() => engineRef.current?.prevPage()}><Icon name="chev-left" small /></button>
-              <input type="text" value={s?.displayPage ?? 1} onChange={(e) => { const n = parseInt(e.target.value, 10); if (!isNaN(n)) { engineRef.current?.goToNumberedPage(n); } }} />
-              <span className="nav-muted">/ {numPages}</span>
-              <button type="button" title="下一页" onClick={() => engineRef.current?.nextPage()}><Icon name="chev-right" small /></button>
+            <div className="navgroup" role="group" aria-label="页码">
+              <button type="button" title="上一页" aria-label="上一页" disabled={(s?.displayPage ?? 1) <= 1} onClick={() => engineRef.current?.prevPage()}><Icon name="chev-left" small /></button>
+              <input
+                type="text"
+                inputMode="numeric"
+                aria-label="当前页"
+                title="输入页码后回车跳转"
+                value={pageDraft ?? String(s?.displayPage ?? 1)}
+                style={{ width: `calc(${Math.max(2, String(numPages).length)}ch + 8px)` }}
+                onFocus={(e) => { e.currentTarget.select(); setPageDraft(String(s?.displayPage ?? 1)); }}
+                onChange={(e) => setPageDraft(e.target.value.replace(/\D/g, ""))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.currentTarget.blur(); }
+                  else if (e.key === "Escape") { e.stopPropagation(); pageCancelRef.current = true; setPageDraft(null); e.currentTarget.blur(); }
+                }}
+                onBlur={commitPage}
+              />
+              <span className="nav-total">/ {numPages}</span>
+              <button type="button" title="下一页" aria-label="下一页" disabled={(s?.displayPage ?? 1) >= numPages} onClick={() => engineRef.current?.nextPage()}><Icon name="chev-right" small /></button>
             </div>
           )}
           {numPages > 0 && (
-            <div className="navgroup">
-              <button type="button" title="缩小" onClick={() => engineRef.current?.zoomBy(1 / 1.15)}><Icon name="zoom-out" small /></button>
-              <span className="nav-muted" onClick={() => engineRef.current?.setZoom(1)} style={{ cursor: "pointer" }}>{Math.round((s?.zoom || 1) * 100)}%</span>
-              <button type="button" title="放大" onClick={() => engineRef.current?.zoomBy(1.15)}><Icon name="zoom-in" small /></button>
+            <div className="navgroup" role="group" aria-label="缩放">
+              <button type="button" title="缩小" aria-label="缩小" onClick={() => engineRef.current?.zoomBy(1 / 1.15)}><Icon name="zoom-out" small /></button>
+              <button type="button" className="zoom-level" title="重置为 100%" onClick={() => engineRef.current?.setZoom(1)}>{Math.round((s?.zoom || 1) * 100)}%</button>
+              <button type="button" title="放大" aria-label="放大" onClick={() => engineRef.current?.zoomBy(1.15)}><Icon name="zoom-in" small /></button>
             </div>
           )}
 
