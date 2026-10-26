@@ -469,8 +469,8 @@ export interface LocalModelStatus {
   reason: string;
 }
 
-/** 按需下载的本地模型 */
-export type LocalModelId = "layout" | "translate";
+/** 按需下载的本地模型 / 运行时 */
+export type LocalModelId = "layout" | "translate" | "gpu";
 
 export interface LocalModelSource {
   label: string;
@@ -484,8 +484,8 @@ export interface LocalModelInfo {
   /** 需要下载到本机的字节数 */
   size: number;
   installed: boolean;
-  /** all = 任何翻译都需要；local = 仅本地翻译模式需要 */
-  requiredFor: "all" | "local";
+  /** all = 任何翻译都需要；local = 仅本地翻译模式需要；accel = 本地翻译的可选显卡加速 */
+  requiredFor: "all" | "local" | "accel";
   /** 已安装时的实际路径 */
   path: string;
   /** managed = 应用内下载；cache = 引擎缓存里已有；custom = 自定义路径 */

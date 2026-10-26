@@ -24,7 +24,7 @@ Electron 桌面端的 PDF 翻译引擎（基于 PDFMathTranslate / babeldoc 的�
 | `runtime/` | 嵌入式 Python 运行时（`python.exe`） |
 | `site-packages/` | 第三方依赖（按 `requirements.txt` 安装） |
 | `assets/fonts/`、`assets/tiktoken/` | 字体与 tiktoken 离线缓存 |
-| `llama/` | llama.cpp 运行时（`llama-server.exe` 等） |
+| `llama/` | CPU 版 llama.cpp 运行时（`llama-server.exe` 等）；GPU 加速包由应用下载到 `data/runtime/vulkan` |
 
 **不进 git，按需下载（模型）：**
 
@@ -39,8 +39,9 @@ Electron 桌面端的 PDF 翻译引擎（基于 PDFMathTranslate / babeldoc 的�
 
 ## 装配
 
-- **llama.cpp + HY-MT 模型**：仓库根执行 `powershell -File tools/fetch-llm.ps1`（默认 CUDA 版，开发调试用；
-  安装包只带 llama.cpp，HY-MT GGUF 与版面识别 ONNX 由应用内按需下载）。
+- **llama.cpp + HY-MT 模型**：仓库根执行 `powershell -File tools/fetch-llm.ps1`——把 CPU 版运行时放进
+  `engine/llama`（随安装包），Vulkan 版放进 `data/runtime/vulkan`、GGUF 放进 `data/models`（模拟应用内下载）。
+  安装包只带 CPU 运行时；GPU 加速包、HY-MT GGUF 与版面识别 ONNX 都由应用内按需下载。
 - **python 运行时 / site-packages / assets**：由引擎构建流程装配——嵌入式 Python，`pip install
   -r requirements.txt` 到 `site-packages/`，字体 / tiktoken 缓存放入 `assets/`；版面模型改由应用下载。
 - `translate_engine` 已从 `site-packages/` 抽出到本目录，安装依赖时**不要**再安装 `translate-engine` 包。

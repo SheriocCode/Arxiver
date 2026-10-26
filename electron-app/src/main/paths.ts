@@ -25,18 +25,32 @@ export function engineVersion(): string {
   }
 }
 
-// 内置的本地翻译运行时：engine/llama（llama.cpp）与 engine/models（GGUF 翻译模型）。
-// 二者随安装包分发（engine/ 已整体作为 extraResources 打包）。
+// 本地翻译运行时：engine/llama 是随安装包分发的 CPU 版 llama.cpp；
+// GPU（Vulkan）版按需下载到 data/runtime/vulkan。
 export function localLlamaDir(): string {
   return path.join(engineDir(), "llama");
 }
 
-export function localModelDir(): string {
-  return path.join(engineDir(), "models");
-}
-
 export function llamaServerExe(): string {
   return path.join(localLlamaDir(), process.platform === "win32" ? "llama-server.exe" : "llama-server");
+}
+
+// 按需下载的运行时（GPU 加速包）目录
+export function runtimeDir(): string {
+  return path.join(userDataDir(), "runtime");
+}
+
+export function gpuRuntimeDir(): string {
+  return path.join(runtimeDir(), "vulkan");
+}
+
+export function gpuRuntimeExe(): string {
+  return path.join(gpuRuntimeDir(), process.platform === "win32" ? "llama-server.exe" : "llama-server");
+}
+
+// 记录加速包对应的构建版本；升级加速包后旧目录会被判为未安装并重新下载
+export function gpuRuntimeVersionFile(): string {
+  return path.join(gpuRuntimeDir(), ".version");
 }
 
 // 按需下载模型的目录（用户数据目录，安装目录可能没有写权限）

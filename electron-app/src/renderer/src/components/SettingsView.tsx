@@ -123,7 +123,7 @@ export default function SettingsView({
     return Math.round(n / 1024) + " KB";
   }
 
-  function modelStatus(id: "layout" | "translate"): LocalModelInfo | undefined {
+  function modelStatus(id: LocalModelInfo["id"]): LocalModelInfo | undefined {
     return models.find((m) => m.id === id);
   }
 
@@ -162,7 +162,7 @@ export default function SettingsView({
     await Promise.all(m.sources.map((s) => testSource(s.url)));
   }
 
-  async function removeModel(id: "layout" | "translate"): Promise<void> {
+  async function removeModel(id: LocalModelInfo["id"]): Promise<void> {
     await window.api.modelRemove(id);
     loadModels();
     void window.api.localStatus().then(setLocalStatus);
@@ -230,7 +230,9 @@ export default function SettingsView({
                     </Row>
                   )}
                   {(form.translate_mode || "local") === "local" && (
-                    <Row label="GPU 层数" desc="默认 99（自动上 GPU；无显卡或显存不足会自动退回 CPU）。填 0 可强制纯 CPU">
+                    <Row label="GPU 层数" desc={modelStatus("gpu")?.installed
+                      ? "默认 99（自动上 GPU；无显卡或显存不足会自动退回 CPU）。填 0 可强制纯 CPU"
+                      : "默认 99；先在「本地模型」安装 GPU 加速包才会用显卡，否则用 CPU"}>
                       <input type="number" min={0} max={999} style={{ ...inputStyle, minWidth: 100 }} value={form.local_gpu_layers ?? 99} onChange={(e) => set("local_gpu_layers", parseInt(e.target.value, 10) || 0)} />
                     </Row>
                   )}
@@ -287,6 +289,7 @@ export default function SettingsView({
                               <span className="model-size">{fmtSize(m.size)}</span>
                               {m.requiredFor === "all" && <span className="model-tag">翻译必需</span>}
                               {m.requiredFor === "local" && <span className="model-tag">仅本地模式</span>}
+                              {m.requiredFor === "accel" && <span className="model-tag">本地加速</span>}
                             </div>
                             <div className="model-desc">{m.description}</div>
                           </div>
@@ -354,6 +357,9 @@ export default function SettingsView({
                           {pr?.state === "cancelled" && <span className="model-error">已取消</span>}
                           {!m.installed && m.id === "translate" && (form.translate_mode || "local") !== "local" && (
                             <span className="model-hint">当前使用在线接口，可以不下载</span>
+                          )}
+                          {!m.installed && m.id === "gpu" && (
+                            <span className="model-hint">未安装时本地翻译使用 CPU 运行</span>
                           )}
                         </div>
                       </div>

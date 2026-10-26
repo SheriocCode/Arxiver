@@ -2,8 +2,8 @@
  * 内置本地翻译模型（llama.cpp + HY-MT GGUF）。
  *
  * 翻译时按需拉起一个 `llama-server`（OpenAI 兼容端点），并复用同一进程；
- * 应用退出时调用 stopServer() 回收。二进制与模型随安装包分发在
- * engine/llama 与 engine/models 下（见 paths.ts）。
+ * 应用退出时调用 stopServer() 回收。CPU 版运行时在 engine/llama；GPU（Vulkan）
+ * 版按需下载到 data/runtime/vulkan；模型由「设置 → 本地模型」下载到 data/models。
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { get as getConfig } from "./config";
-import { llamaServerExe, localLlamaDir, managedTranslateModelPath, dataHomeDir } from "./paths";
+import { gpuRuntimeDir, gpuRuntimeExe, llamaServerExe, localLlamaDir, managedTranslateModelPath, dataHomeDir } from "./paths";
 
 // 对外暴露的模型名（--alias），稳定为 "hy-mt"，与具体 GGUF 文件名解耦。
 export const LOCAL_MODEL_ALIAS = "hy-mt";
@@ -37,13 +37,20 @@ let tail = "";
 export function modelPath(): string {
   const override = String(getConfig().local_model || "").trim();
   if (override) { return override; }
-  // 优先使用按需下载到用户数据目录的模型；开发环境回退到随仓库的 engine/models
   return managedTranslateModelPath();
 }
 
+// 装了 GPU 加速包就用 Vulkan 版（显卡不可用时由 llama.cpp / 下面的重试退回 CPU），
+// 否则用随包的 CPU 版。
+function runtime(cpuOnly = false): { exe: string; dir: string } {
+  const gpu = gpuRuntimeExe();
+  if (!cpuOnly && fs.existsSync(gpu)) { return { exe: gpu, dir: gpuRuntimeDir() }; }
+  return { exe: llamaServerExe(), dir: localLlamaDir() };
+}
+
 export function localModelStatus(): { available: boolean; reason: string } {
-  if (!fs.existsSync(llamaServerExe())) {
-    return { available: false, reason: "缺少本地翻译运行时（engine/llama）" };
+  if (!fs.existsSync(runtime().exe)) {
+    return { available: false, reason: "缺少本地翻译运行时（llama.cpp）" };
   }
   if (!fs.existsSync(modelPath())) {
     return { available: false, reason: "未下载本地翻译模型，请到「设置 → 本地模型」下载" };
@@ -87,7 +94,7 @@ async function waitForHealth(port: number, timeoutMs: number): Promise<void> {
   throw new Error("本地翻译服务启动超时");
 }
 
-async function spawnAndWait(gpuLayers: number): Promise<{ baseUrl: string; model: string }> {
+async function spawnAndWait(gpuLayers: number, cpuOnly = false): Promise<{ baseUrl: string; model: string }> {
   const config = getConfig();
   const port = await freePort();
   const threads = Math.max(1, Math.min(16, os.cpus().length - 1));
@@ -114,8 +121,9 @@ async function spawnAndWait(gpuLayers: number): Promise<{ baseUrl: string; model
 
   tail = "";
   lastError = "";
-  const proc = spawn(llamaServerExe(), args, {
-    cwd: localLlamaDir(),
+  const rt = runtime(cpuOnly);
+  const proc = spawn(rt.exe, args, {
+    cwd: rt.dir,
     windowsHide: true,
     env: { ...process.env, HOME: dataHomeDir(), USERPROFILE: dataHomeDir() }
   });
@@ -138,12 +146,17 @@ async function spawnAndWait(gpuLayers: number): Promise<{ baseUrl: string; model
 
 async function start(): Promise<{ baseUrl: string; model: string }> {
   const gpuLayers = Math.max(0, Number(getConfig().local_gpu_layers) || 0);
+  const hasGpuPack = fs.existsSync(gpuRuntimeExe());
   try {
     return await spawnAndWait(gpuLayers);
   } catch (err) {
+    // 显卡不可用 / 显存不足 / 驱动不匹配时退回 CPU，保证本地翻译始终可用。
+    stopServer();
+    if (hasGpuPack) {
+      // GPU 加速包起不来（多半是没有可用的 Vulkan 设备）→ 用随包的 CPU 运行时
+      return await spawnAndWait(0, true);
+    }
     if (gpuLayers > 0) {
-      // 显卡不可用 / 显存不足 / 驱动不匹配时退回纯 CPU，保证本地翻译始终可用。
-      stopServer();
       return await spawnAndWait(0);
     }
     throw err;

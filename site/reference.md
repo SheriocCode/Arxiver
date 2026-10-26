@@ -42,7 +42,7 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
 | `electron-app/src/main/` | 主进程：引擎调度、本地翻译服务（`localmodel`）、文库/存储、Agent（模型 + 工具 + 审批）、自动更新 |
 | `electron-app/src/renderer/src/` | 渲染进程：React 组件、`styles.css`、PDF 阅读器引擎、Arxiver 面板 |
 | `electron-app/src/preload/`、`src/shared/` | `window.api`（IPC）与共享类型 |
-| `electron-app/engine/` | 本机翻译引擎（Python）：源码进 git；运行时（llama.cpp、python）不进 git 但随安装包分发；HY-MT gguf 与版面识别 ONNX 按需下载 |
+| `electron-app/engine/` | 本机翻译引擎（Python）：源码进 git；CPU 版 llama.cpp 与 python 运行时随安装包分发；GPU 加速包、HY-MT gguf 与版面识别 ONNX 按需下载 |
 | `icons/`、`site/`→`docs/` | 品牌资源与文档站 |
 
 ## 数据格式 {#data}
@@ -50,7 +50,7 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
 数据都在**安装目录下的 `data\`**（例如 `E:\develop\Arxiver\data\`）：`storage/index.json`（文库元数据）、
 `storage/<docId>/`（`paper.pdf`、`<cacheKey>.dual.pdf`、`<cacheKey>.mono.pdf`、`<cacheKey>.blocks.jsonl`、
 `text.json`）、`storage/conversations/`（Arxiver 会话）、`config.json`（设置，含联网搜索的服务商与 API Key）、
-`models/`（按需下载的模型）、`home/.cache/babeldoc/`（引擎缓存）、`logs/app.log`（运行日志）。
+`models/`（按需下载的模型）、`runtime/vulkan/`（GPU 加速包）、`home/.cache/babeldoc/`（引擎缓存）、`logs/app.log`（运行日志）。
 Chromium 缓存 / LocalStorage / Cookies 仍在 `%APPDATA%\Arxiver\`（开发版 `Arxiver-dev`）；安装目录不可写时应用数据回退到该目录。详见[文档](../guide.html#storage)。
 
 `<cacheKey>.blocks.jsonl` 每行是一个段落块（`page / index / bbox / src / dst`）。片段里出现公式占位符时还带
@@ -128,7 +128,7 @@ npm run build      # electron-vite 构建
 npm run dist       # 打包安装包（electron-builder）
 ~~~
 
-仓库根 `tools/`：`build.ps1`（本地打包）、`publish.ps1`（发布，先打包）、`build-docs.ps1`（文档站 `site/` → `docs/`）、`fetch-llm.ps1`（下载 llama.cpp 运行时与 HY-MT 模型）。
+仓库根 `tools/`：`build.ps1`（本地打包）、`publish.ps1`（发布，先打包）、`build-docs.ps1`（文档站 `site/` → `docs/`）、`fetch-llm.ps1`（装配 CPU / Vulkan 运行时与 HY-MT 模型）。
 
 ## 第三方许可 {#license}
 

@@ -22,7 +22,7 @@ import { importPaper, fetchPdf } from "./importPaper";
 import { enrichDocMeta } from "./enrich";
 import * as logger from "./logger";
 import { Updater } from "./updater";
-import type { AppChildProc, AppMetrics, AppProcessInfo, TranslationLogEntry } from "../shared/types";
+import type { AppChildProc, AppMetrics, AppProcessInfo, LocalModelId, TranslationLogEntry } from "../shared/types";
 
 // Electron 的用户目录（Chromium 缓存 / LocalStorage 等）仍放在 %APPDATA%：
 //   安装版 %APPDATA%\Arxiver，开发版 %APPDATA%\Arxiver-dev。
@@ -515,10 +515,10 @@ function registerIpc(): void {
   ipcMain.handle("local:status", () => localModel.localModelStatus());
   ipcMain.handle("models:list", () => models.listModels());
   ipcMain.handle("models:dir", () => models.modelsDirectory());
-  ipcMain.handle("models:download", (_event, id: "layout" | "translate", source?: string) => models.downloadModel(id, source));
+  ipcMain.handle("models:download", (_event, id: LocalModelId, source?: string) => models.downloadModel(id, source));
   ipcMain.handle("models:test", (_event, url: string) => models.testModelSource(url));
-  ipcMain.handle("models:cancel", (_event, id: "layout" | "translate") => models.cancelModelDownload(id));
-  ipcMain.handle("models:remove", async (_event, id: "layout" | "translate") => await models.removeModel(id));
+  ipcMain.handle("models:cancel", (_event, id: LocalModelId) => models.cancelModelDownload(id));
+  ipcMain.handle("models:remove", async (_event, id: LocalModelId) => await models.removeModel(id));
 
   ipcMain.handle("app:info", () => {
     perf("renderer first IPC (app:info) — React mounted");
@@ -780,6 +780,7 @@ if (!gotLock) {
       app.setAppUserModelId("com.sherioccode.arxiver");
     }
     migrateLegacyData();
+    models.pruneStaleRuntime();
     registerIpc();
     clearTmpJobs();
     createWindow();

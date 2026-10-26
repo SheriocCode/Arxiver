@@ -80,7 +80,7 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">electron-app/engine/</code></td>
-      <td>本机翻译引擎（Python）：源码进 git；运行时（llama.cpp、python）不进 git 但随安装包分发；HY-MT gguf 与版面识别 ONNX 按需下载</td>
+      <td>本机翻译引擎（Python）：源码进 git；CPU 版 llama.cpp 与 python 运行时随安装包分发；GPU 加速包、HY-MT gguf 与版面识别 ONNX 按需下载</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">icons/</code>、<code class="language-plaintext highlighter-rouge">site/</code>→<code class="language-plaintext highlighter-rouge">docs/</code></td>
@@ -94,7 +94,7 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
 <p>数据都在<strong>安装目录下的 <code class="language-plaintext highlighter-rouge">data\</code></strong>（例如 <code class="language-plaintext highlighter-rouge">E:\develop\Arxiver\data\</code>）：<code class="language-plaintext highlighter-rouge">storage/index.json</code>（文库元数据）、
 <code class="language-plaintext highlighter-rouge">storage/&lt;docId&gt;/</code>（<code class="language-plaintext highlighter-rouge">paper.pdf</code>、<code class="language-plaintext highlighter-rouge">&lt;cacheKey&gt;.dual.pdf</code>、<code class="language-plaintext highlighter-rouge">&lt;cacheKey&gt;.mono.pdf</code>、<code class="language-plaintext highlighter-rouge">&lt;cacheKey&gt;.blocks.jsonl</code>、
 <code class="language-plaintext highlighter-rouge">text.json</code>）、<code class="language-plaintext highlighter-rouge">storage/conversations/</code>（Arxiver 会话）、<code class="language-plaintext highlighter-rouge">config.json</code>（设置，含联网搜索的服务商与 API Key）、
-<code class="language-plaintext highlighter-rouge">models/</code>（按需下载的模型）、<code class="language-plaintext highlighter-rouge">home/.cache/babeldoc/</code>（引擎缓存）、<code class="language-plaintext highlighter-rouge">logs/app.log</code>（运行日志）。
+<code class="language-plaintext highlighter-rouge">models/</code>（按需下载的模型）、<code class="language-plaintext highlighter-rouge">runtime/vulkan/</code>（GPU 加速包）、<code class="language-plaintext highlighter-rouge">home/.cache/babeldoc/</code>（引擎缓存）、<code class="language-plaintext highlighter-rouge">logs/app.log</code>（运行日志）。
 Chromium 缓存 / LocalStorage / Cookies 仍在 <code class="language-plaintext highlighter-rouge">%APPDATA%\Arxiver\</code>（开发版 <code class="language-plaintext highlighter-rouge">Arxiver-dev</code>）；安装目录不可写时应用数据回退到该目录。详见<a href="../guide.html#storage">文档</a>。</p>
 
 <p><code class="language-plaintext highlighter-rouge">&lt;cacheKey&gt;.blocks.jsonl</code> 每行是一个段落块（<code class="language-plaintext highlighter-rouge">page / index / bbox / src / dst</code>）。片段里出现公式占位符时还带
@@ -187,7 +187,7 @@ Chromium 缓存 / LocalStorage / Cookies 仍在 <code class="language-plaintext 
 </span><span class="n">npm</span><span class="w"> </span><span class="nx">run</span><span class="w"> </span><span class="nx">dist</span><span class="w">       </span><span class="c"># 打包安装包（electron-builder）</span><span class="w">
 </span></code></pre></div></div>
 
-<p>仓库根 <code class="language-plaintext highlighter-rouge">tools/</code>：<code class="language-plaintext highlighter-rouge">build.ps1</code>（本地打包）、<code class="language-plaintext highlighter-rouge">publish.ps1</code>（发布，先打包）、<code class="language-plaintext highlighter-rouge">build-docs.ps1</code>（文档站 <code class="language-plaintext highlighter-rouge">site/</code> → <code class="language-plaintext highlighter-rouge">docs/</code>）、<code class="language-plaintext highlighter-rouge">fetch-llm.ps1</code>（下载 llama.cpp 运行时与 HY-MT 模型）。</p>
+<p>仓库根 <code class="language-plaintext highlighter-rouge">tools/</code>：<code class="language-plaintext highlighter-rouge">build.ps1</code>（本地打包）、<code class="language-plaintext highlighter-rouge">publish.ps1</code>（发布，先打包）、<code class="language-plaintext highlighter-rouge">build-docs.ps1</code>（文档站 <code class="language-plaintext highlighter-rouge">site/</code> → <code class="language-plaintext highlighter-rouge">docs/</code>）、<code class="language-plaintext highlighter-rouge">fetch-llm.ps1</code>（装配 CPU / Vulkan 运行时与 HY-MT 模型）。</p>
 
 <h2 id="license">第三方许可</h2>
 

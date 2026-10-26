@@ -1,4 +1,5 @@
 import { BrowserWindow, net } from "electron";
+import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -11,13 +12,15 @@ import { stopServer as stopLocalServer } from "./localmodel";
 import type { LocalModelId, LocalModelInfo, LocalModelProgress, LocalModelSource, ModelSourceTest } from "../shared/types";
 
 /**
- * 按需下载的本地模型。
+ * 按需下载的本地模型 / 运行时。
  *
- * 安装包只带引擎源码、Python 运行时和依赖；两个大模型放到用户数据目录：
+ * 安装包只带引擎源码、Python 运行时、依赖和 CPU 版 llama.cpp；大文件放到用户数据目录：
  * - layout：DocLayout-YOLO ONNX，任何翻译都要用（本地 / 在线接口都会跑本机版面识别）
  * - translate：HY-MT2 GGUF，仅「本地模型」翻译需要
+ * - gpu：Vulkan 版 llama.cpp（约 37 MB），本地翻译的可选显卡加速
  *
- * 下载完成后 layout 还会复制一份到 babeldoc 的缓存目录（引擎从那里读）。
+ * 下载完成后 layout 还会复制一份到 babeldoc 的缓存目录（引擎从那里读）；
+ * gpu 运行时解压到 data/runtime/vulkan。
  */
 
 interface ModelSpec {
@@ -25,11 +28,14 @@ interface ModelSpec {
   name: string;
   description: string;
   size: number;
+  /** 下载后的文件名 */
   file: string;
+  /** file = 单文件；zip = 下载后解压安装 */
+  kind: "file" | "zip";
   hashAlgo: "sha256";
   hash: string;
   sources: LocalModelSource[];
-  requiredFor: "all" | "local";
+  requiredFor: "all" | "local" | "accel";
 }
 
 const LAYOUT: ModelSpec = {
@@ -38,6 +44,7 @@ const LAYOUT: ModelSpec = {
   description: "DocLayout-YOLO ONNX（约 72 MB）。识别标题、正文、图表等版式；本地翻译和在线接口翻译都需要。",
   size: 75_324_598,
   file: "doclayout_yolo_docstructbench_imgsz1024.onnx",
+  kind: "file",
   hashAlgo: "sha256",
   hash: "fece9af02f618b603ff7921ccec6861d13e7e1f9830e091dfb7e8ad9311e5b21",
   sources: [
@@ -54,6 +61,7 @@ const TRANSLATE: ModelSpec = {
   description: "HY-MT2 1.8B Q4_K_M（约 1.1 GB）。仅「本地模型」翻译需要；使用在线接口时无需下载。",
   size: 1_133_081_344,
   file: "hy-mt2-1.8b-q4_k_m.gguf",
+  kind: "file",
   hashAlgo: "sha256",
   hash: "6ef641a1fac7fb863af5d3627f767543aac95fc3be943bde12beec7cfca2fbff",
   sources: [
@@ -63,16 +71,41 @@ const TRANSLATE: ModelSpec = {
   requiredFor: "local"
 };
 
-const SPECS: Record<LocalModelId, ModelSpec> = { layout: LAYOUT, translate: TRANSLATE };
+const GPU: ModelSpec = {
+  id: "gpu",
+  name: "GPU 加速包",
+  description: "Vulkan 版 llama.cpp 运行时（约 35 MB）。安装后本地翻译用显卡，速度是纯 CPU 的数倍；显卡或驱动不可用时自动回退 CPU。",
+  size: 37_049_027,
+  file: "llama-b11889-bin-win-vulkan-x64.zip",
+  kind: "zip",
+  hashAlgo: "sha256",
+  hash: "3874d6cb33c3540a68191c1ca31b774bd72914e8ca65e51dfe23e3dae8201f00",
+  sources: [
+    { label: "GitHub", url: "https://github.com/ggml-org/llama.cpp/releases/download/b11889/llama-b11889-bin-win-vulkan-x64.zip" },
+    { label: "gh-proxy", url: "https://gh-proxy.com/https://github.com/ggml-org/llama.cpp/releases/download/b11889/llama-b11889-bin-win-vulkan-x64.zip" },
+    { label: "ghproxy.net", url: "https://ghproxy.net/https://github.com/ggml-org/llama.cpp/releases/download/b11889/llama-b11889-bin-win-vulkan-x64.zip" }
+  ],
+  requiredFor: "accel"
+};
+
+const SPECS: Record<LocalModelId, ModelSpec> = { layout: LAYOUT, translate: TRANSLATE, gpu: GPU };
 const active = new Map<LocalModelId, AbortController>();
 const cancelled = new Set<LocalModelId>();
 
-function ensureModelsDir(): void {
-  fs.mkdirSync(paths.managedModelsDir(), { recursive: true });
+function ensureTargetDir(id: LocalModelId): void {
+  fs.mkdirSync(id === "gpu" ? paths.runtimeDir() : paths.managedModelsDir(), { recursive: true });
 }
 
-function targetPath(id: LocalModelId): string {
-  return id === "layout" ? paths.managedLayoutModelPath() : paths.managedTranslateModelPath();
+/** 下载文件的落盘路径（zip 运行时保存为 data/runtime/<file>.zip 后解压） */
+function downloadPath(id: LocalModelId): string {
+  if (id === "layout") { return paths.managedLayoutModelPath(); }
+  if (id === "translate") { return paths.managedTranslateModelPath(); }
+  return path.join(paths.runtimeDir(), SPECS.gpu.file);
+}
+
+/** 安装位置（界面展示 / 打开目录用） */
+function installedPath(id: LocalModelId): string {
+  return id === "gpu" ? paths.gpuRuntimeDir() : downloadPath(id);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -81,6 +114,10 @@ function sleep(ms: number): Promise<void> {
 
 function fileSize(file: string): number {
   try { return fs.statSync(file).size; } catch { return 0; }
+}
+
+function readText(file: string): string {
+  try { return fs.readFileSync(file, "utf8").trim(); } catch { return ""; }
 }
 
 function customTranslateModel(): string {
@@ -93,7 +130,11 @@ function installedSource(id: LocalModelId): LocalModelInfo["source"] {
     const custom = customTranslateModel();
     if (custom && fs.existsSync(custom)) { return "custom"; }
   }
-  if (fileSize(targetPath(id)) === spec.size) { return "managed"; }
+  if (id === "gpu") {
+    const version = readText(paths.gpuRuntimeVersionFile());
+    return fs.existsSync(paths.gpuRuntimeExe()) && version === SPECS.gpu.file ? "managed" : "none";
+  }
+  if (fileSize(downloadPath(id)) === spec.size) { return "managed"; }
   if (id === "layout" && fileSize(paths.babeldocModelPath()) === spec.size) { return "cache"; }
   return "none";
 }
@@ -114,7 +155,7 @@ export function ensureLayoutModel(): void {
   const spec = LAYOUT;
   const cache = paths.babeldocModelPath();
   if (fileSize(cache) === spec.size) { return; }
-  const src = targetPath("layout");
+  const src = downloadPath("layout");
   if (fileSize(src) !== spec.size) {
     throw new Error("缺少版面识别模型（DocLayout-YOLO），请到「设置 → 本地模型」下载");
   }
@@ -126,23 +167,31 @@ export function ensureLayoutModel(): void {
   }
 }
 
+/** 升级后加速包的构建版本可能变了：清掉旧目录，让设置页重新提示下载 */
+export function pruneStaleRuntime(): void {
+  const dir = paths.gpuRuntimeDir();
+  if (!fs.existsSync(dir)) { return; }
+  if (readText(paths.gpuRuntimeVersionFile()) === SPECS.gpu.file) { return; }
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+}
+
 export function modelsDirectory(): string {
-  ensureModelsDir();
+  fs.mkdirSync(paths.managedModelsDir(), { recursive: true });
   return paths.managedModelsDir();
 }
 
 export function listModels(): LocalModelInfo[] {
-  return [LAYOUT, TRANSLATE].map((spec) => {
+  return [LAYOUT, TRANSLATE, GPU].map((spec) => {
     const source = installedSource(spec.id);
     const installed = source !== "none";
     const custom = spec.id === "translate" ? customTranslateModel() : "";
-    const path = source === "custom"
-      ? custom
-      : source === "managed"
-        ? targetPath(spec.id)
+    const modelPath = spec.id === "gpu"
+      ? installedPath("gpu")
+      : source === "custom"
+        ? custom
         : source === "cache"
           ? paths.babeldocModelPath()
-          : targetPath(spec.id);
+          : downloadPath(spec.id);
     return {
       id: spec.id,
       name: spec.name,
@@ -150,7 +199,7 @@ export function listModels(): LocalModelInfo[] {
       size: spec.size,
       installed,
       requiredFor: spec.requiredFor,
-      path,
+      path: modelPath,
       source,
       sources: spec.sources
     };
@@ -213,12 +262,62 @@ async function downloadFrom(spec: ModelSpec, url: string, part: string, controll
     if (received !== spec.size) { throw new Error(`文件大小不匹配（${received} / ${spec.size}）`); }
     const digest = hash.digest("hex");
     if (digest.toLowerCase() !== spec.hash.toLowerCase()) {
-      throw new Error("模型校验失败，请重试");
+      throw new Error("文件校验失败，请重试");
     }
   } finally {
     clearTimeout(watchdog);
     controller.signal.removeEventListener("abort", onAbort);
   }
+}
+
+function runFile(file: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { windowsHide: true }, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
+async function extractZip(zip: string, dest: string): Promise<void> {
+  const sysRoot = process.env.SystemRoot || "C:\\Windows";
+  try {
+    await runFile(path.join(sysRoot, "System32", "tar.exe"), ["-xf", zip, "-C", dest]);
+    return;
+  } catch {
+    // 极少数精简系统没有 tar.exe，退回 PowerShell
+  }
+  const quote = (p: string): string => "'" + p.replace(/'/g, "''") + "'";
+  await runFile(path.join(sysRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), [
+    "-NoProfile", "-NonInteractive", "-Command",
+    `Expand-Archive -LiteralPath ${quote(zip)} -DestinationPath ${quote(dest)} -Force`
+  ]);
+}
+
+/** 只保留 llama-server 与它需要的 DLL：官方压缩包里的其它工具（cli / bench 等）用不到 */
+function trimRuntimeDir(dir: string): void {
+  const dropDll = /^llama-(batched-bench|bench|cli|completion|fit-params|perplexity|quantize)-impl\.dll$/i;
+  for (const name of fs.readdirSync(dir)) {
+    const lower = name.toLowerCase();
+    const drop =
+      (lower.endsWith(".exe") && lower !== "llama-server.exe") ||
+      dropDll.test(name) ||
+      lower === "ggml-rpc.dll";
+    if (drop) { fs.rmSync(path.join(dir, name), { force: true }); }
+  }
+}
+
+async function installZip(zip: string): Promise<void> {
+  const dest = paths.gpuRuntimeDir();
+  fs.rmSync(dest, { recursive: true, force: true });
+  fs.mkdirSync(dest, { recursive: true });
+  try {
+    await extractZip(zip, dest);
+    trimRuntimeDir(dest);
+    if (!fs.existsSync(paths.gpuRuntimeExe())) { throw new Error("压缩包内容不完整"); }
+    fs.writeFileSync(paths.gpuRuntimeVersionFile(), SPECS.gpu.file, "utf8");
+  } catch (err) {
+    fs.rmSync(dest, { recursive: true, force: true });
+    throw new Error("运行时安装失败：" + (err instanceof Error ? err.message : String(err)));
+  }
+  fs.rmSync(zip, { force: true });
 }
 
 export async function downloadModel(id: LocalModelId, source?: string): Promise<boolean> {
@@ -235,8 +334,8 @@ export async function downloadModel(id: LocalModelId, source?: string): Promise<
   const controller = new AbortController();
   active.set(id, controller);
   cancelled.delete(id);
-  ensureModelsDir();
-  const target = targetPath(id);
+  ensureTargetDir(id);
+  const target = downloadPath(id);
   const part = target + ".part";
   try { fs.rmSync(part, { force: true }); } catch { /* ignore */ }
   let lastError = "";
@@ -246,18 +345,22 @@ export async function downloadModel(id: LocalModelId, source?: string): Promise<
         emitProgress(id, "downloading", 0, spec.size);
         await downloadFrom(spec, url, part, controller);
         if (cancelled.has(id)) { throw new Error("cancelled"); }
-        // 翻译模型会被 llama-server 占用，替换前先停掉并等文件句柄释放
-        if (id === "translate") { stopLocalServer(); await sleep(300); }
-        try { fs.rmSync(target, { force: true }); } catch { /* ignore */ }
-        let moved = false;
-        for (let i = 0; i < 10 && !moved; i++) {
-          try { fs.renameSync(part, target); moved = true; } catch { await sleep(200); }
-        }
-        if (!moved) { throw new Error("无法替换模型文件（可能仍被占用），请稍后重试"); }
-        if (id === "layout") {
-          const cache = paths.babeldocModelPath();
-          fs.mkdirSync(path.dirname(cache), { recursive: true });
-          fs.copyFileSync(target, cache);
+        // 模型 / 运行时的文件会被 llama-server 占用，替换前先停掉并等文件句柄释放
+        if (id === "translate" || id === "gpu") { stopLocalServer(); await sleep(300); }
+        if (spec.kind === "zip") {
+          await installZip(part);
+        } else {
+          try { fs.rmSync(target, { force: true }); } catch { /* ignore */ }
+          let moved = false;
+          for (let i = 0; i < 10 && !moved; i++) {
+            try { fs.renameSync(part, target); moved = true; } catch { await sleep(200); }
+          }
+          if (!moved) { throw new Error("无法替换模型文件（可能仍被占用），请稍后重试"); }
+          if (id === "layout") {
+            const cache = paths.babeldocModelPath();
+            fs.mkdirSync(path.dirname(cache), { recursive: true });
+            fs.copyFileSync(target, cache);
+          }
         }
         emitProgress(id, "done", spec.size, spec.size);
         return true;
@@ -291,8 +394,13 @@ export async function removeModel(id: LocalModelId): Promise<boolean> {
   const spec = SPECS[id];
   if (!spec) { return false; }
   cancelModelDownload(id);
-  if (id === "translate") { stopLocalServer(); await sleep(300); }
-  for (const file of [targetPath(id), targetPath(id) + ".part"]) {
+  if (id === "translate" || id === "gpu") { stopLocalServer(); await sleep(300); }
+  if (id === "gpu") {
+    try { fs.rmSync(paths.gpuRuntimeDir(), { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(downloadPath("gpu"), { force: true }); } catch { /* ignore */ }
+    return true;
+  }
+  for (const file of [downloadPath(id), downloadPath(id) + ".part"]) {
     try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
   }
   if (id === "layout") {
@@ -302,7 +410,7 @@ export async function removeModel(id: LocalModelId): Promise<boolean> {
 }
 
 const SOURCE_URLS = new Set(
-  [LAYOUT, TRANSLATE].flatMap((spec) => spec.sources.map((s) => s.url))
+  [LAYOUT, TRANSLATE, GPU].flatMap((spec) => spec.sources.map((s) => s.url))
 );
 
 /** 从下载源拉取 1 MB 左右，估算首字节延迟与下载速度（用于设置页手动测速）。 */

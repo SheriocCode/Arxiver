@@ -8,6 +8,15 @@ description: Arxiver 版本更新历史。
 
 全部版本见 [GitHub Releases](https://github.com/SheriocCode/Arxiver/releases)。
 
+## 未发布
+
+- **安装包再瘦身：CUDA 运行库移出安装包**：安装包只带 CPU 版 llama.cpp（约 44 MB）；本地翻译的显卡加速改为按需下载
+  「GPU 加速包」（Vulkan 版 llama.cpp，约 35 MB，解压到 `data\runtime\vulkan`）。同一台 RTX 3060 笔记本上实测
+  Vulkan 141 tok/s、CUDA 124 tok/s、纯 CPU 24 tok/s，所以不再分发 1.1 GB 的 CUDA 运行库；没有可用显卡或驱动时
+  自动回退随包的 CPU 运行时。
+- **设置 → 本地模型**新增 GPU 加速包条目（下载源 GitHub / gh-proxy / ghproxy.net，支持测速与删除）；
+  「翻译引擎」里的 GPU 层数说明会提示是否已安装加速包。
+
 ## v0.12.0（2026-10-26）
 
 - **数据目录改到安装目录**：文库、翻译、设置、日志、模型放在 `<安装目录>\data\`，不再占用 C 盘；
