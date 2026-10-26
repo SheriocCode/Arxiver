@@ -600,7 +600,7 @@ function registerIpc(): void {
   ipcMain.handle("skills:remove", (_event, id: string) => skills.remove(id));
 
   ipcMain.handle("storage:list", () => library.listTranslations());
-  ipcMain.handle("logs:system", () => ({ entries: logger.list(), file: logger.logFile() }));
+  ipcMain.handle("logs:system", (_event, query?: { level?: string; offset?: number; limit?: number }) => ({ ...logger.page(query), file: logger.logFile() }));
   ipcMain.handle("app:metrics", (_event, opts?: { os?: boolean }): AppMetrics => {
     const procs = collectProcs();
     const kids = childProcs();
@@ -688,21 +688,6 @@ function registerIpc(): void {
       reportLibraryProgress("", true);
     }
   });
-  ipcMain.handle("library:addManual", (_event, payload: {
-    title: string; authors?: string; year?: string; venue?: string; type?: string;
-    tags?: string[]; collections?: string[]; summary?: string; abstract?: string;
-  }) => library.addDocument({
-    title: payload.title,
-    authors: payload.authors,
-    year: payload.year,
-    venue: payload.venue,
-    type: payload.type,
-    tags: payload.tags,
-    collections: payload.collections,
-    summary: payload.summary,
-    abstract: payload.abstract
-  }));
-
   // 本地导入后补全元数据 → enrich.ts
   ipcMain.handle("library:enrichMetadata", async (_event, docId: string) => {
     try {

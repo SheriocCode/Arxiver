@@ -145,8 +145,9 @@ export function useLibrary() {
   }, [refresh]);
 
   const addCollection = useCallback(async (name: string, parent: string | null = null) => {
-    await window.api.libraryAddCollection(name, parent);
+    const created = await window.api.libraryAddCollection(name, parent);
     await refresh();
+    return created;
   }, [refresh]);
 
   const removeCollection = useCallback(async (id: string) => {

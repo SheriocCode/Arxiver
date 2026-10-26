@@ -451,7 +451,7 @@ export default function App(): JSX.Element {
               </div>
               <div className="tb-tabs-right">
                 {!overlayView && detailOpen && lib.selected &&
-                  ([["info", "file", "信息"], ["notes", "note", "笔记"], ["tags", "tag", "标签"], ["ai", "arxiver", "Arxiver"]] as const)
+                  ([["info", "file", "信息"], ["notes", "note", "笔记"], ["tags", "tag", "归类"], ["ai", "arxiver", "Arxiver"]] as const)
                     .filter(([id]) => id !== "ai" || settings.aiEnabled)
                     .map(([id, ic, label]) => (
                       <button key={id} className={"tb-viewtab" + (lib.tab === id ? " active" : "")} onClick={() => { lib.setTab(id); lib.setEditMode(false); }}>
@@ -549,7 +549,6 @@ export default function App(): JSX.Element {
 
       {newOpen && (
         <NewItemModal
-          collections={lib.collections}
           defaultCollection={["all", "recent", "unfiled", "duplicates", "trash"].includes(lib.collId) ? "" : lib.collId}
           onClose={() => setNewOpen(false)}
           onImportFile={importFile}

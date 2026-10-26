@@ -330,8 +330,19 @@ export interface SystemLogEntry {
 
 export interface SystemLogSnapshot {
   entries: SystemLogEntry[];
+  /** 当前过滤条件下的总条数（entries 只是其中一页） */
+  total: number;
+  /** 全量日志的汇总（不受级别过滤影响） */
+  stats: { total: number; error: number; warn: number; scopes: number; days: number[] };
   /** 日志文件路径（可在资源管理器中打开） */
   file: string;
+}
+
+/** 系统日志分页查询：level=all/不传表示不过滤 */
+export interface SystemLogQuery {
+  level?: "all" | LogLevel;
+  offset?: number;
+  limit?: number;
 }
 
 /** 按标识符（arXiv / DOI）取回的元信息 */
@@ -543,15 +554,11 @@ export interface Api {
   saveResult(id: string, variant?: string): Promise<string | null>;
   listStorage(): Promise<{ entries: StorageEntry[]; total: number }>;
   logsTranslation(): Promise<TranslationLogEntry[]>;
-  logsSystem(): Promise<SystemLogSnapshot>;
+  logsSystem(query?: SystemLogQuery): Promise<SystemLogSnapshot>;
   appMetrics(opts?: { os?: boolean }): Promise<AppMetrics>;
   saveDiagnostics(): Promise<string | null>;
   libraryState(): Promise<LibraryState>;
   libraryAdd(payload: SourcePayload & { type?: string; collections?: string[] }): Promise<LibraryDoc>;
-  libraryAddManual(payload: {
-    title: string; authors?: string; year?: string; venue?: string; type?: string;
-    tags?: string[]; collections?: string[]; summary?: string; abstract?: string;
-  }): Promise<LibraryDoc>;
   libraryImportByIdentifier(input: string, collections: string[]): Promise<{ ok: boolean; doc?: LibraryDoc; error?: string }>;
   libraryEnrichMetadata(id: string): Promise<LibraryDoc | null>;
   // 导入 / 补全元数据期间的阶段提示（下载、解析、查询接口…）

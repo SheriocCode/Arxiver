@@ -64,6 +64,8 @@ export default function ListPane({
   }, []);
 
   const gridTemplate = `24px ${cols.title}px ${cols.tags}px ${cols.year}px ${cols.added}px ${cols.modified}px 44px minmax(0, 1fr)`;
+  // 当前正在看的分类（非伪分类、非标签视图）
+  const curCol = !lib.tag ? lib.collections.find((c) => c.id === lib.collId) || null : null;
   // how many tag dots fit in the (resizable) tags column; the rest collapse into a
   // trailing "+N" pill (9px dot + 5px gap = 14px each, plus room for the pill)
   const maxDots = Math.max(1, Math.floor((cols.tags - 24) / 14));
@@ -237,6 +239,16 @@ export default function ListPane({
         <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
           <button onClick={() => { const id = menu.doc.id; setMenu(null); onOpenDoc(id); }}><Icon name="book" small /> 查看</button>
           <button onClick={() => { void navigator.clipboard.writeText(citationText(menu.doc)); setMenu(null); }}><Icon name="copy" small /> 复制引用</button>
+          {!menu.doc.trash && curCol && menu.doc.collections.includes(curCol.id) && (
+            <button onClick={() => { const doc = menu.doc; setMenu(null); void lib.update(doc.id, { collections: doc.collections.filter((c) => c !== curCol.id) }); }}>
+              <Icon name="folder" small /> 移出分类「{curCol.name}」
+            </button>
+          )}
+          {!menu.doc.trash && menu.doc.collections.length > 0 && (!curCol || !menu.doc.collections.includes(curCol.id)) && (
+            <button onClick={() => { const doc = menu.doc; setMenu(null); void lib.update(doc.id, { collections: [] }); }}>
+              <Icon name="folder" small /> 移出全部分类
+            </button>
+          )}
           <button onClick={() => { lib.select(menu.doc.id); lib.setTab("info"); lib.setEditMode(true); setMenu(null); }}><Icon name="note" small /> 编辑</button>
           <button onClick={() => { void window.api.libraryReveal(menu.doc.id); setMenu(null); }}>
             <svg className="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="#4c9aff" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -292,6 +304,22 @@ function Row({ doc, lib, isTrash, showUnread, maxDots, onOpen, onContext }: {
         const ids = lib.selectedIds.includes(doc.id) && lib.selectedIds.length ? lib.selectedIds : [doc.id];
         e.dataTransfer.setData("application/x-arxiver-docs", JSON.stringify(ids));
         e.dataTransfer.effectAllowed = "copy";
+        // 默认拖影是整行（含标签/日期/星标），宽度上千像素很难看：换成一个小的标题卡片
+        const ghost = document.createElement("div");
+        ghost.className = "drag-ghost";
+        const name = document.createElement("span");
+        name.className = "drag-ghost-name";
+        name.textContent = doc.title;
+        ghost.appendChild(name);
+        if (ids.length > 1) {
+          const count = document.createElement("span");
+          count.className = "drag-ghost-count";
+          count.textContent = `${ids.length} 篇`;
+          ghost.appendChild(count);
+        }
+        document.body.appendChild(ghost);
+        e.dataTransfer.setDragImage(ghost, 14, 18);
+        setTimeout(() => ghost.remove(), 0);
       }}
       onClick={(e) => lib.select(doc.id, e.ctrlKey || e.metaKey)}
       onDoubleClick={onOpen}

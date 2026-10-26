@@ -114,11 +114,20 @@ function daySeries(times: number[]): { key: number; label: string; count: number
     return { key: k, label: `${d.getMonth() + 1}/${d.getDate()}`, count: counts.get(k) || 0 };
   });
 }
+/** 主进程已经按天统计好（只有 7 个数），不用把全部时间戳传过来 */
+function daySeriesFromCounts(counts: number[]): { key: number; label: string; count: number }[] {
+  const today = startOfDay(Date.now());
+  return counts.map((count, i) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - (counts.length - 1 - i));
+    return { key: d.getTime(), label: `${d.getMonth() + 1}/${d.getDate()}`, count };
+  });
+}
 
 interface Stat { label: string; value: string | number; unit?: string; tone?: "bad" | "warn" | "accent" }
 
-function Overview({ stats, times }: { stats: Stat[]; times: number[] }): JSX.Element {
-  const days = useMemo(() => daySeries(times), [times]);
+function Overview({ stats, times, dayCounts }: { stats: Stat[]; times?: number[]; dayCounts?: number[] }): JSX.Element {
+  const days = useMemo(() => (dayCounts ? daySeriesFromCounts(dayCounts) : daySeries(times || [])), [dayCounts, times]);
   const max = Math.max(1, ...days.map((d) => d.count));
   const weekTotal = days.reduce((a, d) => a + d.count, 0);
   const today = startOfDay(Date.now());
@@ -365,6 +374,8 @@ const LEVELS: Record<string, { label: string; tone: string }> = {
   error: { label: "错误", tone: "is-bad" }
 };
 
+const SYS_PAGE = 200;
+
 function SystemLog({ logStatus, setLogStatus, setLogKey, onClose, active }: {
   logStatus: string;
   setLogStatus: (v: string) => void;
@@ -373,35 +384,42 @@ function SystemLog({ logStatus, setLogStatus, setLogKey, onClose, active }: {
   active: boolean;
 }): JSX.Element {
   const [entries, setEntries] = useState<SystemLogEntry[]>([]);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState({ total: 0, error: 0, warn: 0, scopes: 0, days: [0, 0, 0, 0, 0, 0, 0] });
   const [file, setFile] = useState("");
+  const [loading, setLoading] = useState(false);
   const [selIdx, setSelIdx] = useState(0);
+  const seq = useRef(0);
 
-  const load = useCallback((): void => {
-    void window.api.logsSystem().then((d) => { setEntries(d.entries); setFile(d.file); });
-  }, []);
-  useEffect(load, [load]);
+  // 分页加载：只取当前过滤条件下的前 N 条；切级别 / 刷新都从第 0 条重新取
+  const loadPage = useCallback((offset: number, append: boolean): void => {
+    const ticket = ++seq.current;
+    setLoading(true);
+    void window.api.logsSystem({ level: logStatus as "all" | "info" | "warn" | "error", offset, limit: SYS_PAGE })
+      .then((d) => {
+        if (ticket !== seq.current) { return; }
+        setEntries((cur) => (append ? [...cur, ...d.entries] : d.entries));
+        setTotal(d.total);
+        setSummary(d.stats);
+        setFile(d.file);
+        if (!append) { setSelIdx(0); }
+      })
+      .finally(() => { if (ticket === seq.current) { setLoading(false); } });
+  }, [logStatus]);
 
-  const filtered = useMemo(() => entries
-    .filter((e) => logStatus === "all" || e.level === logStatus)
-    .sort((a, b) => b.at - a.at), [entries, logStatus]);
-  useEffect(() => { setSelIdx(0); }, [logStatus]);
+  useEffect(() => { loadPage(0, false); }, [loadPage]);
 
-  const sel = filtered[Math.min(selIdx, Math.max(0, filtered.length - 1))];
+  const sel = entries[Math.min(selIdx, Math.max(0, entries.length - 1))];
   const selLevel = sel ? (LEVELS[sel.level] || LEVELS.info) : LEVELS.info;
-  const indexed = useMemo(() => filtered.map((e, i) => ({ e, i })), [filtered]);
+  const indexed = useMemo(() => entries.map((e, i) => ({ e, i })), [entries]);
   const grouped = useMemo(() => groupByDay(indexed, (x) => x.e.at), [indexed]);
 
-  const stats = useMemo<Stat[]>(() => {
-    const errors = entries.filter((e) => e.level === "error").length;
-    const warns = entries.filter((e) => e.level === "warn").length;
-    return [
-      { label: "记录", value: entries.length, unit: "条" },
-      { label: "错误", value: errors, tone: errors ? "bad" : undefined },
-      { label: "警告", value: warns, tone: warns ? "warn" : undefined },
-      { label: "活跃模块", value: new Set(entries.map((e) => e.scope)).size, unit: "个", tone: "accent" }
-    ];
-  }, [entries]);
-  const times = useMemo(() => entries.map((e) => e.at), [entries]);
+  const stats = useMemo<Stat[]>(() => [
+    { label: "记录", value: summary.total, unit: "条" },
+    { label: "错误", value: summary.error, tone: summary.error ? "bad" : undefined },
+    { label: "警告", value: summary.warn, tone: summary.warn ? "warn" : undefined },
+    { label: "活跃模块", value: summary.scopes, unit: "个", tone: "accent" }
+  ], [summary]);
 
   return (
     <section className="history" aria-label="日志" hidden={!active}>
@@ -413,33 +431,42 @@ function SystemLog({ logStatus, setLogStatus, setLogKey, onClose, active }: {
           right={
             <>
               <button type="button" className="lg-action" onClick={() => { if (file) { void window.api.openPath(file); } }}>打开日志文件</button>
-              <button type="button" className="lg-action" onClick={load}>刷新</button>
+              <button type="button" className="lg-action" onClick={() => loadPage(0, false)}>刷新</button>
             </>
           }
         />
-        <Overview stats={stats} times={times} />
+        <Overview stats={stats} dayCounts={summary.days} />
         <div className="lg-body">
           <section className="lg-list">
-            <ListHead filters={FILTERS.syslog} status={logStatus} onStatus={setLogStatus} count={filtered.length} />
+            <ListHead filters={FILTERS.syslog} status={logStatus} onStatus={setLogStatus} count={total} />
             <div className="lg-scroll">
-              {filtered.length === 0 ? <div className="lg-empty">没有匹配的运行记录</div> : (
-                <Timeline
-                  groups={grouped}
-                  render={({ e, i }) => {
-                    const lv = LEVELS[e.level] || LEVELS.info;
-                    return (
-                      <Event
-                        key={`${e.at}-${i}`}
-                        tone={lv.tone}
-                        title={e.message}
-                        meta={<>{e.scope} · <span className={"lg-state " + lv.tone}>{lv.label}</span></>}
-                        time={fmtClock(e.at)}
-                        selected={i === selIdx}
-                        onClick={() => setSelIdx(i)}
-                      />
-                    );
-                  }}
-                />
+              {entries.length === 0 ? <div className="lg-empty">{loading ? "正在读取日志…" : "没有匹配的运行记录"}</div> : (
+                <>
+                  <Timeline
+                    groups={grouped}
+                    render={({ e, i }) => {
+                      const lv = LEVELS[e.level] || LEVELS.info;
+                      return (
+                        <Event
+                          key={`${e.at}-${i}`}
+                          tone={lv.tone}
+                          title={e.message}
+                          meta={<>{e.scope} · <span className={"lg-state " + lv.tone}>{lv.label}</span></>}
+                          time={fmtClock(e.at)}
+                          selected={i === selIdx}
+                          onClick={() => setSelIdx(i)}
+                        />
+                      );
+                    }}
+                  />
+                  {entries.length < total && (
+                    <div className="lg-more">
+                      <button type="button" className="lg-more-btn" disabled={loading} onClick={() => loadPage(entries.length, true)}>
+                        {loading ? "加载中…" : `加载更早的记录（${entries.length} / ${total}）`}
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </section>

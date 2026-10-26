@@ -36,12 +36,19 @@ export default function Sidebar({
         <div className="search-field">
           <Icon name="search" small />
           <input
-            type="search"
+            type="text"
             placeholder="搜索标题、作者、标签…"
             value={lib.query}
             onChange={(e) => lib.setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") { lib.setQuery(""); e.currentTarget.blur(); } }}
           />
-          <span className="kbd">/</span>
+          {lib.query ? (
+            <button type="button" className="search-clear" title="清空搜索" onClick={() => lib.setQuery("")}>
+              <Icon name="x" small />
+            </button>
+          ) : (
+            <span className="kbd" title="按 / 聚焦搜索">/</span>
+          )}
         </div>
       </div>
       <div className="side-scroll">

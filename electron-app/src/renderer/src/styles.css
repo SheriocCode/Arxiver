@@ -230,6 +230,15 @@ html.kb-focus :focus-visible { outline: 2px solid var(--accent); outline-offset:
   flex: 1; min-width: 0; background: none; border: 0; outline: none; color: var(--text);
 }
 .search-field input::placeholder { color: var(--faint); }
+/* 清除按钮：不用 input[type=search] 的原生 ×（跨平台样式很原始），自绘一个圆形按钮 */
+.search-clear {
+  flex: none; display: grid; place-items: center;
+  width: 18px; height: 18px; margin-right: -3px; border-radius: 50%;
+  color: var(--faint);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.search-clear:hover { background: var(--hover); color: var(--text); }
+.search-field .search-clear svg { color: inherit; }
 .kbd {
   font-size: 11px; color: var(--faint); border: 1px solid var(--border-strong);
   border-radius: 4px; padding: 0 5px; line-height: 18px;
@@ -363,6 +372,17 @@ html.kb-focus :focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 .item-row:hover { background: var(--hover); }
 .item-row.is-selected { background: var(--surface-2); border-color: transparent; }
+/* 拖动文献时的拖影：默认拿整行当图（标签/日期/星标全带上，上千像素宽），换成小卡片 */
+.drag-ghost {
+  position: fixed; top: -1000px; left: -1000px;
+  display: flex; align-items: center; gap: 8px;
+  max-width: 280px; padding: 7px 12px;
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  font-size: 12.5px; color: var(--text);
+}
+.drag-ghost-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drag-ghost-count { flex: none; font-size: 11px; color: var(--accent); }
 .item-type { display: grid; place-items: center; color: var(--muted); }
 .item-row.is-selected .item-type { color: var(--text-2); }
 .item-main { min-width: 0; }
@@ -496,6 +516,21 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
   color: var(--faint); margin: 20px 0 8px; font-weight: 600;
 }
 .abstract { font-size: 13px; color: var(--text-2); line-height: 1.7; }
+/* 「归类」页签：每个分组只有一行小标题 + chip 云，新建输入按需展开，避免整页都是输入框 */
+.group-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 20px 0 8px; }
+.group-head:first-child { margin-top: 0; }
+.group-head .section-title { margin: 0; }
+.group-add { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 6px; border-radius: var(--radius-sm); color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.group-add:hover { color: var(--text); background: var(--hover); }
+.group-input { display: flex; margin: 0 0 8px; }
+.group-input input {
+  flex: 1; min-width: 0; height: 32px; padding: 0 10px;
+  font-size: 12.5px; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); outline: none;
+}
+.group-input input::placeholder { color: var(--faint); }
+.group-input input:focus { border-color: var(--accent); }
+.group-empty { font-size: 12.5px; color: var(--faint); }
 .attach {
   display: flex; align-items: center; gap: 10px; padding: 10px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
@@ -667,17 +702,22 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .field .error.is-on { display: block; }
 .ident-row { display: flex; align-items: center; gap: 8px; }
 .ident-row input { flex: 1 1 auto; min-width: 0; }
-.ident-sep { height: 1px; background: var(--border); margin: 2px 0; }
-/* 带圈问号 + 悬浮解释（不占版面） */
+/* 带圈问号 + 悬浮解释（不占版面）
+   浮层用锚点定位 + position: fixed：既贴着问号，又不会给
+   overflow 容器（如 .modal-body）撑出多余的滚动区域 */
 .help {
-  position: relative; display: inline-grid; place-items: center;
+  anchor-name: --help-tip; anchor-scope: --help-tip;
+  display: inline-grid; place-items: center;
   width: 15px; height: 15px; margin-left: 6px; vertical-align: 1px;
   border: 1px solid var(--border-strong); border-radius: 50%;
   color: var(--faint); font-size: 10.5px; font-weight: 600; line-height: 1; cursor: default;
 }
 .help:hover { color: var(--text-2); border-color: var(--text-2); }
 .help-pop {
-  position: absolute; left: 20px; top: -8px; z-index: 300; width: 310px;
+  position: fixed; position-anchor: --help-tip;
+  left: anchor(left); top: anchor(bottom); margin-top: 5px;
+  position-try-fallbacks: flip-inline;
+  z-index: 300; width: 310px;
   padding: 10px 12px; border-radius: var(--radius);
   background: var(--surface); border: 1px solid var(--border-strong); box-shadow: var(--shadow);
   font-size: 12px; font-weight: 400; line-height: 1.65; color: var(--text-2); text-align: left;
@@ -782,6 +822,10 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .lg-state.is-wait, .lg-state.is-warn { color: var(--star); }
 .lg-state.is-bad { color: #ef5350; }
 .lg-empty { padding: 40px 16px; text-align: center; color: var(--faint); font-size: 12.5px; }
+.lg-more { display: flex; justify-content: center; padding: 14px 0 4px; }
+.lg-more-btn { height: 30px; padding: 0 14px; border-radius: var(--pill); border: 1px solid var(--border-strong); color: var(--muted); font-size: 12px; }
+.lg-more-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.lg-more-btn:disabled { opacity: 0.6; }
 
 .lg-detail-head { padding: 18px 24px 12px; border-bottom: 1px solid var(--border); }
 .lg-detail-head h2 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; }

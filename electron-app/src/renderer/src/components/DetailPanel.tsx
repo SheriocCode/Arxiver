@@ -85,7 +85,7 @@ export default function DetailPanel({
               ? <InfoEdit lib={lib} doc={doc} />
               : <InfoDisplay lib={lib} doc={doc} onOpenView={openDoc} citeDoi={settings.citeDoi} />)}
             {lib.tab === "notes" && <NotesPanel lib={lib} doc={doc} />}
-            {lib.tab === "tags" && <TagsPanel lib={lib} doc={doc} />}
+            {lib.tab === "tags" && <GroupsPanel lib={lib} doc={doc} />}
           </div>
         ) : null}
         {/* AI 面板常驻挂载（切到别的标签只是隐藏），否则切一次标签会话就被卸载重建，上下文全丢 */}
@@ -226,43 +226,84 @@ function NotesPanel({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Ele
   );
 }
 
-function TagsPanel({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Element {
-  const [input, setInput] = useState("");
+// 分类与标签同在一个页签里管理：分类是可多选的分组（拖拽、勾选都改这里），标签是自由词。
+// 两者都只保留“一个可切换的 chip 云 + 顶部的 + 新建/添加”，避免多个输入区把面板撑得很长。
+function GroupsPanel({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Element {
+  const [mode, setMode] = useState<"col" | "tag" | null>(null);
+  const [draft, setDraft] = useState("");
+  const addRef = useRef<HTMLInputElement>(null);
   const tags = doc.tags || [];
+  const cols = doc.collections || [];
   const all = Object.keys(lib.tagCounts).sort();
-  const add = (): void => {
-    const tag = input.trim();
-    if (!tag) { return; }
-    if (!tags.includes(tag)) { void lib.update(doc.id, { tags: [...tags, tag] }); }
-    setInput("");
+
+  useEffect(() => { if (mode) { addRef.current?.focus(); } }, [mode]);
+
+  const closeAdd = (): void => { setMode(null); setDraft(""); };
+  const submitAdd = async (): Promise<void> => {
+    const name = draft.trim();
+    if (!name) { closeAdd(); return; }
+    if (mode === "col") {
+      const created = await lib.addCollection(name);
+      if (!cols.includes(created.id)) { await lib.update(doc.id, { collections: [...cols, created.id] }); }
+      closeAdd();
+    } else if (mode === "tag") {
+      if (!tags.includes(name)) { await lib.update(doc.id, { tags: [...tags, name] }); }
+      setDraft("");
+    }
   };
-  // 「所有标签」是给本文加/去标签的入口，不做左侧「我的标签」那种联动过滤
-  const toggle = (tag: string): void => {
+  const toggleTag = (tag: string): void => {
     const next = tags.includes(tag) ? tags.filter((t) => t !== tag) : [...tags, tag];
     void lib.update(doc.id, { tags: next });
   };
+  const toggleCol = (id: string): void => {
+    const next = cols.includes(id) ? cols.filter((c) => c !== id) : [...cols, id];
+    void lib.update(doc.id, { collections: next });
+  };
+  const onAddKey = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === "Enter") { void submitAdd(); }
+    if (e.key === "Escape") { closeAdd(); }
+  };
   return (
     <>
-      <div className="section-title" style={{ marginTop: 0 }}>当前标签</div>
-      <div className="tag-cloud">
-        {tags.length === 0 ? <span style={{ color: "var(--faint)", fontSize: 13 }}>暂无标签</span>
-          : tags.map((t) => <TagChip key={t} tag={t} lib={lib} />)}
+      <div className="group-head">
+        <span className="section-title">分类</span>
+        <button type="button" className="group-add" title="新建分类并归入本文" onClick={() => { if (mode === "col") { closeAdd(); } else { setDraft(""); setMode("col"); } }}>
+          <Icon name="plus" small /> 新建
+        </button>
       </div>
-      <div className="section-title">添加标签</div>
-      <div className="od-row">
-        <input
-          className="od-fill"
-          value={input}
-          placeholder="输入标签后回车"
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { add(); } }}
-          style={{ height: 38, padding: "0 11px", background: "var(--surface)", border: "1px solid var(--border-strong)", borderRadius: 10, outline: "none", color: "var(--text)" }}
-        />
-        <button className="btn btn-primary" onClick={add}><Icon name="plus" small /> 添加</button>
-      </div>
-      <div className="section-title">所有标签</div>
+      {mode === "col" && (
+        <div className="group-input">
+          <input ref={addRef} value={draft} placeholder="输入分类名，回车创建" onChange={(e) => setDraft(e.target.value)} onKeyDown={onAddKey} />
+        </div>
+      )}
       <div className="tag-cloud">
-        {all.length === 0 ? <span style={{ color: "var(--faint)", fontSize: 13 }}>无</span>
+        {lib.collections.length === 0 ? <span className="group-empty">暂无分类</span>
+          : lib.collections.map((c) => (
+            <button
+              key={c.id}
+              className={"tag" + (cols.includes(c.id) ? " is-on" : "")}
+              title={cols.includes(c.id) ? "点击从本文移出该分类" : "点击把本文加入该分类"}
+              onClick={() => toggleCol(c.id)}
+            >
+              <Icon name="folder" small />
+              {c.name}
+            </button>
+          ))}
+      </div>
+
+      <div className="group-head">
+        <span className="section-title">标签</span>
+        <button type="button" className="group-add" title="新建标签并加到本文" onClick={() => { if (mode === "tag") { closeAdd(); } else { setDraft(""); setMode("tag"); } }}>
+          <Icon name="plus" small /> 添加
+        </button>
+      </div>
+      {mode === "tag" && (
+        <div className="group-input">
+          <input ref={addRef} value={draft} placeholder="输入新标签，回车添加" onChange={(e) => setDraft(e.target.value)} onKeyDown={onAddKey} />
+        </div>
+      )}
+      <div className="tag-cloud">
+        {all.length === 0 ? <span className="group-empty">暂无标签</span>
           : all.map((t) => (
             <TagChip
               key={t}
@@ -270,7 +311,7 @@ function TagsPanel({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Elem
               lib={lib}
               on={tags.includes(t)}
               title={tags.includes(t) ? "点击从本文移除该标签" : "点击为本文添加该标签"}
-              onClick={() => toggle(t)}
+              onClick={() => toggleTag(t)}
             />
           ))}
       </div>
