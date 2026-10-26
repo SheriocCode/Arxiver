@@ -1093,12 +1093,11 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 
 .reader-overlay .workspace-body { position: relative; flex: 1; min-height: 0; display: flex; }
 .reader-overlay .viewer-stage { position: relative; flex: 1; min-width: 0; }
-.reader-overlay .outline-panel { flex: none; width: 248px; display: flex; flex-direction: column; min-height: 0; background: var(--bg-panel); border-right: 1px solid var(--border); }
-.reader-overlay .outline-panel.is-annots { width: 300px; }
+.reader-overlay .outline-panel { flex: none; width: 300px; display: flex; flex-direction: column; min-height: 0; background: var(--bg-panel); border-right: 1px solid var(--border); }
 .reader-overlay .outline-tabs { display: flex; flex: none; border-bottom: 1px solid var(--border); }
 .reader-overlay .outline-tabs button { flex: 1; height: 36px; border-radius: 0; background: transparent; color: var(--muted); border-bottom: 2px solid transparent; }
 .reader-overlay .outline-tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
-.reader-overlay .outline-body { flex: 1; min-height: 0; overflow: auto; padding: 6px; }
+.reader-overlay .outline-body { flex: 1; min-height: 0; overflow: auto; padding: 8px; }
 .reader-overlay .outline-empty { padding: 16px 12px; color: var(--faint); font-size: 12px; }
 .reader-overlay .outline-note { padding: 6px 10px 8px; margin-bottom: 4px; color: var(--faint); font-size: 11.5px; border-bottom: 1px dashed var(--border); }
 .reader-overlay .toc-item { display: block; width: 100%; text-align: left; height: auto; min-height: 28px; margin-bottom: 2px; padding: 5px 10px; background: transparent; color: var(--text-2); border-radius: var(--radius-sm); font-size: 12.5px; line-height: 1.35; white-space: normal; }
@@ -1111,28 +1110,40 @@ html.kb-focus .switch:focus-visible { outline: 2px solid var(--accent); outline-
 .reader-overlay .thumb:hover { background: var(--hover); }
 .reader-overlay .thumb.active { border-color: var(--accent); }
 .reader-overlay .thumb.active .thumb-no { color: var(--accent); }
-/* 标注列表（侧栏 → 标注） */
+/* 标注列表（侧栏 → 标注）：标题 / 原文 / 笔记 / 图片 / 链接分行展示 */
 .reader-overlay .annot-list { display: flex; flex-direction: column; gap: 2px; }
 .reader-overlay .annot-row { display: flex; align-items: stretch; gap: 2px; border-radius: var(--radius-sm); }
 .reader-overlay .annot-row:hover { background: var(--hover); }
 .reader-overlay .annot-row-main {
-  flex: 1; min-width: 0; height: auto; padding: 7px 8px; text-align: left;
-  display: flex; flex-direction: column; align-items: stretch; gap: 4px;
+  flex: 1; min-width: 0; height: auto; padding: 9px 10px; text-align: left;
+  display: flex; flex-direction: column; align-items: stretch; gap: 5px;
   background: transparent; color: var(--text-2); white-space: normal;
 }
 .reader-overlay .annot-row-head { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
 .reader-overlay .annot-row-kind { color: var(--text-2); }
-.reader-overlay .annot-row-meta { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); font-size: 11px; }
-.reader-overlay .annot-row-meta .icon { width: 12px; height: 12px; }
-.reader-overlay .annot-row-page { margin-left: auto; color: var(--faint); font-size: 11px; white-space: nowrap; }
-.reader-overlay .annot-row-text {
-  display: -webkit-box; overflow: hidden; text-align: left; white-space: normal;
-  font-size: 12px; line-height: 1.5;
-  -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word;
+.reader-overlay .annot-row-page { margin-left: auto; color: var(--faint); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.reader-overlay .annot-quote {
+  display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  padding-left: 7px; border-left: 2px solid color-mix(in srgb, var(--annot-color, var(--border-strong)) 55%, transparent);
+  color: var(--muted); font-size: 11.5px; line-height: 1.5; word-break: break-word;
 }
-.reader-overlay .annot-row-text.is-note { color: var(--text); }
-.reader-overlay .annot-row-text.is-quote { color: var(--muted); }
-.reader-overlay .annot-row-text.is-meta { color: var(--faint); }
+.reader-overlay .annot-note {
+  display: -webkit-box; overflow: hidden; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  color: var(--text); font-size: 12.5px; line-height: 1.5; word-break: break-word;
+}
+.reader-overlay .annot-empty { color: var(--faint); font-size: 12px; }
+.reader-overlay .annot-media { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 1px; }
+.reader-overlay .annot-thumb {
+  width: 42px; height: 42px; flex: none; object-fit: cover;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.reader-overlay .annot-link {
+  display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%;
+  height: 22px; padding: 0 7px; border-radius: var(--pill);
+  background: var(--surface); color: var(--muted); font-size: 11px;
+}
+.reader-overlay .annot-link .icon { width: 12px; height: 12px; flex: none; }
+.reader-overlay .annot-link-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reader-overlay .annot-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--annot-color); flex: none; }
 .reader-overlay .annot-row-del {
   flex: none; width: 26px; display: grid; place-items: center; height: auto; padding: 0;

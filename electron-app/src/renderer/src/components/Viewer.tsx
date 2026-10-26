@@ -30,18 +30,19 @@ const ANNOT_KIND_ICON: Record<PdfAnnotKind, string> = {
 };
 const INK_WIDTHS = [2, 4, 8] as const;
 
-// 侧栏一行里优先显示笔记正文（最常用来找内容），没有笔记时退回选中原文 / 图片链接数量
-function annotExcerpt(a: PdfAnnotation): { text: string; kind: "note" | "quote" | "meta" } {
-  const note = (a.note || "").trim();
-  if (note) { return { text: note, kind: "note" }; }
-  if (a.kind === "ink") { return { text: a.strokes?.length ? `${a.strokes.length} 笔手写` : "手写标注", kind: "meta" }; }
-  const bits: string[] = [];
-  if (a.text) { bits.push(a.text); }
-  if (a.links?.length) { bits.push(a.links.length === 1 ? a.links[0] : `${a.links.length} 个链接`); }
-  if (a.images?.length) { bits.push(`${a.images.length} 张图片`); }
-  if (bits.length) { return { text: bits.join(" · "), kind: a.text ? "quote" : "meta" }; }
-  if (a.region) { return { text: a.kind === "note" ? "区域笔记" : "区域高亮", kind: "meta" }; }
-  return { text: "空笔记", kind: "meta" };
+// 侧栏一行的标题：类型 + 计数，具体内容（原文 / 笔记 / 图片 / 链接）分行显示
+function annotHeading(a: PdfAnnotation): string {
+  if (a.kind === "ink") {
+    const n = a.strokes?.length || 0;
+    return `画笔${n ? ` · ${n} 笔` : ""}${a.note?.trim() ? " · 笔记" : ""}`;
+  }
+  const base = ANNOT_KIND_LABEL[a.kind] + (a.region ? "（区域）" : "");
+  return a.kind !== "note" && a.note?.trim() ? base + " · 笔记" : base;
+}
+
+// 链接在侧栏里去掉协议和末尾斜杠，太长的部分交给 CSS 省略
+function linkLabel(url: string): string {
+  return url.replace(/^[a-z]+:\/\//i, "").replace(/\/$/, "");
 }
 
 interface Props {
@@ -725,7 +726,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
 
       <div className="workspace-body">
         {panel && (
-          <aside className={"outline-panel" + (panel === "annots" ? " is-annots" : "")}>
+          <aside className="outline-panel">
             <div className="outline-tabs">
               <button type="button" className={panel === "toc" ? "active" : ""} onClick={() => setPanel("toc")}>目录</button>
               <button type="button" className={panel === "thumbs" ? "active" : ""} onClick={() => setPanel("thumbs")}>缩略图</button>
@@ -738,29 +739,36 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
                   : (
                     <div className="annot-list">
                       {annotSorted.map((a) => {
-                        const excerpt = annotExcerpt(a);
+                        const note = (a.note || "").trim();
+                        const quote = (a.text || "").trim();
+                        const images = a.images || [];
+                        const links = a.links || [];
+                        const empty = a.kind === "note" && !note && !quote && !images.length && !links.length;
                         return (
-                          <div key={a.id} className="annot-row">
+                          <div key={a.id} className="annot-row" data-color={a.color || "yellow"}>
                             <button type="button" className="annot-row-main" title="点击定位；在页面上点击该标注可查看 / 编辑" onClick={() => void engineRef.current?.focusAnnotation(a.id)}>
                               <span className="annot-row-head">
                                 <span className="annot-dot" data-color={a.color || "yellow"} />
                                 <Icon name={ANNOT_KIND_ICON[a.kind]} small />
-                                <span className="annot-row-kind">
-                                  {ANNOT_KIND_LABEL[a.kind]}{a.region ? "（区域）" : ""}{a.kind !== "note" && a.note?.trim() ? " · 笔记" : ""}
-                                </span>
-                                {!!a.images?.length && (
-                                  <span className="annot-row-meta" title={`${a.images.length} 张图片`}>
-                                    <Icon name="image" small />{a.images.length}
-                                  </span>
-                                )}
-                                {!!a.links?.length && (
-                                  <span className="annot-row-meta" title={`${a.links.length} 个链接`}>
-                                    <Icon name="link" small />{a.links.length}
-                                  </span>
-                                )}
+                                <span className="annot-row-kind">{annotHeading(a)}</span>
                                 <span className="annot-row-page">第 {a.page} 页</span>
                               </span>
-                              <span className={"annot-row-text is-" + excerpt.kind}>{excerpt.text}</span>
+                              {quote && <span className="annot-quote">{quote}</span>}
+                              {note && <span className="annot-note">{note}</span>}
+                              {empty && <span className="annot-empty">空笔记</span>}
+                              {(images.length > 0 || links.length > 0) && (
+                                <span className="annot-media">
+                                  {images.map((src, i) => (
+                                    <img key={i} className="annot-thumb" src={src} alt="" loading="lazy" title={`图片 ${i + 1}`} />
+                                  ))}
+                                  {links.map((url, i) => (
+                                    <span key={i} className="annot-link" title={url}>
+                                      <Icon name="link" small />
+                                      <span className="annot-link-label">{linkLabel(url)}</span>
+                                    </span>
+                                  ))}
+                                </span>
+                              )}
                             </button>
                             <button type="button" className="annot-row-del" title="删除标注" onClick={() => engineRef.current?.removeAnnotation(a.id)}>
                               <Icon name="trash" small />
