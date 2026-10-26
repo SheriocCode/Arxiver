@@ -4,7 +4,7 @@ Runs on the embedded interpreter ``engine/runtime/python.exe``. The engine sourc
 (``translate_engine``) lives in the ``engine`` root and the third-party dependencies
 live in ``engine/site-packages``; both are put on ``sys.path`` here (the embeddable
 distribution uses a ``._pth`` file, so we cannot rely on the environment). It then
-restores the offline assets (fonts, doclayout model, tiktoken cache) into babeldoc's
+restores the offline assets (fonts, tiktoken cache) into babeldoc's
 cache directory on first use, before handing the CLI arguments to the engine.
 """
 
@@ -24,7 +24,7 @@ for _entry in (SITE, HERE):
 
 
 def restore_assets():
-    for sub in ("fonts", "models", "tiktoken"):
+    for sub in ("fonts", "tiktoken"):
         src = os.path.join(ASSETS, sub)
         if not os.path.isdir(src):
             continue

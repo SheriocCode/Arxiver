@@ -5,7 +5,7 @@ import { skillsPath } from "../paths";
 import type { Skill } from "../../shared/types";
 
 // 技能库：用户可以把常用的提示词 / 工作流程存成技能，之后在 AI 面板一键启用。
-// 只在本机保存（userData/skills.json），不随会话或文献走。
+// 只在本机保存（data/skills.json），不随会话或文献走。
 
 const MAX_NAME = 80;
 const MAX_DESC = 400;

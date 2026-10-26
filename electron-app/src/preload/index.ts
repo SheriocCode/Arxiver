@@ -11,6 +11,13 @@ const api = {
   setConfig: (patch: unknown) => ipcRenderer.invoke("config:set", patch),
   appInfo: () => ipcRenderer.invoke("app:info"),
   localStatus: () => ipcRenderer.invoke("local:status"),
+  modelsList: () => ipcRenderer.invoke("models:list"),
+  modelsDir: () => ipcRenderer.invoke("models:dir"),
+  modelDownload: (id: string, source?: string) => ipcRenderer.invoke("models:download", id, source),
+  modelTestSource: (url: string) => ipcRenderer.invoke("models:test", url),
+  modelCancel: (id: string) => ipcRenderer.invoke("models:cancel", id),
+  modelRemove: (id: string) => ipcRenderer.invoke("models:remove", id),
+  onModelProgress: (cb: (payload: unknown) => void) => subscribe("model:progress", cb),
 
   pickFile: () => ipcRenderer.invoke("source:pick"),
   loadSource: (payload: unknown) => ipcRenderer.invoke("source:load", payload),

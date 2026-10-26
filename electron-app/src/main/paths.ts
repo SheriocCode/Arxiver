@@ -39,27 +39,58 @@ export function llamaServerExe(): string {
   return path.join(localLlamaDir(), process.platform === "win32" ? "llama-server.exe" : "llama-server");
 }
 
-export function bundledModelPath(): string {
-  const dir = localModelDir();
-  let files: string[] = [];
-  try {
-    files = fs.readdirSync(dir).filter((name) => name.toLowerCase().endsWith(".gguf"));
-  } catch {
-    // 目录不存在
-  }
-  // 优先使用 Q4_K_M；否则取任意一个 GGUF。
-  const preferred = files.find((name) => name.toLowerCase().includes("q4_k_m"));
-  if (preferred) {
-    return path.join(dir, preferred);
-  }
-  if (files.length) {
-    return path.join(dir, files.sort()[0]);
-  }
-  return path.join(dir, "hy-mt2-1.8b-q4_k_m.gguf");
+// 按需下载模型的目录（用户数据目录，安装目录可能没有写权限）
+export function managedModelsDir(): string {
+  return path.join(userDataDir(), "models");
 }
 
-export function userDataDir(): string {
+// 引擎（babeldoc）以 HOME/USERPROFILE 为根；放在 data/home 下，字体 / 版面模型 / tiktoken
+// 也都跟着落到安装目录，不写 C 盘用户缓存。
+export function dataHomeDir(): string {
+  return path.join(userDataDir(), "home");
+}
+
+export function managedTranslateModelPath(): string {
+  return path.join(managedModelsDir(), "hy-mt2-1.8b-q4_k_m.gguf");
+}
+
+export function managedLayoutModelPath(): string {
+  return path.join(managedModelsDir(), "doclayout_yolo_docstructbench_imgsz1024.onnx");
+}
+
+// babeldoc 的离线资源缓存；版面识别模型需要放在这里
+export function babeldocModelPath(): string {
+  return path.join(dataHomeDir(), ".cache", "babeldoc", "models", "doclayout_yolo_docstructbench_imgsz1024.onnx");
+}
+
+
+
+
+
+// Electron/Chromium 的用户目录（缓存、LocalStorage、Cookies）。
+export function profileDir(): string {
   return app.getPath("userData");
+}
+
+let resolvedDataDir = "";
+
+// 应用数据（文库、模型、配置、日志）：优先 <安装目录>/data；不可写时回退到 profile。
+export function userDataDir(): string {
+  if (resolvedDataDir) { return resolvedDataDir; }
+  const override = String(process.env.ARXIVER_DATA_DIR || "").trim();
+  const installRoot = app.isPackaged ? path.dirname(process.execPath) : app.getAppPath();
+  const candidate = override ? path.resolve(override) : path.join(installRoot, "data");
+  try {
+    fs.mkdirSync(candidate, { recursive: true });
+    const probe = path.join(candidate, ".write-test");
+    fs.writeFileSync(probe, "ok");
+    fs.rmSync(probe, { force: true });
+    resolvedDataDir = candidate;
+  } catch (err) {
+    console.error("[arxiver] 数据目录不可写，回退到用户目录:", err);
+    resolvedDataDir = app.getPath("userData");
+  }
+  return resolvedDataDir;
 }
 
 export function configPath(): string {

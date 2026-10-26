@@ -17,21 +17,32 @@ Electron 桌面端的 PDF 翻译引擎（基于 PDFMathTranslate / babeldoc 的�
 | `requirements.txt` | `site-packages` 的第三方依赖清单 |
 | `VERSION` | 引擎版本；引擎有实质更新时 bump（见 `NOTES.local.md`） |
 
-**不进 git（运行时/模型，由脚本装配，随安装包分发）：**
+**不进 git，随安装包分发（运行时）：**
 
 | 路径 | 说明 |
 | --- | --- |
 | `runtime/` | 嵌入式 Python 运行时（`python.exe`） |
 | `site-packages/` | 第三方依赖（按 `requirements.txt` 安装） |
-| `assets/` | 离线资源：`fonts/`、`models/`（doclayout ONNX）、`tiktoken/` |
+| `assets/fonts/`、`assets/tiktoken/` | 字体与 tiktoken 离线缓存 |
 | `llama/` | llama.cpp 运行时（`llama-server.exe` 等） |
-| `models/` | 本地翻译模型（HY-MT GGUF） |
+
+**不进 git，按需下载（模型）：**
+
+| 路径 | 说明 |
+| --- | --- |
+| `assets/models/doclayout_yolo_docstructbench_imgsz1024.onnx` | 版面识别 ONNX 的旧开发资源；应用不再从 assets 恢复，下载到安装目录 `data/models` |
+| `models/hy-mt2-1.8b-q4_k_m.gguf` | 本地翻译模型的旧开发资源；应用不再读取，下载到 `data/models` |
+
+下载入口在应用「设置 → 本地模型」，模型统一放在 `<安装目录>/data/models`（开发版 `electron-app/data/models`）。
+开发时可用 `tools/fetch-llm.ps1` 直接把模型放到 `electron-app/data/models`，并把仓库里的版面模型一并复制过去；
+`electron-builder` 的 `extraResources.filter` 不会把模型打进安装包。
 
 ## 装配
 
-- **llama.cpp + HY-MT 模型**：仓库根执行 `powershell -File tools/fetch-llm.ps1`（默认 CUDA 版）。
+- **llama.cpp + HY-MT 模型**：仓库根执行 `powershell -File tools/fetch-llm.ps1`（默认 CUDA 版，开发调试用；
+  安装包只带 llama.cpp，HY-MT GGUF 与版面识别 ONNX 由应用内按需下载）。
 - **python 运行时 / site-packages / assets**：由引擎构建流程装配——嵌入式 Python，`pip install
-  -r requirements.txt` 到 `site-packages/`，字体 / ONNX 模型 / tiktoken 缓存放入 `assets/`。
+  -r requirements.txt` 到 `site-packages/`，字体 / tiktoken 缓存放入 `assets/`；版面模型改由应用下载。
 - `translate_engine` 已从 `site-packages/` 抽出到本目录，安装依赖时**不要**再安装 `translate-engine` 包。
 - 版面识别依赖 **`onnxruntime-directml`**（`requirements.txt` 里声明）：优先走 DirectML（任意 DX12
   显卡，实测约 6–10 倍于 CPU），无 DX12 设备 / 驱动不匹配时由 `translate_engine/doclayout.py`

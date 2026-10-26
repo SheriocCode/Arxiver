@@ -11,26 +11,28 @@ import * as annotations from "./annotations";
 import * as paths from "./paths";
 import { EngineManager, clearTmpJobs, type PublicJob, type TransParams } from "./engine";
 import * as localModel from "./localmodel";
+import * as models from "./models";
 import { AgentService, type AgentChatRequest } from "./agent/agent";
 import * as conversations from "./agent/conversations";
 import * as skills from "./agent/skills";
 import { getOutline } from "./outline";
 import * as viewerCache from "./viewerCache";
+import { migrateLegacyData } from "./migrate";
 import { importPaper, fetchPdf } from "./importPaper";
 import { enrichDocMeta } from "./enrich";
 import * as logger from "./logger";
 import { Updater } from "./updater";
 import type { AppChildProc, AppMetrics, AppProcessInfo, TranslationLogEntry } from "../shared/types";
 
-// 数据目录优先级：
-//   1. 显式覆盖 --user-data-dir=<path> 或环境变量 ARXIVER_USER_DATA（便于同时试跑多份构建）
-//   2. 开发运行（未打包）→ %APPDATA%\Arxiver-dev（避免与安装版争用）
-//   3. 安装版 → 默认 %APPDATA%\Arxiver
+// Electron 的用户目录（Chromium 缓存 / LocalStorage 等）仍放在 %APPDATA%：
+//   安装版 %APPDATA%\Arxiver，开发版 %APPDATA%\Arxiver-dev。
+// 文库 PDF、模型、配置等大文件由 paths.userDataDir() 放到 <安装目录>\data（见 paths.ts）。
 const userDataArg = process.argv.find((a) => a.startsWith("--user-data-dir="));
 const userDataOverride =
   (userDataArg ? userDataArg.slice("--user-data-dir=".length) : "") || process.env.ARXIVER_USER_DATA || "";
 if (userDataOverride) {
   app.setPath("userData", path.resolve(userDataOverride));
+  process.env.ARXIVER_DATA_DIR = path.resolve(userDataOverride);
 } else if (!app.isPackaged) {
   app.setPath("userData", path.join(app.getPath("appData"), "Arxiver-dev"));
 }
@@ -511,6 +513,12 @@ function registerIpc(): void {
   ipcMain.handle("config:get", () => config.get());
   ipcMain.handle("config:set", (_event, patch) => config.update(patch));
   ipcMain.handle("local:status", () => localModel.localModelStatus());
+  ipcMain.handle("models:list", () => models.listModels());
+  ipcMain.handle("models:dir", () => models.modelsDirectory());
+  ipcMain.handle("models:download", (_event, id: "layout" | "translate", source?: string) => models.downloadModel(id, source));
+  ipcMain.handle("models:test", (_event, url: string) => models.testModelSource(url));
+  ipcMain.handle("models:cancel", (_event, id: "layout" | "translate") => models.cancelModelDownload(id));
+  ipcMain.handle("models:remove", async (_event, id: "layout" | "translate") => await models.removeModel(id));
 
   ipcMain.handle("app:info", () => {
     perf("renderer first IPC (app:info) — React mounted");
@@ -519,6 +527,7 @@ function registerIpc(): void {
     engineVersion: paths.engineVersion(),
     platform: process.platform,
     userData: paths.userDataDir(),
+    profile: paths.profileDir(),
     engineDir: paths.engineDir()
     };
   });
@@ -638,6 +647,7 @@ function registerIpc(): void {
       `已运行：${Math.round(process.uptime())} 秒`,
       `平台：${process.platform} ${process.arch} · Electron ${process.versions.electron} · Node ${process.versions.node}`,
       `数据目录：${paths.userDataDir()}`,
+      `浏览器缓存：${paths.profileDir()}`,
       `日志文件：${logger.logFile()}`,
       "",
       `== 进程（${procs.length}，工作集合计 ${procs.reduce((n, p) => n + p.rssMB, 0)} MB / 提交合计 ${procs.reduce((n, p) => n + p.commitMB, 0)} MB）==`,
@@ -769,6 +779,7 @@ if (!gotLock) {
     if (process.platform === "win32") {
       app.setAppUserModelId("com.sherioccode.arxiver");
     }
+    migrateLegacyData();
     registerIpc();
     clearTmpJobs();
     createWindow();

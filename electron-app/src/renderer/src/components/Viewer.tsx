@@ -90,12 +90,13 @@ interface Props {
   onSelectTranslation: (key: string) => void;
   onAskSelection?: (text: string, page: number) => void;
   onCaptureImage?: (capture: RegionCapture) => void;
+  onOpenModels?: () => void;
   captureEnabled?: boolean;
   onTranslationDone?: (info: TranslationDoneInfo) => void;
 }
 
 const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
-  { docId, visible, config, translations, activeKey, showBlocksTranslating, showBlocksTranslation, pageTheme, onPageThemeChange, onToggleBlocks, onSelectTranslation, onAskSelection, onCaptureImage, captureEnabled = true, onTranslationDone }, ref
+  { docId, visible, config, translations, activeKey, showBlocksTranslating, showBlocksTranslation, pageTheme, onPageThemeChange, onToggleBlocks, onSelectTranslation, onAskSelection, onCaptureImage, onOpenModels, captureEnabled = true, onTranslationDone }, ref
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
   const doneRef = useRef(onTranslationDone);
@@ -974,6 +975,9 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
           <div className="status-panel">
             <div className="status-title">翻译失败</div>
             <pre className="error">{s?.error}</pre>
+            {onOpenModels && /模型/.test(s?.error || "") && (
+              <button className="btn btn-primary" onClick={onOpenModels}>去下载模型</button>
+            )}
           </div>
         )}
       </div>

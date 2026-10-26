@@ -34,10 +34,14 @@ toc:
 
 ## 翻译引擎 {#model}
 
-翻译**开箱即用**：内置本地翻译模型（HY-MT + llama.cpp）在本机离线运行，无需 API Key；有 NVIDIA 显卡走 GPU，无独显自动回退 CPU。
+翻译引擎与模型**按需下载**：安装包只带引擎运行时与依赖，模型在首次使用前到「设置 → 本地模型」下载：
 
-- 「设置 → 翻译引擎」可切换为**在线接口**（OpenAI 兼容），或调整本地模型的 GPU 层数 / 额外参数。
-- Arxiver 助手使用**独立**的在线接口，在「设置 → AI 助手」配置（与翻译互不影响）。
+- **版面识别模型**（DocLayout-YOLO，约 72 MB）：识别标题、正文、图表等版式；**本地翻译和在线接口翻译都需要**。
+- **本地翻译模型**（HY-MT2 1.8B Q4_K_M，约 1.1 GB）：仅「本地模型」模式需要；如果使用在线接口，可以不下载。
+- 每个模型会列出可用的下载源（HuggingFace / hf-mirror，版面模型还有 ModelScope），可以逐个测速或「全部测速」后选择；不选则按优先级自动回退。校验通过后才启用。
+- 模型保存在**安装目录下的 `data\models`**（例如 `E:\develop\Arxiver\data\models`），不是 C 盘 AppData；设置页会显示实际路径并提供「打开目录」。版面识别模型还会复制一份到 `data\home\.cache\babeldoc\models` 供引擎读取。安装目录不可写时会回退到 `%APPDATA%\Arxiver\models`。删除文献不会删除模型。
+
+本地翻译在本机离线运行，无需 API Key；有 NVIDIA 显卡走 GPU，无独显自动回退 CPU。Arxiver 助手使用**独立**的在线接口，在「设置 → AI 助手」配置（与翻译互不影响）。
 
 > 本地翻译与版面识别均在本机完成，数据不出本机；仅在线接口与 Arxiver 助手会访问你配置的服务。
 
@@ -106,22 +110,31 @@ toc:
 
 ## 数据与存储 {#storage}
 
-本机数据位于 `%APPDATA%\Arxiver\`：
+本机数据位于**安装目录下的 `data\`**（例如 `E:\develop\Arxiver\data\`；`npm run dev` 为 `electron-app\data\`）。升级 / 卸载会保留 `data\`；安装目录不可写时会回退到 `%APPDATA%\Arxiver\`。
+
+> 从旧版本升级：新版首次启动会自动把旧 `%APPDATA%\Arxiver\`（开发版 `%APPDATA%\Arxiver-dev\`）里的 `config.json`、`ui-settings.json`、`skills.json`、`background/`、`storage/`、`models/` 补到新版 `data\`（只补缺失；已有文库时不会合并）。Chromium 缓存不复制；确认新版 `data` 正常后，旧 `%APPDATA%` 里的 `config.json` / `skills.json` / `background/` / `storage/` 等可以删除（保留 Chromium 缓存目录即可）。旧的 `~/.cache/babeldoc` 也可以删除，新版使用 `data\home\.cacheabeldoc`。
+
 
 ~~~
-storage/
-  index.json                 # 文库元数据（条目 / 分类 / 标签 / 历史）
-  <docId>/                   # 每个条目一个文件夹
-    paper.pdf                # 原始 PDF
-    <cacheKey>.dual.pdf      # 双语译文
-    <cacheKey>.mono.pdf      # 仅译文
-    <cacheKey>.blocks.jsonl  # 块框数据
-    text.json                # 全文检索用文本
-  conversations/             # Arxiver 会话
+data/
+  config.json                # 设置（含 API Key，注意保管）
+  ui-settings.json           # 外观 / 启动设置
+  storage/
+    index.json               # 文库元数据（条目 / 分类 / 标签 / 历史）
+    <docId>/                 # 每个条目一个文件夹
+      paper.pdf              # 原始 PDF
+      <cacheKey>.dual.pdf    # 双语译文
+      <cacheKey>.mono.pdf    # 仅译文
+      <cacheKey>.blocks.jsonl# 块框数据
+      text.json              # 全文检索用文本
+    conversations/           # Arxiver 会话
+  models/                    # 按需下载的翻译 / 版面模型
+  home/.cache/babeldoc/      # 引擎字体、版面模型、tiktoken 缓存
   skills.json                # AI 技能（可复用的提示词 / 工作流程）
-config.json                  # 设置（含联网搜索开关、服务商与 API Key，明文）
-logs/app.log                 # 运行日志（检索 / 读取 / 错误）
+  logs/app.log               # 运行日志（检索 / 读取 / 错误）
 ~~~
+
+Chromium 的渲染缓存 / LocalStorage / Cookies 仍在 `%APPDATA%\Arxiver\`（开发版 `%APPDATA%\Arxiver-dev\`），不放进安装目录。
 
 ## 更新 {#update}
 
@@ -129,8 +142,8 @@ logs/app.log                 # 运行日志（检索 / 读取 / 错误）
 
 ## 故障排查 {#troubleshoot}
 
-- **翻译失败**：本地模式下确认 `engine/llama` 运行时与 `engine/models` 模型齐备（安装包已内置）；也可在「设置 → 翻译引擎」切换为在线接口并填写地址 / 密钥 / 模型。阅读器顶部会显示错误。
-- **首次翻译较慢**：首次会自动加载本地模型并缓存字体 / 版面模型（约数秒），之后变快。
+- **翻译失败 / 提示缺少模型**：到「设置 → 本地模型」下载版面识别模型（任何翻译都需要，约 72 MB）和本地翻译模型（本地模式需要，约 1.1 GB）；阅读器报错里也带「去下载模型」入口。也可切换到在线接口（仍需版面识别模型）并填写地址 / 密钥 / 模型。
+- **首次翻译较慢**：首次会加载本地模型并缓存字体 / 版面模型（约数秒）；如果模型还没下载，需要先完成一次下载。
 - **翻译引擎**：本地模式下翻译时才会启动 Python 引擎（`python.exe`），任务结束就退出；**本地模型服务（`llama-server.exe`，约 1.4 GB）首次翻译后常驻**，所以后续翻译主要是每页的版面分析 + 翻译 + PDF 写回，另有每次任务约 2 秒的引擎启动固定开销。每次翻译的分段耗时（引擎就绪 / 版面模型加载 / 版面分析 / 全流程）会自动记进「日志 → 系统运行日志」，也可在「设置 → 运行状态」看到引擎进程与任务。
 - **源文件缺失**：条目对应的 `storage/<docId>/paper.pdf` 丢失时无法打开，需重新导入。
 - **助手无响应**：确认「设置 → AI 助手」的接口地址 / 密钥 / 模型正确、网络可达，且已在「AI 助手」中启用。

@@ -459,6 +459,8 @@ export interface AppInfo {
   engineVersion: string;
   platform: string;
   userData: string;
+  /** Electron/Chromium 用户目录（缓存、LocalStorage） */
+  profile: string;
   engineDir: string;
 }
 
@@ -467,11 +469,60 @@ export interface LocalModelStatus {
   reason: string;
 }
 
+/** 按需下载的本地模型 */
+export type LocalModelId = "layout" | "translate";
+
+export interface LocalModelSource {
+  label: string;
+  url: string;
+}
+
+export interface LocalModelInfo {
+  id: LocalModelId;
+  name: string;
+  description: string;
+  /** 需要下载到本机的字节数 */
+  size: number;
+  installed: boolean;
+  /** all = 任何翻译都需要；local = 仅本地翻译模式需要 */
+  requiredFor: "all" | "local";
+  /** 已安装时的实际路径 */
+  path: string;
+  /** managed = 应用内下载；cache = 引擎缓存里已有；custom = 自定义路径 */
+  source: "managed" | "cache" | "custom" | "none";
+  /** 可用下载源，按默认优先级排列 */
+  sources: LocalModelSource[];
+}
+
+export interface ModelSourceTest {
+  ok: boolean;
+  latencyMs: number;
+  speedBps: number;
+  bytes: number;
+  error?: string;
+}
+
+export interface LocalModelProgress {
+  id: LocalModelId;
+  state: "downloading" | "verifying" | "done" | "error" | "cancelled";
+  received: number;
+  total: number;
+  percent: number;
+  error?: string;
+}
+
 export interface Api {
   getConfig(): Promise<AppConfig>;
   setConfig(patch: Partial<AppConfig>): Promise<AppConfig>;
   appInfo(): Promise<AppInfo>;
   localStatus(): Promise<LocalModelStatus>;
+  modelsList(): Promise<LocalModelInfo[]>;
+  modelsDir(): Promise<string>;
+  modelDownload(id: LocalModelId, source?: string): Promise<boolean>;
+  modelTestSource(url: string): Promise<ModelSourceTest>;
+  modelCancel(id: LocalModelId): Promise<boolean>;
+  modelRemove(id: LocalModelId): Promise<boolean>;
+  onModelProgress(cb: (progress: LocalModelProgress) => void): () => void;
   pickFile(): Promise<{ filePath: string; name: string } | null>;
   loadSource(payload: SourcePayload): Promise<LoadedSource>;
   startJob(payload: SourcePayload): Promise<JobSummary>;

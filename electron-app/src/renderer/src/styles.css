@@ -894,6 +894,48 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .set-row .set-copy { min-width: 0; flex: 1; }
 .set-row .set-label { display: block; font-size: 13.5px; color: var(--text); }
 .set-row .set-desc { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+/* 按需下载的本地模型 */
+.model-dir { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0 0 10px; font-size: 11px; color: var(--faint); }
+.model-dir code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-family: inherit; user-select: all; }
+.model-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; background: var(--surface); margin-bottom: 10px; }
+.model-head { display: flex; align-items: flex-start; gap: 12px; }
+.model-info { flex: 1; min-width: 0; }
+.model-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; color: var(--text); font-weight: 600; }
+.model-size { font-weight: 400; font-size: 11.5px; color: var(--faint); }
+.model-tag { font-weight: 500; font-size: 10.5px; color: var(--muted); background: var(--surface-2); border-radius: var(--pill); padding: 1px 7px; }
+.model-desc { font-size: 12px; color: var(--muted); line-height: 1.55; margin-top: 4px; }
+.model-state { flex: none; font-size: 11.5px; color: var(--faint); }
+.model-state.is-ok { color: var(--accent); }
+.model-progress { margin-top: 10px; display: grid; gap: 5px; font-size: 11.5px; color: var(--muted); }
+.model-progress-bar { height: 4px; border-radius: var(--pill); background: var(--surface-3); overflow: hidden; }
+.model-progress-bar i { display: block; height: 100%; background: var(--accent); transition: width .2s var(--ease); }
+.model-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.model-sources { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); display: grid; gap: 3px; min-width: 0; }
+.model-sources-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; border: 0;
+  background: none; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; text-align: left;
+}
+.model-sources-toggle:hover { color: var(--text); }
+.model-sources-toggle .icon { margin-left: auto; flex: none; }
+.model-source-current { color: var(--faint); font-size: 11px; }
+.model-sources-body { display: grid; gap: 3px; padding-top: 4px; }
+.model-sources-head { display: flex; align-items: center; justify-content: space-between; min-width: 0; font-size: 11px; color: var(--faint); }
+.model-link { background: none; border: 0; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; padding: 0; }
+.model-link:hover:not(:disabled) { color: var(--text); }
+.model-link:disabled { opacity: .5; cursor: default; }
+.model-source { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 24px; font-size: 11.5px; color: var(--muted); }
+.model-source label { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; overflow: hidden; cursor: pointer; }
+.model-source input { accent-color: var(--accent); margin: 0; }
+.model-source.is-active { color: var(--text); }
+.model-source-label { flex: none; }
+.model-source-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); user-select: all; }
+.model-test { flex: none; font-size: 11px; color: var(--muted); }
+.model-test.is-ok { color: var(--accent); }
+.model-test.is-bad { color: #f3a9a1; }
+.model-copy { flex: none; width: 22px; height: 22px; padding: 0; }
+.model-error { font-size: 11.5px; color: #f3a9a1; }
+.model-hint { font-size: 11.5px; color: var(--faint); }
+.model-foot { font-size: 11.5px; color: var(--faint); line-height: 1.55; margin: 4px 2px 8px; }
 /* 说明文字里的外链（API 官网 / 订阅页）：强调色 + 外链图标，点击在系统浏览器打开 */
 .set-desc a.set-link { display: inline-flex; align-items: center; gap: 3px; color: var(--accent); text-decoration: none; margin: 0 1px; }
 .set-desc a.set-link:hover { text-decoration: underline; }

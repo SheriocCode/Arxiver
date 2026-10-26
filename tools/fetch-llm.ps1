@@ -1,5 +1,6 @@
-﻿# 下载本地翻译运行时（llama.cpp）与 HY-MT2 GGUF 模型到 electron-app/engine/，
-# electron-builder 会把 engine/ 整体作为 extraResources 打进安装包。
+﻿# 下载本地翻译运行时（llama.cpp）到 electron-app/engine/llama/，
+# 并把 HY-MT2 GGUF 放到 electron-app/data/models/（应用数据目录，安装包里不包含模型）。
+# 开发时跑一次即可让「设置 → 本地模型」显示已安装。
 #
 #   powershell -File tools/fetch-llm.ps1                 # CUDA 版 + Q4_K_M（默认，非 N 卡自动退 CPU）
 #   powershell -File tools/fetch-llm.ps1 -Backend cpu    # 仅 CPU 版（包更小）
@@ -28,7 +29,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $engine = Join-Path $root "electron-app/engine"
 $llamaDir = Join-Path $engine "llama"
-$modelDir = Join-Path $engine "models"
+$modelDir = Join-Path $root "electron-app/data/models"
 New-Item -ItemType Directory -Force -Path $llamaDir, $modelDir | Out-Null
 
 # ---- llama.cpp --------------------------------------------------------------
@@ -90,4 +91,11 @@ Write-Host ""
 Write-Host "完成：" -ForegroundColor Green
 Write-Host "  运行时  $llamaDir"
 Write-Host "  模型    $target"
-Write-Host "提示：打包前请确认 engine/llama/llama-server.exe 与 engine/models/*.gguf 均存在。"
+# 开发仓库里如果已经有版面模型，顺手放进 data/models，省得打开应用后再下载
+$layout = Join-Path $engine "assets/models/doclayout_yolo_docstructbench_imgsz1024.onnx"
+if (Test-Path $layout) {
+    Copy-Item $layout (Join-Path $modelDir "doclayout_yolo_docstructbench_imgsz1024.onnx") -Force
+    Write-Host "  版面模型 $modelDir\doclayout_yolo_docstructbench_imgsz1024.onnx"
+}
+
+Write-Host "提示：打包只要求 engine/llama/llama-server.exe；模型不随安装包分发。"

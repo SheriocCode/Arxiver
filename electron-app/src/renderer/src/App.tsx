@@ -461,6 +461,7 @@ export default function App(): JSX.Element {
                     onSelectTranslation={selectTranslation}
                     onAskSelection={askSelection}
                     onCaptureImage={captureImage}
+                    onOpenModels={() => openSettings("models")}
                     captureEnabled={settings.aiEnabled}
                     onTranslationDone={onTranslationDone}
                   />

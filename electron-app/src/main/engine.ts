@@ -4,11 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
-import { pythonExe, runScript, engineDir, tmpJobsDir } from "./paths";
+import { pythonExe, runScript, engineDir, tmpJobsDir, dataHomeDir } from "./paths";
 import * as logger from "./logger";
 import * as storage from "./storage";
 import * as localModel from "./localmodel";
 import { LOCAL_MODEL_ALIAS } from "./localmodel";
+import * as models from "./models";
 import { get as getConfig } from "./config";
 
 export interface TransParams {
@@ -499,6 +500,15 @@ export class EngineManager extends EventEmitter {
         return;
       }
 
+      // 版面识别模型任何翻译都要用；缺失时不要静默走 babeldoc 的自动下载，
+      // 而是给出可以在「设置 → 本地模型」里下载的明确提示。
+      try {
+        models.ensureLayoutModel();
+      } catch (err) {
+        this.fail(job, err instanceof Error ? err.message : String(err));
+        return;
+      }
+
       fs.writeFileSync(path.join(job.workdir, "source.pdf"), sourceBytes);
 
       let baseUrl = String(config.translate_base_url || "");
@@ -525,6 +535,8 @@ export class EngineManager extends EventEmitter {
 
       const env: NodeJS.ProcessEnv = {
         ...process.env,
+        HOME: dataHomeDir(),
+        USERPROFILE: dataHomeDir(),
         PYTHONUTF8: "1",
         PYTHONUNBUFFERED: "1",
         PYTHONIOENCODING: "utf-8"

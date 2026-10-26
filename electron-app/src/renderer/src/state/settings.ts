@@ -27,6 +27,8 @@ export interface AppSettings {
   backgroundFile: string;
   backgroundOpacity: number;
   pageTheme: PageTheme;
+  /** 每个模型选中的下载源 URL（持久化在 data/ui-settings.json） */
+  modelSources: Record<string, string>;
 }
 
 const DEFAULTS: AppSettings = {
@@ -44,7 +46,8 @@ const DEFAULTS: AppSettings = {
   backgroundEnabled: false,
   backgroundFile: "",
   backgroundOpacity: 0.9,
-  pageTheme: "original"
+  pageTheme: "original",
+  modelSources: {}
 };
 
 export const ACCENTS: Record<Accent, { a: string; strong: string; strongHover: string; soft: string; soft2: string }> = {
@@ -53,15 +56,27 @@ export const ACCENTS: Record<Accent, { a: string; strong: string; strongHover: s
   orange: { a: "#c8713a", strong: "#a85a28", strongHover: "#8f4c20", soft: "rgba(200,113,58,.16)", soft2: "rgba(200,113,58,.30)" }
 };
 
-// 设置存在主进程（userData/ui-settings.json）而不是 localStorage：
+// 设置存在主进程（data/ui-settings.json）而不是 localStorage：
 // localStorage 按渲染端 origin 隔离（dev 端口一变就"丢设置"），且是异步落盘（强杀会丢）。
 function load(): AppSettings {
+  let settings: AppSettings;
   try {
     const raw = window.api.uiSettingsGetSync() as Partial<AppSettings> | null;
-    return { ...DEFAULTS, ...(raw || {}) };
+    settings = { ...DEFAULTS, ...(raw || {}) };
   } catch {
-    return { ...DEFAULTS };
+    settings = { ...DEFAULTS };
   }
+  // 旧版本把模型下载源存在渲染端 localStorage；搬到 ui-settings（data 目录）。
+  try {
+    const legacy = JSON.parse(localStorage.getItem("arxiver.modelSources") || "null") as Record<string, string> | null;
+    if (legacy && typeof legacy === "object" && Object.keys(legacy).length) {
+      if (!Object.keys(settings.modelSources || {}).length) { settings = { ...settings, modelSources: legacy }; }
+      localStorage.removeItem("arxiver.modelSources");
+    }
+  } catch {
+    /* ignore */
+  }
+  return settings;
 }
 
 function apply(s: AppSettings): void {

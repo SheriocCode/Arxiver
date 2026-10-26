@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { get as getConfig } from "./config";
-import { bundledModelPath, llamaServerExe, localLlamaDir } from "./paths";
+import { llamaServerExe, localLlamaDir, managedTranslateModelPath, dataHomeDir } from "./paths";
 
 // 对外暴露的模型名（--alias），稳定为 "hy-mt"，与具体 GGUF 文件名解耦。
 export const LOCAL_MODEL_ALIAS = "hy-mt";
@@ -36,7 +36,9 @@ let tail = "";
 
 export function modelPath(): string {
   const override = String(getConfig().local_model || "").trim();
-  return override || bundledModelPath();
+  if (override) { return override; }
+  // 优先使用按需下载到用户数据目录的模型；开发环境回退到随仓库的 engine/models
+  return managedTranslateModelPath();
 }
 
 export function localModelStatus(): { available: boolean; reason: string } {
@@ -44,7 +46,7 @@ export function localModelStatus(): { available: boolean; reason: string } {
     return { available: false, reason: "缺少本地翻译运行时（engine/llama）" };
   }
   if (!fs.existsSync(modelPath())) {
-    return { available: false, reason: "缺少本地翻译模型（engine/models）" };
+    return { available: false, reason: "未下载本地翻译模型，请到「设置 → 本地模型」下载" };
   }
   return { available: true, reason: "" };
 }
@@ -112,7 +114,11 @@ async function spawnAndWait(gpuLayers: number): Promise<{ baseUrl: string; model
 
   tail = "";
   lastError = "";
-  const proc = spawn(llamaServerExe(), args, { cwd: localLlamaDir(), windowsHide: true });
+  const proc = spawn(llamaServerExe(), args, {
+    cwd: localLlamaDir(),
+    windowsHide: true,
+    env: { ...process.env, HOME: dataHomeDir(), USERPROFILE: dataHomeDir() }
+  });
   child = proc;
   proc.stdout?.on("data", (chunk: Buffer) => { tail = (tail + chunk.toString("utf8")).slice(-4000); });
   proc.stderr?.on("data", (chunk: Buffer) => { tail = (tail + chunk.toString("utf8")).slice(-4000); });

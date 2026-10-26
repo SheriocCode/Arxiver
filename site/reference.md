@@ -42,15 +42,16 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
 | `electron-app/src/main/` | 主进程：引擎调度、本地翻译服务（`localmodel`）、文库/存储、Agent（模型 + 工具 + 审批）、自动更新 |
 | `electron-app/src/renderer/src/` | 渲染进程：React 组件、`styles.css`、PDF 阅读器引擎、Arxiver 面板 |
 | `electron-app/src/preload/`、`src/shared/` | `window.api`（IPC）与共享类型 |
-| `electron-app/engine/` | 本机翻译引擎（Python）：源码进 git；运行时/模型（llama.cpp、HY-MT gguf、python 运行时）不进 git |
+| `electron-app/engine/` | 本机翻译引擎（Python）：源码进 git；运行时（llama.cpp、python）不进 git 但随安装包分发；HY-MT gguf 与版面识别 ONNX 按需下载 |
 | `icons/`、`site/`→`docs/` | 品牌资源与文档站 |
 
 ## 数据格式 {#data}
 
-数据都在用户目录 `%APPDATA%\Arxiver\`：`storage/index.json`（文库元数据）、
+数据都在**安装目录下的 `data\`**（例如 `E:\develop\Arxiver\data\`）：`storage/index.json`（文库元数据）、
 `storage/<docId>/`（`paper.pdf`、`<cacheKey>.dual.pdf`、`<cacheKey>.mono.pdf`、`<cacheKey>.blocks.jsonl`、
 `text.json`）、`storage/conversations/`（Arxiver 会话）、`config.json`（设置，含联网搜索的服务商与 API Key）、
-`logs/app.log`（运行日志）。详见[文档](../guide.html#storage)。
+`models/`（按需下载的模型）、`home/.cache/babeldoc/`（引擎缓存）、`logs/app.log`（运行日志）。
+Chromium 缓存 / LocalStorage / Cookies 仍在 `%APPDATA%\Arxiver\`（开发版 `Arxiver-dev`）；安装目录不可写时应用数据回退到该目录。详见[文档](../guide.html#storage)。
 
 `<cacheKey>.blocks.jsonl` 每行是一个段落块（`page / index / bbox / src / dst`）。片段里出现公式占位符时还带
 `vars`：页内编号 → 引擎从 PDF 字形抽出的公式文本（`{vN}` 与 `{{vN}}` 都认）；数学字体没有 Unicode 映射、抽不出内容时该键缺省，界面退回显示占位符。
@@ -132,7 +133,7 @@ npm run dist       # 打包安装包（electron-builder）
 ## 第三方许可 {#license}
 
 - **PDF.js**（Mozilla，Apache-2.0）：PDF 渲染与文本层。
-- **HY-MT**（腾讯混元，Apache-2.0）：随应用分发的本地翻译模型。
+- **HY-MT**（腾讯混元，Apache-2.0）：本地翻译模型，在应用内按需下载。
 - **llama.cpp**（MIT）：本地翻译推理运行时。
 - **ONNX Runtime**（MIT，含 DirectML 执行后端）：版面识别。
 - **BabelDOC / PyMuPDF**（AGPL-3.0）：随引擎分发的翻译引擎与文本抽取。

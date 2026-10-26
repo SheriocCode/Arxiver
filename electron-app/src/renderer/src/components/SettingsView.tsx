@@ -1,5 +1,5 @@
-import { useEffect, useState, type JSX } from "react";
-import type { AppConfig, AppInfo, LocalModelStatus, UpdateStatus } from "../../../shared/types";
+import { useCallback, useEffect, useState, type JSX } from "react";
+import type { AppConfig, AppInfo, LocalModelInfo, LocalModelProgress, LocalModelStatus, ModelSourceTest, UpdateStatus } from "../../../shared/types";
 import { Icon } from "./Icons";
 import { LANGS } from "../lib/langs";
 import { ACCENTS, PAGE_THEMES, type AppSettings } from "../state/settings";
@@ -8,6 +8,7 @@ import SystemPanel from "./SystemPanel";
 
 const SECTIONS = [
   { id: "model", name: "翻译引擎", icon: "settings" },
+  { id: "models", name: "本地模型", icon: "layers" },
   { id: "general", name: "通用", icon: "settings" },
   { id: "appearance", name: "外观", icon: "sparkle" },
   { id: "citation", name: "引用", icon: "copy" },
@@ -39,6 +40,13 @@ export default function SettingsView({
   const [hint, setHint] = useState("");
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [localStatus, setLocalStatus] = useState<LocalModelStatus | null>(null);
+  const [models, setModels] = useState<LocalModelInfo[]>([]);
+  const [modelProgress, setModelProgress] = useState<Record<string, LocalModelProgress>>({});
+  const [sourceChoice, setSourceChoice] = useState<Record<string, string>>(() => settings.modelSources || {});
+  const [sourceTests, setSourceTests] = useState<Record<string, ModelSourceTest & { loading?: boolean }>>({});
+  const [sourceOpen, setSourceOpen] = useState<Record<string, boolean>>({});
+  const [modelDir, setModelDir] = useState("");
+  const loadModels = useCallback(() => { void window.api.modelsList().then(setModels); }, []);
 
   useEffect(() => {
     void window.api.getUpdateStatus().then(setUpdate);
@@ -48,8 +56,24 @@ export default function SettingsView({
   useEffect(() => {
     if (section === "model") {
       void window.api.localStatus().then(setLocalStatus);
+      loadModels();
     }
-  }, [section]);
+    if (section === "models") {
+      loadModels();
+      void window.api.modelsDir().then(setModelDir);
+      void window.api.localStatus().then(setLocalStatus);
+    }
+  }, [section, loadModels]);
+
+  useEffect(() => {
+    return window.api.onModelProgress((p) => {
+      setModelProgress((prev) => ({ ...prev, [p.id]: p }));
+      if (p.state === "done" || p.state === "error" || p.state === "cancelled") {
+        loadModels();
+        void window.api.localStatus().then(setLocalStatus);
+      }
+    });
+  }, [loadModels]);
 
   function updateText(u: UpdateStatus | null): string {
     if (!u) { return ""; }
@@ -91,6 +115,58 @@ export default function SettingsView({
   const searchKeyValue = form[searchKeyField] || "";
   const searchProviderName = { tavily: "Tavily", bocha: "博查", deepseek: "DeepSeek" }[searchProvider];
   const inputStyle = { height: 34, minWidth: 240, background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", color: "var(--text)", padding: "0 10px", outline: "none" } as const;
+
+  function fmtSize(n: number): string {
+    if (!n) { return "0 B"; }
+    if (n >= 1024 ** 3) { return (n / 1024 ** 3).toFixed(2) + " GB"; }
+    if (n >= 1024 ** 2) { return Math.round(n / 1024 ** 2) + " MB"; }
+    return Math.round(n / 1024) + " KB";
+  }
+
+  function modelStatus(id: "layout" | "translate"): LocalModelInfo | undefined {
+    return models.find((m) => m.id === id);
+  }
+
+  function chooseSource(id: string, url: string): void {
+    setSourceChoice((prev) => {
+      const next = { ...prev, [id]: url };
+      updateSettings({ modelSources: next });
+      return next;
+    });
+  }
+
+  function fmtSpeed(bps: number): string {
+    if (!bps) { return "-"; }
+    if (bps >= 1024 * 1024) { return (bps / 1024 / 1024).toFixed(1) + " MB/s"; }
+    return Math.max(1, Math.round(bps / 1024)) + " KB/s";
+  }
+
+  function shortUrl(url: string): string {
+    try {
+      const u = new URL(url);
+      return u.host + u.pathname;
+    } catch { return url; }
+  }
+
+  async function testSource(url: string): Promise<void> {
+    setSourceTests((prev) => ({ ...prev, [url]: { ok: false, latencyMs: 0, speedBps: 0, bytes: 0, loading: true } }));
+    try {
+      const res = await window.api.modelTestSource(url);
+      setSourceTests((prev) => ({ ...prev, [url]: res }));
+    } catch (err) {
+      setSourceTests((prev) => ({ ...prev, [url]: { ok: false, latencyMs: 0, speedBps: 0, bytes: 0, error: err instanceof Error ? err.message : String(err) } }));
+    }
+  }
+
+  async function testAllSources(m: LocalModelInfo): Promise<void> {
+    await Promise.all(m.sources.map((s) => testSource(s.url)));
+  }
+
+  async function removeModel(id: "layout" | "translate"): Promise<void> {
+    await window.api.modelRemove(id);
+    loadModels();
+    void window.api.localStatus().then(setLocalStatus);
+  }
 
   async function save(): Promise<void> {
     const saved = await window.api.setConfig(form);
@@ -134,12 +210,22 @@ export default function SettingsView({
                 <Group title="翻译方式">
                   <Row label="翻译引擎" desc="本地模型离线运行、不产生费用；在线接口需要 API 密钥">
                     <select value={form.translate_mode || "local"} onChange={(e) => set("translate_mode", e.target.value as AppConfig["translate_mode"])}>
-                      <option value="local">本地模型（内置 HY-MT）</option>
+                      <option value="local">本地模型（HY-MT）</option>
                       <option value="remote">在线接口</option>
                     </select>
                   </Row>
+                  {modelStatus("layout") && !modelStatus("layout")!.installed && (
+                    <Row label="版面识别模型" desc="翻译前需要先下载（约 72 MB）；使用在线接口也需要本机做版面识别">
+                      <button className="btn btn-primary" onClick={() => setSection("models")}>去下载</button>
+                    </Row>
+                  )}
+                  {(form.translate_mode || "local") === "local" && modelStatus("translate") && !modelStatus("translate")!.installed && (
+                    <Row label="本地翻译模型" desc="本地模式需要先下载（约 1.1 GB）；改用在线接口则无需下载">
+                      <button className="btn btn-primary" onClick={() => setSection("models")}>去下载</button>
+                    </Row>
+                  )}
                   {(form.translate_mode || "local") === "local" && (
-                    <Row label="本地模型" desc={localStatus ? (localStatus.available ? "已就绪：内置 HY-MT（llama.cpp 运行）" : localStatus.reason) : "正在检测…"}>
+                    <Row label="本地模型" desc={localStatus ? (localStatus.available ? "已就绪：HY-MT（llama.cpp 运行）" : localStatus.reason) : "正在检测…"}>
                       <input style={inputStyle} placeholder="留空使用内置模型，或填写 .gguf 路径" value={form.local_model || ""} onChange={(e) => set("local_model", e.target.value)} />
                     </Row>
                   )}
@@ -176,6 +262,105 @@ export default function SettingsView({
                   <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>
                   <button className="btn btn-primary" onClick={save}>保存设置</button>
                 </div>
+              </>
+            )}
+
+            {section === "models" && (
+              <>
+                <Group title="按需下载">
+                  <div className="model-dir">
+                    <span>保存位置</span>
+                    <code title={modelDir}>{modelDir || "…"}</code>
+                    <button type="button" className="model-link" disabled={!modelDir} onClick={() => { void window.api.openPath(modelDir); }}>打开目录</button>
+                  </div>
+                  {models.map((m) => {
+                    const pr = modelProgress[m.id];
+                    const busy = pr && (pr.state === "downloading" || pr.state === "verifying");
+                    const chosen = m.sources.some((s) => s.url === sourceChoice[m.id]) ? sourceChoice[m.id] : (m.sources[0]?.url || "");
+                    const chosenLabel = m.sources.find((s) => s.url === chosen)?.label || "默认";
+                    return (
+                      <div className="model-card" key={m.id}>
+                        <div className="model-head">
+                          <div className="model-info">
+                            <div className="model-name">
+                              {m.name}
+                              <span className="model-size">{fmtSize(m.size)}</span>
+                              {m.requiredFor === "all" && <span className="model-tag">翻译必需</span>}
+                              {m.requiredFor === "local" && <span className="model-tag">仅本地模式</span>}
+                            </div>
+                            <div className="model-desc">{m.description}</div>
+                          </div>
+                          <span className={"model-state" + (m.installed ? " is-ok" : "")}>
+                            {m.source === "custom" ? "自定义路径" : m.installed ? "已安装" : "未安装"}
+                          </span>
+                        </div>
+                        {busy && (
+                          <div className="model-progress">
+                            <div className="model-progress-bar"><i style={{ width: `${Math.round(pr.percent)}%` }} /></div>
+                            <span>{pr.state === "verifying" ? "校验中…" : `下载中 ${Math.round(pr.percent)}% · ${fmtSize(pr.received)} / ${fmtSize(pr.total || m.size)}`}</span>
+                          </div>
+                        )}
+                        <div className="model-sources">
+                          <button
+                            type="button"
+                            className="model-sources-toggle"
+                            aria-expanded={!!sourceOpen[m.id]}
+                            onClick={() => setSourceOpen((prev) => ({ ...prev, [m.id]: !prev[m.id] }))}
+                          >
+                            <span>下载源</span>
+                            <span className="model-source-current">{chosenLabel}</span>
+                            <Icon name={sourceOpen[m.id] ? "chev-down" : "chev-right"} small />
+                          </button>
+                          {sourceOpen[m.id] && (
+                            <div className="model-sources-body">
+                              <div className="model-sources-head">
+                                <span>选择下载源</span>
+                                <button type="button" className="model-link" onClick={() => { void testAllSources(m); }}>全部测速</button>
+                              </div>
+                              {m.sources.map((s) => {
+                                const t = sourceTests[s.url];
+                                const active = chosen === s.url;
+                                return (
+                                  <div className={"model-source" + (active ? " is-active" : "")} key={s.url}>
+                                    <label>
+                                      <input type="radio" name={"ms-" + m.id} checked={active} onChange={() => chooseSource(m.id, s.url)} />
+                                      <span className="model-source-label">{s.label}</span>
+                                      <span className="model-source-url" title={s.url}>{shortUrl(s.url)}</span>
+                                    </label>
+                                    <button type="button" className="model-link" disabled={t?.loading} onClick={() => { void testSource(s.url); }}>
+                                      {t?.loading ? "测速中…" : "测速"}
+                                    </button>
+                                    {t && !t.loading && (t.ok
+                                      ? <span className="model-test is-ok">{Math.round(t.latencyMs)} ms · {fmtSpeed(t.speedBps)}</span>
+                                      : <span className="model-test is-bad">{t.error || "失败"}</span>)}
+                                    <button type="button" className="icon-btn model-copy" title="复制下载地址" onClick={() => { void navigator.clipboard.writeText(s.url).catch(() => undefined); }}><Icon name="copy" small /></button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                        <div className="model-actions">
+                          {busy ? (
+                            <button className="btn" onClick={() => { void window.api.modelCancel(m.id); }}>取消下载</button>
+                          ) : m.installed && (m.source === "managed" || m.source === "cache") ? (
+                            <button className="btn" onClick={() => { void removeModel(m.id); }}>删除</button>
+                          ) : m.installed ? (
+                            <span className="model-hint">使用自定义路径，不在应用内管理</span>
+                          ) : (
+                            <button className="btn btn-primary" onClick={() => { void window.api.modelDownload(m.id, chosen || undefined); }}>下载</button>
+                          )}
+                          {pr?.state === "error" && <span className="model-error">下载失败：{pr.error || "未知错误"}</span>}
+                          {pr?.state === "cancelled" && <span className="model-error">已取消</span>}
+                          {!m.installed && m.id === "translate" && (form.translate_mode || "local") !== "local" && (
+                            <span className="model-hint">当前使用在线接口，可以不下载</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </Group>
+                <div className="model-foot">下载完成后会校验文件完整性，校验通过才会启用。</div>
               </>
             )}
 
@@ -336,7 +521,8 @@ export default function SettingsView({
                   <div className="od-fill">
                     <img className="about-word" src="icons/wordmark.svg" alt="Arxiver" />
                     <p>应用 v{info?.version || "—"} · 引擎 {info?.engineVersion || "?"}</p>
-                    <p>{info?.userData || ""}</p>
+                    <p>数据：{info?.userData || ""}</p>
+                    <p>缓存：{info?.profile || ""}</p>
                   </div>
                 </div>
                 <div className="about-update">

@@ -3,7 +3,7 @@ import path from "node:path";
 import { userDataDir } from "./paths";
 import type { LogLevel, SystemLogEntry } from "../shared/types";
 
-// 系统运行日志：内存环形缓冲（供界面显示）+ 追加写入 userData/logs/app.log（便于排查）。
+// 系统运行日志：内存环形缓冲（供界面显示）+ 追加写入 data/logs/app.log（便于排查）。
 const MAX_ENTRIES = 800;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 

@@ -80,7 +80,7 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">electron-app/engine/</code></td>
-      <td>本机翻译引擎（Python）：源码进 git；运行时/模型（llama.cpp、HY-MT gguf、python 运行时）不进 git</td>
+      <td>本机翻译引擎（Python）：源码进 git；运行时（llama.cpp、python）不进 git 但随安装包分发；HY-MT gguf 与版面识别 ONNX 按需下载</td>
     </tr>
     <tr>
       <td><code class="language-plaintext highlighter-rouge">icons/</code>、<code class="language-plaintext highlighter-rouge">site/</code>→<code class="language-plaintext highlighter-rouge">docs/</code></td>
@@ -91,10 +91,11 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
 
 <h2 id="data">数据格式</h2>
 
-<p>数据都在用户目录 <code class="language-plaintext highlighter-rouge">%APPDATA%\Arxiver\</code>：<code class="language-plaintext highlighter-rouge">storage/index.json</code>（文库元数据）、
+<p>数据都在<strong>安装目录下的 <code class="language-plaintext highlighter-rouge">data\</code></strong>（例如 <code class="language-plaintext highlighter-rouge">E:\develop\Arxiver\data\</code>）：<code class="language-plaintext highlighter-rouge">storage/index.json</code>（文库元数据）、
 <code class="language-plaintext highlighter-rouge">storage/&lt;docId&gt;/</code>（<code class="language-plaintext highlighter-rouge">paper.pdf</code>、<code class="language-plaintext highlighter-rouge">&lt;cacheKey&gt;.dual.pdf</code>、<code class="language-plaintext highlighter-rouge">&lt;cacheKey&gt;.mono.pdf</code>、<code class="language-plaintext highlighter-rouge">&lt;cacheKey&gt;.blocks.jsonl</code>、
 <code class="language-plaintext highlighter-rouge">text.json</code>）、<code class="language-plaintext highlighter-rouge">storage/conversations/</code>（Arxiver 会话）、<code class="language-plaintext highlighter-rouge">config.json</code>（设置，含联网搜索的服务商与 API Key）、
-<code class="language-plaintext highlighter-rouge">logs/app.log</code>（运行日志）。详见<a href="../guide.html#storage">文档</a>。</p>
+<code class="language-plaintext highlighter-rouge">models/</code>（按需下载的模型）、<code class="language-plaintext highlighter-rouge">home/.cache/babeldoc/</code>（引擎缓存）、<code class="language-plaintext highlighter-rouge">logs/app.log</code>（运行日志）。
+Chromium 缓存 / LocalStorage / Cookies 仍在 <code class="language-plaintext highlighter-rouge">%APPDATA%\Arxiver\</code>（开发版 <code class="language-plaintext highlighter-rouge">Arxiver-dev</code>）；安装目录不可写时应用数据回退到该目录。详见<a href="../guide.html#storage">文档</a>。</p>
 
 <p><code class="language-plaintext highlighter-rouge">&lt;cacheKey&gt;.blocks.jsonl</code> 每行是一个段落块（<code class="language-plaintext highlighter-rouge">page / index / bbox / src / dst</code>）。片段里出现公式占位符时还带
 <code class="language-plaintext highlighter-rouge">vars</code>：页内编号 → 引擎从 PDF 字形抽出的公式文本（<code class="language-plaintext highlighter-rouge">{vN}</code> 与 `` 都认）；数学字体没有 Unicode 映射、抽不出内容时该键缺省，界面退回显示占位符。</p>
@@ -192,7 +193,7 @@ Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走�
 
 <ul>
   <li><strong>PDF.js</strong>（Mozilla，Apache-2.0）：PDF 渲染与文本层。</li>
-  <li><strong>HY-MT</strong>（腾讯混元，Apache-2.0）：随应用分发的本地翻译模型。</li>
+  <li><strong>HY-MT</strong>（腾讯混元，Apache-2.0）：本地翻译模型，在应用内按需下载。</li>
   <li><strong>llama.cpp</strong>（MIT）：本地翻译推理运行时。</li>
   <li><strong>ONNX Runtime</strong>（MIT，含 DirectML 执行后端）：版面识别。</li>
   <li><strong>BabelDOC / PyMuPDF</strong>（AGPL-3.0）：随引擎分发的翻译引擎与文本抽取。</li>
