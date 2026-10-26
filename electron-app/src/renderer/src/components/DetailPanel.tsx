@@ -1363,9 +1363,21 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
       <div className={"ai-scroll" + (anchors.length >= 2 ? " has-qnav" : "")} ref={scrollRef} onScroll={onScroll} onMouseUp={onAnswerMouseUp}>
         {turns.length === 0 ? (
           <div className="ai-intro">
-            <div className="ai-mark"><Icon name="arxiver" /></div>
-            <h3>向 Arxiver 提问</h3>
-            <p>会自动判断该读《{doc.title}》还是检索整库，需要时跨文献查找或反问你；回答带可点击引用。涉及修改（如标签、元数据）会先请你批准。</p>
+            <div className="ai-intro-head">
+              <h3>向 Arxiver 提问</h3>
+              <span className="ai-hint">
+                <button type="button" className="ai-hint-btn" aria-label="Arxiver 会怎么回答" aria-describedby="arxiver-hint">
+                  <Icon name="info" small />
+                </button>
+              </span>
+              <span className="ai-hint-pop" id="arxiver-hint" role="tooltip">
+                自动判断是读当前文档还是检索整库，需要时跨文献查找或反问你；回答带可点击引用。涉及修改（如标签、元数据）会先请你批准。
+              </span>
+            </div>
+            <div className="ai-intro-doc" title={doc.title}>
+              <Icon name="book" small />
+              <span className="od-truncate">{doc.title}</span>
+            </div>
             {!aiReady ? (
               <div className="ai-setup-note">
                 <Icon name="settings" small />

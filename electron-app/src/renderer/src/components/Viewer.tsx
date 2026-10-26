@@ -966,7 +966,7 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
               </span>
               <span className="ink-sep" />
               <button type="button" className="icon-btn ink-bar-btn" title="撤销最后一笔" onClick={() => engineRef.current?.undoInk()}><Icon name="undo" small /></button>
-              <button type="button" className="icon-btn ink-bar-btn" title="清除本页画笔" onClick={() => engineRef.current?.clearInk(s?.displayPage)}><Icon name="trash" small /></button>
+              <button type="button" className="icon-btn ink-bar-btn" title="清除本页画笔" onClick={() => engineRef.current?.clearInk()}><Icon name="trash" small /></button>
               <button type="button" className="icon-btn ink-bar-btn" title="退出画笔" onClick={closeInk}><Icon name="x" small /></button>
             </div>
           )}

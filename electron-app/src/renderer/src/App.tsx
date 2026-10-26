@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type JSX } from "react";
+import { useCallback, useEffect, useRef, useState, type JSX, type MouseEvent as ReactMouseEvent } from "react";
 import type { AppConfig, AppInfo, UpdateStatus } from "../../shared/types";
 import { IconDefs, Icon } from "./components/Icons";
 import AppBackground from "./components/AppBackground";
@@ -33,6 +33,16 @@ function updateBadge(u: UpdateStatus | null): { label: string; state: string } |
   return null;
 }
 
+const DETAIL_MIN_W = 300;
+const DETAIL_MAX_W = 720;
+const DETAIL_DEFAULT_W = 372;
+
+// 详情面板最宽也要给列表留出空间；窗口变窄时自动收窄
+function clampDetailW(w: number): number {
+  const max = Math.max(DETAIL_MIN_W, Math.min(DETAIL_MAX_W, window.innerWidth - 640));
+  return Number.isFinite(w) ? Math.round(Math.max(DETAIL_MIN_W, Math.min(max, w))) : DETAIL_DEFAULT_W;
+}
+
 export default function App(): JSX.Element {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -59,6 +69,7 @@ export default function App(): JSX.Element {
   const lastTranslationRef = useRef<Record<string, string>>({});
   const lib = useLibrary();
   const { settings, update: updateSettings } = useSettings();
+  const [detailW, setDetailW] = useState(() => clampDetailW(settings.detailWidth));
   const libRef = useRef(lib);
   libRef.current = lib;
   useEffect(() => {
@@ -128,8 +139,46 @@ export default function App(): JSX.Element {
   const badge = updateBadge(update);
 
   useEffect(() => {
-    document.documentElement.style.setProperty("--detail-w", detailOpen ? "372px" : "0px");
-  }, [detailOpen]);
+    document.documentElement.style.setProperty("--detail-w", detailOpen ? `${detailW}px` : "0px");
+  }, [detailOpen, detailW]);
+
+  // 窗口变窄时把详情面板收回可用范围，避免把列表挤没
+  useEffect(() => {
+    const onResize = (): void => setDetailW((w) => clampDetailW(w));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // 拖拽详情面板左缘：过程中直接改 CSS 变量（不触发整棵 React 重渲染），松手再落盘
+  const startDetailResize = useCallback((e: ReactMouseEvent) => {
+    if (e.button !== 0) { return; }
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = detailW;
+    let width = startW;
+    const onMove = (ev: MouseEvent): void => {
+      width = clampDetailW(startW + startX - ev.clientX);
+      document.documentElement.style.setProperty("--detail-w", `${width}px`);
+    };
+    const onUp = (): void => {
+      document.body.classList.remove("detail-resizing");
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      if (width !== startW) {
+        setDetailW(width);
+        updateSettings({ detailWidth: width });
+      }
+    };
+    document.body.classList.add("detail-resizing");
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [detailW, updateSettings]);
+
+  const resetDetailWidth = useCallback(() => {
+    const w = clampDetailW(DETAIL_DEFAULT_W);
+    setDetailW(w);
+    updateSettings({ detailWidth: w });
+  }, [updateSettings]);
 
   useEffect(() => {
     lib.setTab(settings.defaultTab);
@@ -427,6 +476,17 @@ export default function App(): JSX.Element {
                 fetchMeta={settings.fetchMeta}
                 onOpenDoc={openDocById}
               />
+              {detailOpen && (
+                <span
+                  className="detail-resize"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="调整详情面板宽度"
+                  title="拖动调整宽度，双击恢复默认"
+                  onMouseDown={startDetailResize}
+                  onDoubleClick={resetDetailWidth}
+                />
+              )}
               <DetailPanel
                 lib={lib}
                 onOpen={openDoc}

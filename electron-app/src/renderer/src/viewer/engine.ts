@@ -786,12 +786,36 @@ export class ViewerEngine {
     void this.persistAnnot(a);
   }
 
-  clearInk(page = this.lastInkPage): void {
-    const targets = page ? this.annotations.filter((a) => a.kind === "ink" && a.page === page) : [];
+  clearInk(page = this.visiblePage()): void {
+    const targets = this.annotations.filter((a) => a.kind === "ink" && a.page === page);
     if (!targets.length) { this.toast("本页没有画笔"); return; }
     for (const a of targets) { this.removeAnnotation(a.id, ""); }
     this.toast("已清除本页画笔");
     if (page === this.lastInkPage) { this.lastInkPage = 0; }
+  }
+
+  // 连续滚动 / 双页时，"本页"取视口里露出面积最大的页：
+  // displayPage 是按视口顶边算的，上一页底部还留在视口里时会取到上一页，清空会打错页。
+  private visiblePage(): number {
+    const vp = this.root.getBoundingClientRect();
+    const visible = new Map<number, number>();
+    this.root.querySelectorAll<HTMLElement>(".page-wrap[data-page]").forEach((el) => {
+      const page = Number(el.dataset.page);
+      if (!page) { return; }
+      const r = el.getBoundingClientRect();
+      const h = Math.min(r.bottom, vp.bottom) - Math.max(r.top, vp.top);
+      if (h > 0) { visible.set(page, (visible.get(page) || 0) + h); }
+    });
+    let best = 0;
+    let bestH = 0;
+    for (const [page, h] of visible) {
+      // 双页并列时高度相同：优先刚画过的那一页
+      if (h > bestH + 1 || (Math.abs(h - bestH) <= 1 && page === this.lastInkPage)) {
+        best = page;
+        bestH = h;
+      }
+    }
+    return best || this.lastInkPage || this.status.displayPage;
   }
 
   private inkBounds(strokes: PdfInkStroke[]): PdfAnnotRect {

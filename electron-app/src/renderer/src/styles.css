@@ -542,13 +542,29 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 }
 .ai-head .ai-badge { color: var(--accent); }
 .ai-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px 14px 12px; min-height: 0; -webkit-user-select: text; user-select: text; }
-.ai-intro { text-align: center; padding: 26px 8px 8px; }
-.ai-intro .ai-mark {
-  width: 54px; height: 54px; margin: 0 auto 14px; border-radius: var(--radius-lg);
-  background: var(--surface); display: grid; place-items: center; color: var(--text-2);
+.ai-intro { text-align: center; padding: 22px 8px 8px; }
+.ai-intro-head { position: relative; display: flex; align-items: center; justify-content: center; gap: 4px; margin-bottom: 6px; }
+/* 左侧占位与信息按钮等宽，保证标题本身仍然居中 */
+.ai-intro-head::before { content: ""; width: 20px; flex: none; }
+.ai-intro h3 { margin: 0; font-size: 15.5px; font-weight: 600; }
+.ai-hint { display: inline-flex; }
+.ai-hint-btn { display: inline-flex; padding: 2px; border-radius: var(--radius-sm); color: var(--faint); }
+.ai-hint-btn:hover, .ai-hint-btn:focus-visible { color: var(--text-2); }
+.ai-hint-pop {
+  position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  width: 232px; padding: 9px 11px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border-strong); box-shadow: var(--shadow);
+  color: var(--muted); font-size: 11.5px; line-height: 1.65; text-align: left;
+  opacity: 0; visibility: hidden; transition: opacity var(--dur) var(--ease), visibility var(--dur) var(--ease);
+  z-index: 20; pointer-events: none;
 }
-.ai-intro h3 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
-.ai-intro p { margin: 0 auto; max-width: 30ch; font-size: 13px; color: var(--muted); }
+.ai-intro-head:has(.ai-hint:hover) .ai-hint-pop,
+.ai-intro-head:has(.ai-hint-btn:focus-visible) .ai-hint-pop { opacity: 1; visibility: visible; }
+.ai-intro-doc {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  max-width: 100%; font-size: 11.5px; color: var(--faint);
+}
+.ai-intro-doc .icon { width: 12px; height: 12px; flex: none; }
 .ai-suggest { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; }
 .ai-suggest button {
   text-align: left; padding: 11px 12px; border-radius: var(--radius);
@@ -1619,6 +1635,17 @@ body.maximized .window { border-radius: 12px; }
 .main-body { flex: 1; position: relative; display: flex; min-height: 0; min-width: 0; }
 .main-body > .list-pane { flex: 1; min-width: 0; }
 .main-body > .detail { width: var(--detail-w, 372px); flex: none; }
+/* 详情面板左缘的拖拽手柄：不占布局宽度，压在分隔线上 */
+.detail-resize {
+  position: absolute; top: 0; bottom: 0; right: calc(var(--detail-w, 372px) - 4px); width: 8px;
+  z-index: 12; cursor: col-resize; touch-action: none;
+}
+.detail-resize::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
+  background: transparent; transition: background var(--dur) var(--ease);
+}
+.detail-resize:hover::after, body.detail-resizing .detail-resize::after { background: var(--accent); }
+body.detail-resizing { cursor: col-resize; -webkit-user-select: none; user-select: none; }
 .window .app .main-body .reader-overlay { position: absolute; inset: 0; }
 .window .app .main-body .history { position: absolute; inset: 0; }
 

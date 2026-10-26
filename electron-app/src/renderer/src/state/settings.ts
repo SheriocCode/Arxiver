@@ -27,6 +27,8 @@ export interface AppSettings {
   backgroundFile: string;
   backgroundOpacity: number;
   pageTheme: PageTheme;
+  /** 详情面板宽度（拖拽侧边栏左缘调整） */
+  detailWidth: number;
   /** 每个模型选中的下载源 URL（持久化在 data/ui-settings.json） */
   modelSources: Record<string, string>;
 }
@@ -47,6 +49,7 @@ const DEFAULTS: AppSettings = {
   backgroundFile: "",
   backgroundOpacity: 0.9,
   pageTheme: "original",
+  detailWidth: 372,
   modelSources: {}
 };
 
