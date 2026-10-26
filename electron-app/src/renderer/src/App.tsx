@@ -407,23 +407,22 @@ export default function App(): JSX.Element {
           update={badge}
           onUpdate={() => openSettings("about")}
         />
-        <div className={"app" + (detailOpen ? " detail-open" : "") + (sidebarCollapsed ? " sidebar-collapsed" : "")}>
+        <div className={"app" + (detailOpen ? " detail-open" : "") + (sidebarCollapsed ? " sidebar-collapsed" : "") + (overlayView ? " logs-open" : "")}>
           <Rail section={lib.section} onChange={navigate} onSettings={() => setSettingsOpen(true)} />
           <Sidebar
             lib={lib}
             onOpenDoc={openDocById}
             onNavigate={() => setActiveTab("library")}
             showCounts={settings.showCounts}
-            logCat={logCat}
-            setLogCat={setLogCat}
-            logStatus={logStatus}
-            setLogStatus={setLogStatus}
           />
 
           <div className="main-area">
             <div className="tabbar">
-              <button className={"tb-tab tb-tab-lib" + (activeTab === "library" ? " active" : "")} onClick={() => setActiveTab("library")}>
-                <Icon name="book" small /> 文库
+              <button
+                className={"tb-tab tb-tab-lib" + (overlayView || activeTab === "library" ? " active" : "")}
+                onClick={() => { if (!overlayView) { setActiveTab("library"); } }}
+              >
+                <Icon name={overlayView ? "log" : "book"} small /> {overlayView ? "日志" : "文库"}
               </button>
               <div className="tb-strip" ref={stripRef}>
                 {docs.map((d) => (
@@ -451,7 +450,7 @@ export default function App(): JSX.Element {
                 )}
               </div>
               <div className="tb-tabs-right">
-                {detailOpen && lib.selected &&
+                {!overlayView && detailOpen && lib.selected &&
                   ([["info", "file", "信息"], ["notes", "note", "笔记"], ["tags", "tag", "标签"], ["ai", "arxiver", "Arxiver"]] as const)
                     .filter(([id]) => id !== "ai" || settings.aiEnabled)
                     .map(([id, ic, label]) => (
@@ -459,13 +458,15 @@ export default function App(): JSX.Element {
                         <Icon name={ic} small /> {label}
                       </button>
                     ))}
-                <button
-                  className="tb-viewtab tb-detail-toggle"
-                  title={detailOpen ? "收起详情面板" : "展开详情面板"}
-                  onClick={() => setDetailOpen((o) => !o)}
-                >
-                  <Icon name={detailOpen ? "chev-right" : "chev-left"} small />
-                </button>
+                {!overlayView && (
+                  <button
+                    className="tb-viewtab tb-detail-toggle"
+                    title={detailOpen ? "收起详情面板" : "展开详情面板"}
+                    onClick={() => setDetailOpen((o) => !o)}
+                  >
+                    <Icon name={detailOpen ? "chev-right" : "chev-left"} small />
+                  </button>
+                )}
               </div>
             </div>
             <div className={"main-body" + (overlayView ? " is-overlay-view" : "")}>
@@ -500,7 +501,7 @@ export default function App(): JSX.Element {
                 openDocs={docs.map((d) => ({ id: d.id, name: d.name }))}
                 onOpenSettings={openSettings}
               />
-              {lib.section === "logs" && <LogsView logKey={logCat} logStatus={logStatus} onClose={() => lib.setSection("collections")} />}
+              {lib.section === "logs" && <LogsView logKey={logCat} setLogKey={setLogCat} logStatus={logStatus} setLogStatus={setLogStatus} onClose={() => lib.setSection("collections")} />}
               <div className="reader-overlay" hidden={activeTab !== "doc"}>
                 {docs.map((d) => (
                   <Viewer

@@ -5,30 +5,6 @@ import { PSEUDO } from "../state/useLibrary";
 import { tagColor } from "../state/tagColors";
 import TagPalette from "./TagPalette";
 
-const LOG_CATS = [
-  { id: "tlog", name: "翻译日志", icon: "log" },
-  { id: "ailog", name: "AI对话日志", icon: "message" },
-  { id: "syslog", name: "系统运行日志", icon: "terminal" }
-];
-const LOG_STATUS: Record<string, { id: string; name: string }[]> = {
-  tlog: [
-    { id: "all", name: "全部" },
-    { id: "done", name: "已完成" },
-    { id: "running", name: "进行中" },
-    { id: "failed", name: "失败" }
-  ],
-  ailog: [
-    { id: "all", name: "全部" },
-    { id: "paper", name: "论文对话" },
-    { id: "library", name: "文库对话" }
-  ],
-  syslog: [
-    { id: "all", name: "全部" },
-    { id: "info", name: "信息" },
-    { id: "warn", name: "警告" },
-    { id: "error", name: "错误" }
-  ]
-};
 const READ_BUCKETS = ["今天", "昨天", "本周", "更早"];
 
 function bucketOf(ts: number): string {
@@ -47,20 +23,12 @@ export default function Sidebar({
   lib,
   onOpenDoc,
   onNavigate,
-  showCounts,
-  logCat,
-  setLogCat,
-  logStatus,
-  setLogStatus
+  showCounts
 }: {
   lib: LibraryApi;
   onOpenDoc: (id: string) => void;
   onNavigate: () => void;
   showCounts: boolean;
-  logCat: string;
-  setLogCat: (v: string) => void;
-  logStatus: string;
-  setLogStatus: (v: string) => void;
 }): JSX.Element {
   return (
     <aside className="sidebar" aria-label="文库与分类">
@@ -79,8 +47,6 @@ export default function Sidebar({
       <div className="side-scroll">
         {lib.section === "recent" ? (
           <RecentTree lib={lib} onOpenDoc={onOpenDoc} />
-        ) : lib.section === "logs" ? (
-          <LogTree logCat={logCat} setLogCat={setLogCat} logStatus={logStatus} setLogStatus={setLogStatus} />
         ) : (
           <LibraryTree lib={lib} showCounts={showCounts} onNavigate={onNavigate} />
         )}
@@ -427,41 +393,6 @@ function RecentTree({ lib, onOpenDoc }: { lib: LibraryApi; onOpenDoc: (id: strin
         );
       })}
       {lib.history.length === 0 && <div className="side-empty">暂无阅读记录</div>}
-    </>
-  );
-}
-
-function LogTree({
-  logCat,
-  setLogCat,
-  logStatus,
-  setLogStatus
-}: {
-  logCat: string;
-  setLogCat: (v: string) => void;
-  logStatus: string;
-  setLogStatus: (v: string) => void;
-}): JSX.Element {
-  return (
-    <>
-      <Group name="日志">
-        {LOG_CATS.map((cat) => (
-          <button key={cat.id} className={"side-item" + (logCat === cat.id ? " is-active" : "")} onClick={() => { setLogCat(cat.id); setLogStatus("all"); }}>
-            <span className="side-item-icon"><Icon name={cat.icon} small /></span>
-            <span className="side-item-name">{cat.name}</span>
-          </button>
-        ))}
-      </Group>
-      <Group name="状态">
-        <div className="side-sub">
-          {(LOG_STATUS[logCat] || LOG_STATUS.tlog).map((s) => (
-            <button key={s.id} className={"side-item" + (logStatus === s.id ? " is-active" : "")} onClick={() => setLogStatus(s.id)}>
-              <span className="side-item-icon"><Icon name="file" small /></span>
-              <span className="side-item-name">{s.name}</span>
-            </button>
-          ))}
-        </div>
-      </Group>
     </>
   );
 }

@@ -1,8 +1,27 @@
-import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from "react";
 import type { Conversation, ConversationSummary, SystemLogEntry, TranslationLogEntry } from "../../../shared/types";
 import { Icon } from "./Icons";
 
-const TITLES: Record<string, string> = { tlog: "翻译日志", ailog: "AI对话日志", syslog: "系统运行日志" };
+const LOG_TABS: { id: string; name: string }[] = [
+  { id: "tlog", name: "翻译" },
+  { id: "ailog", name: "AI 对话" },
+  { id: "syslog", name: "系统运行" }
+];
+
+const FILTERS: Record<string, { id: string; name: string }[]> = {
+  tlog: [
+    { id: "all", name: "全部" },
+    { id: "done", name: "已完成" },
+    { id: "running", name: "进行中" },
+    { id: "failed", name: "失败" }
+  ],
+  syslog: [
+    { id: "all", name: "全部" },
+    { id: "info", name: "信息" },
+    { id: "warn", name: "警告" },
+    { id: "error", name: "错误" }
+  ]
+};
 
 function fmtTime(ms?: number | null): string {
   if (!ms) { return "—"; }
@@ -16,6 +35,13 @@ function fmtClock(ms?: number | null): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
+// 今天的只显示时间，更早的带上月/日
+function fmtWhen(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  const time = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  return startOfDay(ms) === startOfDay(Date.now()) ? time : `${d.getMonth() + 1}/${d.getDate()} ${time}`;
+}
 function fmtBytes(n?: number): string {
   if (!n) { return "—"; }
   if (n < 1024) { return n + " B"; }
@@ -23,7 +49,7 @@ function fmtBytes(n?: number): string {
   if (n < 1024 * 1024 * 1024) { return (n / 1024 / 1024).toFixed(1) + " MB"; }
   return (n / 1024 / 1024 / 1024).toFixed(2) + " GB";
 }
-function fmtDuration(ms?: number): string {
+function fmtDuration(ms?: number | null): string {
   if (ms == null) { return "—"; }
   if (ms < 1000) { return ms + " ms"; }
   const s = ms / 1000;
@@ -39,40 +65,184 @@ function prettyArgs(raw?: string): string {
   }
 }
 
-function Head({ title, count, onClose, right }: { title: string; count: number; onClose: () => void; right?: JSX.Element }): JSX.Element {
+// ---- 时间分组 / 近 7 天活动 ----
+
+function startOfDay(ms: number): number {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+function dayLabel(ms: number): string {
+  const today = startOfDay(Date.now());
+  if (ms === today) { return "今天"; }
+  const y = new Date(today);
+  y.setDate(y.getDate() - 1);
+  if (ms === y.getTime()) { return "昨天"; }
+  const d = new Date(ms);
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+function fmtDay(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+function groupByDay<T>(items: T[], at: (x: T) => number): { key: number; label: string; items: T[] }[] {
+  const map = new Map<number, T[]>();
+  for (const x of items) {
+    const k = startOfDay(at(x));
+    const arr = map.get(k);
+    if (arr) { arr.push(x); } else { map.set(k, [x]); }
+  }
+  return [...map.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([key, list]) => ({ key, label: dayLabel(key), items: list.slice().sort((a, b) => at(b) - at(a)) }));
+}
+function daySeries(times: number[]): { key: number; label: string; count: number }[] {
+  const today = startOfDay(Date.now());
+  const keys: number[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    keys.push(d.getTime());
+  }
+  const counts = new Map(keys.map((k) => [k, 0]));
+  for (const t of times) {
+    const k = startOfDay(t);
+    const n = counts.get(k);
+    if (n !== undefined) { counts.set(k, n + 1); }
+  }
+  return keys.map((k) => {
+    const d = new Date(k);
+    return { key: k, label: `${d.getMonth() + 1}/${d.getDate()}`, count: counts.get(k) || 0 };
+  });
+}
+
+interface Stat { label: string; value: string | number; unit?: string; tone?: "bad" | "warn" | "accent" }
+
+function Overview({ stats, times }: { stats: Stat[]; times: number[] }): JSX.Element {
+  const days = useMemo(() => daySeries(times), [times]);
+  const max = Math.max(1, ...days.map((d) => d.count));
+  const weekTotal = days.reduce((a, d) => a + d.count, 0);
+  const today = startOfDay(Date.now());
   return (
-    <div className="hist-head">
-      <div className="hist-heading">
-        <h2>{title}</h2>
-        <span className="hist-badge">{count} 条</span>
+    <div className="lg-overview">
+      <div className="lg-stats">
+        {stats.map((s) => (
+          <div key={s.label} className={"lg-stat" + (s.tone ? " is-" + s.tone : "")}>
+            <span>{s.label}</span>
+            <b>{s.value}{s.unit ? <em>{s.unit}</em> : null}</b>
+          </div>
+        ))}
       </div>
-      <div className="hist-head-right">
-        {right}
-        <button className="icon-btn" title="关闭" onClick={onClose}><Icon name="x" small /></button>
+      <div className="lg-chart">
+        <div className="lg-chart-head"><span>近 7 天活动</span><em>{weekTotal} 条</em></div>
+        <div className="lg-bars">
+          {days.map((d) => (
+            <i
+              key={d.key}
+              className={d.key === today ? "is-today" : ""}
+              style={{ height: `${Math.max(4, Math.round(d.count / max * 100))}%` }}
+              title={`${d.label} · ${d.count} 条`}
+            />
+          ))}
+        </div>
+        <div className="lg-days">{days.map((d) => <span key={d.key}>{d.label}</span>)}</div>
       </div>
     </div>
   );
 }
 
-function Pane({ list, detail }: { list: JSX.Element; detail: JSX.Element }): JSX.Element {
+function Header({ logKey, onKey, onClose, right }: {
+  logKey: string;
+  onKey: (k: string) => void;
+  onClose: () => void;
+  right: JSX.Element;
+}): JSX.Element {
   return (
-    <div className="hist-body">
-      <div className="hist-main">{list}</div>
-      <div className="hist-detail">{detail}</div>
+    <header className="lg-head">
+      <div className="lg-title">
+        <h1>日志</h1>
+        <p>运行记录、翻译任务与助手对话</p>
+      </div>
+      <nav className="lg-tabs" role="tablist" aria-label="日志类型">
+        {LOG_TABS.map((t) => (
+          <button key={t.id} type="button" role="tab" aria-selected={logKey === t.id} onClick={() => onKey(t.id)}>{t.name}</button>
+        ))}
+      </nav>
+      <div className="lg-actions">
+        {right}
+        <button type="button" className="lg-action" onClick={onClose}>关闭</button>
+      </div>
+    </header>
+  );
+}
+
+function ListHead({ filters, status, onStatus, count, unit = "条" }: {
+  filters: { id: string; name: string }[];
+  status: string;
+  onStatus: (id: string) => void;
+  count: number;
+  unit?: string;
+}): JSX.Element {
+  return (
+    <div className="lg-list-head">
+      <nav className="lg-filters" role="group" aria-label="筛选">
+        {filters.map((f) => (
+          <button key={f.id} type="button" aria-pressed={status === f.id} onClick={() => onStatus(f.id)}>{f.name}</button>
+        ))}
+      </nav>
+      <span className="lg-count">{count} {unit}</span>
     </div>
+  );
+}
+
+function Event({ tone, title, meta, time, selected, onClick }: {
+  tone: string;
+  title: string;
+  meta: ReactNode;
+  time: string;
+  selected: boolean;
+  onClick: () => void;
+}): JSX.Element {
+  return (
+    <button type="button" className={"lg-event" + (selected ? " is-selected" : "")} onClick={onClick}>
+      <span className={"lg-node " + tone} />
+      <span className="lg-main">
+        <span className="lg-event-title od-truncate">{title}</span>
+        <span className="lg-event-meta od-truncate">{meta}</span>
+      </span>
+      <span className="lg-event-time">{time}</span>
+    </button>
+  );
+}
+
+function Timeline<T>({ groups, render }: { groups: { key: number; label: string; items: T[] }[]; render: (item: T) => JSX.Element }): JSX.Element {
+  return (
+    <>
+      {groups.map((g) => (
+        <div key={g.key}>
+          <div className="lg-group"><span>{g.label}</span><span>{fmtDay(g.key)}</span></div>
+          <div className="lg-timeline">{g.items.map(render)}</div>
+        </div>
+      ))}
+    </>
   );
 }
 
 /* ---------------------------------- 翻译日志 ---------------------------------- */
 
-const T_STATUS: Record<string, { label: string; slug: string }> = {
-  done: { label: "已完成", slug: "task" },
-  running: { label: "进行中", slug: "tool" },
-  queued: { label: "排队中", slug: "tool" },
-  failed: { label: "失败", slug: "sys" }
+const T_STATUS: Record<string, { label: string; tone: string }> = {
+  done: { label: "已完成", tone: "is-ok" },
+  running: { label: "进行中", tone: "is-run" },
+  queued: { label: "排队中", tone: "is-wait" },
+  failed: { label: "失败", tone: "is-bad" }
 };
 
-function TranslationLog({ logStatus, onClose, active }: { logStatus: string; onClose: () => void; active: boolean }): JSX.Element {
+function TranslationLog({ logStatus, setLogStatus, setLogKey, onClose, active }: {
+  logStatus: string;
+  setLogStatus: (v: string) => void;
+  setLogKey: (k: string) => void;
+  onClose: () => void;
+  active: boolean;
+}): JSX.Element {
   const [entries, setEntries] = useState<TranslationLogEntry[]>([]);
   const [selId, setSelId] = useState("");
 
@@ -84,88 +254,124 @@ function TranslationLog({ logStatus, onClose, active }: { logStatus: string; onC
   }, []);
   useEffect(load, [load]);
 
-  const filtered = useMemo(() => entries.filter((e) => {
-    if (logStatus === "all") { return true; }
-    if (logStatus === "running") { return e.status === "running" || e.status === "queued"; }
-    return e.status === logStatus;
-  }), [entries, logStatus]);
+  const filtered = useMemo(() => entries
+    .filter((e) => {
+      if (logStatus === "all") { return true; }
+      if (logStatus === "running") { return e.status === "running" || e.status === "queued"; }
+      return e.status === logStatus;
+    })
+    .sort((a, b) => b.created_at - a.created_at), [entries, logStatus]);
 
   const sel = filtered.find((x) => x.id === selId) || filtered[0];
+  const selStatus = sel ? (T_STATUS[sel.status] || T_STATUS.done) : T_STATUS.done;
+  const grouped = useMemo(() => groupByDay(filtered, (e) => e.created_at), [filtered]);
+
+  const stats = useMemo<Stat[]>(() => {
+    const running = entries.filter((e) => e.status === "running" || e.status === "queued").length;
+    const failed = entries.filter((e) => e.status === "failed").length;
+    const done = entries.filter((e) => e.status === "done" && e.finished_at && e.created_at);
+    const avg = done.length ? done.reduce((a, e) => a + ((e.finished_at || 0) - e.created_at), 0) / done.length : null;
+    return [
+      { label: "总任务", value: entries.length, unit: "个" },
+      { label: "进行中", value: running, tone: running ? "accent" : undefined },
+      { label: "失败", value: failed, tone: failed ? "bad" : undefined },
+      { label: "平均耗时", value: avg != null ? fmtDuration(avg) : "—" }
+    ];
+  }, [entries]);
+  const times = useMemo(() => entries.map((e) => e.created_at), [entries]);
 
   return (
     <section className="history" aria-label="日志" hidden={!active}>
-      <Head
-        title={TITLES.tlog}
-        count={filtered.length}
-        onClose={onClose}
-        right={<button className="btn btn-ghost" onClick={load}><Icon name="history" small /> 刷新</button>}
-      />
-      {!sel ? (
-        <div className="hist-empty">暂无记录</div>
-      ) : (
-        <Pane
-          list={
-            <div className="hist-log">
-              {filtered.map((e) => {
-                const st = T_STATUS[e.status] || T_STATUS.done;
-                return (
-                  <button key={e.id} className={"hist-step" + (e.id === sel.id ? " is-selected" : "")} onClick={() => setSelId(e.id)}>
-                    <span className={"hist-step-dot kind-" + st.slug} />
-                    <span className={"hist-step-kind kind-" + st.slug}>{st.label}</span>
-                    <span className="hist-step-main">
-                      <span className="hist-step-name">{e.name}</span>
-                      <span className="hist-step-note">{[e.targetLang, e.service, e.pages && e.pages + " 页"].filter(Boolean).join(" · ")}</span>
-                    </span>
-                    <span className="hist-step-time">{fmtClock(e.created_at)}</span>
-                  </button>
-                );
-              })}
-            </div>
-          }
-          detail={
-            <>
-              <div className="hist-detail-head">
-                <span className={"hist-step-kind kind-" + (T_STATUS[sel.status] || T_STATUS.done).slug}>{(T_STATUS[sel.status] || T_STATUS.done).label}</span>
-                <span className="hist-detail-title">{sel.name}</span>
-              </div>
-              <div className="hist-detail-body">
-                <dl className="hist-meta">
-                  <dt>文件</dt><dd>{sel.name}</dd>
-                  <dt>源文件</dt><dd>{sel.sourceName || "—"}</dd>
-                  <dt>目标语言</dt><dd>{sel.targetLang || "—"}</dd>
-                  <dt>服务</dt><dd>{sel.service || "—"}</dd>
-                  <dt>输出</dt><dd>{sel.variant || "—"}</dd>
-                  <dt>页数</dt><dd>{sel.pages || (sel.totalPages ? `${sel.donePages}/${sel.totalPages}` : "—")}</dd>
-                  <dt>大小</dt><dd>{fmtBytes(sel.size)}</dd>
-                  <dt>开始</dt><dd>{fmtTime(sel.created_at)}</dd>
-                  <dt>完成</dt><dd>{sel.finished_at ? fmtTime(sel.finished_at) : "—"}</dd>
-                  {sel.status === "running" && <><dt>进度</dt><dd>{sel.progress != null ? Math.round(sel.progress * 100) + "%" : `${sel.donePages}/${sel.totalPages}`}</dd></>}
-                  {sel.message && <><dt>信息</dt><dd>{sel.message}</dd></>}
-                  {sel.sourceUrl && <><dt>来源</dt><dd className="hist-wrap">{sel.sourceUrl}</dd></>}
-                </dl>
-                {sel.docId && (
-                  <div className="hist-actions">
-                    <button className="btn btn-ghost" onClick={() => { void window.api.libraryReveal(sel.docId); }}><Icon name="external" small /> 在资源管理器中显示</button>
-                  </div>
-                )}
-              </div>
-            </>
-          }
+      <div className="lg-page">
+        <Header
+          logKey="tlog"
+          onKey={setLogKey}
+          onClose={onClose}
+          right={<button type="button" className="lg-action" onClick={load}>刷新</button>}
         />
-      )}
+        <Overview stats={stats} times={times} />
+        <div className="lg-body">
+          <section className="lg-list">
+            <ListHead filters={FILTERS.tlog} status={logStatus} onStatus={setLogStatus} count={filtered.length} />
+            <div className="lg-scroll">
+              {filtered.length === 0 ? <div className="lg-empty">没有匹配的翻译记录</div> : (
+                <Timeline
+                  groups={grouped}
+                  render={(e) => {
+                    const st = T_STATUS[e.status] || T_STATUS.done;
+                    const meta = [e.targetLang, e.service, e.pages && `${e.pages} 页`].filter(Boolean).join(" · ");
+                    return (
+                      <Event
+                        key={e.id}
+                        tone={st.tone}
+                        title={e.name}
+                        meta={<><span className={"lg-state " + st.tone}>{st.label}</span>{meta ? ` · ${meta}` : ""}</>}
+                        time={fmtClock(e.created_at)}
+                        selected={e.id === sel?.id}
+                        onClick={() => setSelId(e.id)}
+                      />
+                    );
+                  }}
+                />
+              )}
+            </div>
+          </section>
+          <aside className="lg-detail">
+            {!sel ? <div className="lg-empty">选择左侧一条记录</div> : (
+              <>
+                <div className="lg-detail-head">
+                  <h2>{sel.name}</h2>
+                  <p>
+                    <span className={"lg-state " + selStatus.tone}>{selStatus.label}</span>
+                    <span className="lg-dotsep"> · </span>
+                    {fmtTime(sel.created_at)}
+                  </p>
+                </div>
+                <div className="lg-detail-body">
+                  <dl className="lg-meta">
+                    <dt>源文件</dt><dd>{sel.sourceName || "—"}</dd>
+                    <dt>目标语言</dt><dd>{sel.targetLang || "—"}</dd>
+                    <dt>服务</dt><dd>{sel.service || "—"}</dd>
+                    <dt>输出</dt><dd>{sel.variant || "—"}</dd>
+                    <dt>页数</dt><dd>{sel.pages || (sel.totalPages ? `${sel.donePages}/${sel.totalPages}` : "—")}</dd>
+                    <dt>大小</dt><dd>{fmtBytes(sel.size)}</dd>
+                    <dt>开始</dt><dd>{fmtTime(sel.created_at)}</dd>
+                    <dt>完成</dt><dd>{sel.finished_at ? fmtTime(sel.finished_at) : "—"}</dd>
+                    {sel.created_at && sel.finished_at ? <><dt>耗时</dt><dd>{fmtDuration(sel.finished_at - sel.created_at)}</dd></> : null}
+                    {sel.status === "running" && <><dt>进度</dt><dd>{sel.progress != null ? Math.round(sel.progress * 100) + "%" : `${sel.donePages}/${sel.totalPages}`}</dd></>}
+                  </dl>
+                  {sel.message && <div className="lg-note">{sel.message}</div>}
+                  {sel.sourceUrl && <div className="lg-url">{sel.sourceUrl}</div>}
+                  {sel.docId && (
+                    <div className="lg-actions-row">
+                      <button type="button" className="lg-link" onClick={() => { void window.api.libraryReveal(sel.docId); }}>在文件夹中显示</button>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </aside>
+        </div>
+      </div>
     </section>
   );
 }
 
 /* -------------------------------- 系统运行日志 -------------------------------- */
 
-const LEVELS: Record<string, { label: string; slug: string }> = {
-  info: { label: "信息", slug: "tool" },
-  warn: { label: "警告", slug: "task" },
-  error: { label: "错误", slug: "sys" }
+const LEVELS: Record<string, { label: string; tone: string }> = {
+  info: { label: "信息", tone: "is-ok" },
+  warn: { label: "警告", tone: "is-warn" },
+  error: { label: "错误", tone: "is-bad" }
 };
 
-function SystemLog({ logStatus, onClose, active }: { logStatus: string; onClose: () => void; active: boolean }): JSX.Element {
+function SystemLog({ logStatus, setLogStatus, setLogKey, onClose, active }: {
+  logStatus: string;
+  setLogStatus: (v: string) => void;
+  setLogKey: (k: string) => void;
+  onClose: () => void;
+  active: boolean;
+}): JSX.Element {
   const [entries, setEntries] = useState<SystemLogEntry[]>([]);
   const [file, setFile] = useState("");
   const [selIdx, setSelIdx] = useState(0);
@@ -175,59 +381,87 @@ function SystemLog({ logStatus, onClose, active }: { logStatus: string; onClose:
   }, []);
   useEffect(load, [load]);
 
-  const filtered = useMemo(() => (logStatus === "all" ? entries : entries.filter((e) => e.level === logStatus)), [entries, logStatus]);
+  const filtered = useMemo(() => entries
+    .filter((e) => logStatus === "all" || e.level === logStatus)
+    .sort((a, b) => b.at - a.at), [entries, logStatus]);
+  useEffect(() => { setSelIdx(0); }, [logStatus]);
+
   const sel = filtered[Math.min(selIdx, Math.max(0, filtered.length - 1))];
+  const selLevel = sel ? (LEVELS[sel.level] || LEVELS.info) : LEVELS.info;
+  const indexed = useMemo(() => filtered.map((e, i) => ({ e, i })), [filtered]);
+  const grouped = useMemo(() => groupByDay(indexed, (x) => x.e.at), [indexed]);
+
+  const stats = useMemo<Stat[]>(() => {
+    const errors = entries.filter((e) => e.level === "error").length;
+    const warns = entries.filter((e) => e.level === "warn").length;
+    return [
+      { label: "记录", value: entries.length, unit: "条" },
+      { label: "错误", value: errors, tone: errors ? "bad" : undefined },
+      { label: "警告", value: warns, tone: warns ? "warn" : undefined },
+      { label: "活跃模块", value: new Set(entries.map((e) => e.scope)).size, unit: "个", tone: "accent" }
+    ];
+  }, [entries]);
+  const times = useMemo(() => entries.map((e) => e.at), [entries]);
 
   return (
     <section className="history" aria-label="日志" hidden={!active}>
-      <Head
-        title={TITLES.syslog}
-        count={filtered.length}
-        onClose={onClose}
-        right={
-          <>
-            <button className="btn btn-ghost" onClick={() => { if (file) { void window.api.openPath(file); } }}><Icon name="file" small /> 日志文件</button>
-            <button className="btn btn-ghost" onClick={load}><Icon name="history" small /> 刷新</button>
-          </>
-        }
-      />
-      {!sel ? (
-        <div className="hist-empty">暂无记录</div>
-      ) : (
-        <Pane
-          list={
-            <div className="hist-log">
-              {filtered.map((e, i) => (
-                <button key={`${e.at}-${i}`} className={"hist-step" + (i === selIdx ? " is-selected" : "")} onClick={() => setSelIdx(i)}>
-                  <span className={"hist-step-dot kind-" + (LEVELS[e.level] || LEVELS.info).slug} />
-                  <span className={"hist-step-kind kind-" + (LEVELS[e.level] || LEVELS.info).slug}>{(LEVELS[e.level] || LEVELS.info).label}</span>
-                  <span className="hist-step-main">
-                    <span className="hist-step-name">{e.scope}</span>
-                    <span className="hist-step-text od-truncate">{e.message}</span>
-                  </span>
-                  <span className="hist-step-time">{fmtClock(e.at)}</span>
-                </button>
-              ))}
-            </div>
-          }
-          detail={
+      <div className="lg-page">
+        <Header
+          logKey="syslog"
+          onKey={setLogKey}
+          onClose={onClose}
+          right={
             <>
-              <div className="hist-detail-head">
-                <span className={"hist-step-kind kind-" + (LEVELS[sel.level] || LEVELS.info).slug}>{(LEVELS[sel.level] || LEVELS.info).label}</span>
-                <span className="hist-detail-title">{sel.scope}</span>
-              </div>
-              <div className="hist-detail-body">
-                <dl className="hist-meta">
-                  <dt>时间</dt><dd>{fmtTime(sel.at)}</dd>
-                  <dt>级别</dt><dd>{(LEVELS[sel.level] || LEVELS.info).label}</dd>
-                  <dt>模块</dt><dd>{sel.scope}</dd>
-                </dl>
-                <div className="hist-code hist-wrap">{sel.message}</div>
-              </div>
+              <button type="button" className="lg-action" onClick={() => { if (file) { void window.api.openPath(file); } }}>打开日志文件</button>
+              <button type="button" className="lg-action" onClick={load}>刷新</button>
             </>
           }
         />
-      )}
+        <Overview stats={stats} times={times} />
+        <div className="lg-body">
+          <section className="lg-list">
+            <ListHead filters={FILTERS.syslog} status={logStatus} onStatus={setLogStatus} count={filtered.length} />
+            <div className="lg-scroll">
+              {filtered.length === 0 ? <div className="lg-empty">没有匹配的运行记录</div> : (
+                <Timeline
+                  groups={grouped}
+                  render={({ e, i }) => {
+                    const lv = LEVELS[e.level] || LEVELS.info;
+                    return (
+                      <Event
+                        key={`${e.at}-${i}`}
+                        tone={lv.tone}
+                        title={e.message}
+                        meta={<>{e.scope} · <span className={"lg-state " + lv.tone}>{lv.label}</span></>}
+                        time={fmtClock(e.at)}
+                        selected={i === selIdx}
+                        onClick={() => setSelIdx(i)}
+                      />
+                    );
+                  }}
+                />
+              )}
+            </div>
+          </section>
+          <aside className="lg-detail">
+            {!sel ? <div className="lg-empty">选择左侧一条记录</div> : (
+              <>
+                <div className="lg-detail-head">
+                  <h2>{sel.scope}</h2>
+                  <p>
+                    <span className={"lg-state " + selLevel.tone}>{selLevel.label}</span>
+                    <span className="lg-dotsep"> · </span>
+                    {fmtTime(sel.at)}
+                  </p>
+                </div>
+                <div className="lg-detail-body">
+                  <pre className="lg-code">{sel.message}</pre>
+                </div>
+              </>
+            )}
+          </aside>
+        </div>
+      </div>
     </section>
   );
 }
@@ -236,13 +470,6 @@ function SystemLog({ logStatus, onClose, active }: { logStatus: string; onClose:
 
 type Kind = "user" | "tool" | "assistant";
 interface Step { kind: Kind; name?: string; text?: string; args?: string; result?: string; at?: number; ms?: number; usage?: string }
-
-const KIND_META: Record<Kind, { label: string; slug: string }> = {
-  user: { label: "用户", slug: "user" },
-  tool: { label: "工具", slug: "tool" },
-  assistant: { label: "助手", slug: "assistant" }
-};
-const AI_TABS = ["概述", "参数", "结果", "计时"] as const;
 
 function toSteps(conv: Conversation): Step[] {
   const out: Step[] = [];
@@ -264,124 +491,138 @@ function toSteps(conv: Conversation): Step[] {
   return out;
 }
 
-function AiLog({ logStatus, onClose, active }: { logStatus: string; onClose: () => void; active: boolean }): JSX.Element {
+function AiLog({ setLogKey, onClose, active }: {
+  setLogKey: (k: string) => void;
+  onClose: () => void;
+  active: boolean;
+}): JSX.Element {
   const [convs, setConvs] = useState<ConversationSummary[]>([]);
   const [conv, setConv] = useState<Conversation | null>(null);
-  const [selConvId, setSelConvId] = useState(""); // 当前选中的对话（原来只重置步骤下标，导致点哪都还是第一条）
-  const [selIdx, setSelIdx] = useState(0);
-  const [tab, setTab] = useState<(typeof AI_TABS)[number]>("概述");
+  const [selConvId, setSelConvId] = useState("");
+  const traceRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback((): void => {
     void Promise.all([
       window.api.agentConversations({ scope: "library" }),
       window.api.agentConversations({ scope: "paper" })
     ]).then(([a, b]) => {
+      // 旧版按论文开的对话仍保留在记录里，新对话统一是文库范围
       const list = [...a, ...b].sort((x, y) => y.updated_at - x.updated_at);
       setConvs(list);
     });
   }, []);
   useEffect(load, [load]);
 
-  const filtered = useMemo(() => (logStatus === "all" ? convs : convs.filter((c) => c.scope === logStatus)), [convs, logStatus]);
-  const cur = filtered.find((c) => c.id === selConvId) || filtered[0];
+  const cur = convs.find((c) => c.id === selConvId) || convs[0];
 
   useEffect(() => {
     if (!cur) { setConv(null); return; }
     let cancelled = false;
-    void window.api.agentConversation(cur.id).then((c) => { if (!cancelled) { setConv(c); setSelIdx(0); setTab("概述"); } });
+    void window.api.agentConversation(cur.id).then((c) => { if (!cancelled) { setConv(c); } });
     return () => { cancelled = true; };
   }, [cur?.id]);
 
+  useEffect(() => { traceRef.current?.scrollTo({ top: 0 }); }, [cur?.id]);
+
   const steps = useMemo(() => (conv ? toSteps(conv) : []), [conv]);
-  const sel = steps[Math.min(selIdx, Math.max(0, steps.length - 1))];
+  const stats = useMemo<Stat[]>(() => {
+    const rounds = convs.reduce((a, c) => a + c.count, 0);
+    const docs = new Set<string>();
+    for (const c of convs) { for (const id of c.docIds || []) { docs.add(id); } }
+    const today = startOfDay(Date.now());
+    return [
+      { label: "对话", value: convs.length, unit: "个" },
+      { label: "轮次", value: rounds, unit: "轮" },
+      { label: "覆盖文献", value: docs.size, unit: "篇", tone: "accent" },
+      { label: "今日活跃", value: convs.filter((c) => startOfDay(c.updated_at * 1000) === today).length }
+    ];
+  }, [convs]);
+  const times = useMemo(() => convs.map((c) => c.updated_at * 1000), [convs]);
 
   return (
     <section className="history" aria-label="日志" hidden={!active}>
-      <Head
-        title={TITLES.ailog}
-        count={filtered.length}
-        onClose={onClose}
-        right={<button className="btn btn-ghost" onClick={load}><Icon name="history" small /> 刷新</button>}
-      />
-      {!cur ? (
-        <div className="hist-empty">暂无对话记录</div>
-      ) : (
-        <div className="hist-body hist-ai">
-          <div className="hist-convs">
-            {filtered.map((c) => (
-              <button key={c.id} className={"hist-conv" + (c.id === cur.id ? " is-selected" : "")} onClick={() => { setSelConvId(c.id); setSelIdx(0); setTab("概述"); }}>
-                <span className="hist-conv-title od-truncate">{c.title || "新对话"}</span>
-                <span className="hist-conv-meta">{c.scope === "paper" ? "论文" : "文库"} · {c.count} 轮 · {fmtClock(c.updated_at * 1000)}</span>
-              </button>
-            ))}
-          </div>
-          <div className="hist-main">
-            <div className="hist-log">
-              {steps.map((s, i) => (
-                <button key={i} className={"hist-step" + (i === selIdx ? " is-selected" : "")} onClick={() => { setSelIdx(i); setTab("概述"); }}>
-                  <span className={"hist-step-dot kind-" + KIND_META[s.kind].slug} />
-                  <span className={"hist-step-kind kind-" + KIND_META[s.kind].slug}>{KIND_META[s.kind].label}</span>
-                  <span className="hist-step-main">
-                    {s.kind === "tool"
-                      ? (
-                        <>
-                          <span className="hist-step-name">{s.name}</span>
-                          <span className="hist-step-args od-truncate">{s.args || ""}</span>
-                        </>
-                      )
-                      : <span className="hist-step-text od-truncate">{s.text}</span>}
-                  </span>
-                  <span className="hist-step-time">{s.kind === "tool" ? fmtDuration(s.ms) : ""}</span>
+      <div className="lg-page">
+        <Header
+          logKey="ailog"
+          onKey={setLogKey}
+          onClose={onClose}
+          right={<button type="button" className="lg-action" onClick={load}>刷新</button>}
+        />
+        <Overview stats={stats} times={times} />
+        <div className="lg-body lg-body-ai">
+          <section className="lg-list">
+            <div className="lg-list-head">
+              <span className="lg-list-title">全部对话</span>
+              <span className="lg-count">{convs.length} 个</span>
+            </div>
+            <div className="lg-convs">
+              {convs.length === 0 ? <div className="lg-empty">暂无对话记录</div> : convs.map((c) => (
+                <button key={c.id} type="button" className={"lg-conv" + (c.id === cur?.id ? " is-selected" : "")} onClick={() => setSelConvId(c.id)}>
+                  <span className="lg-conv-title od-truncate">{c.title || "新对话"}</span>
+                  <span className="lg-conv-meta">{c.count} 轮 · {fmtWhen(c.updated_at * 1000)}</span>
                 </button>
               ))}
             </div>
-          </div>
-          <div className="hist-detail">
-            {!sel ? <div className="hist-empty">这条对话没有记录步骤</div> : (
+          </section>
+          <section className="lg-detail">
+            {!cur ? <div className="lg-empty">选择左侧一条对话</div> : (
               <>
-                <div className="hist-detail-head">
-                  <span className={"hist-step-kind kind-" + KIND_META[sel.kind].slug}>{KIND_META[sel.kind].label}</span>
-                  <span className="hist-detail-title">第 {selIdx + 1} 步 / 共 {steps.length} 步</span>
+                <div className="lg-trace-head">
+                  <h2>{cur.title || "新对话"}</h2>
+                  <p>{cur.count} 轮 · 更新于 {fmtTime(cur.updated_at * 1000)}</p>
                 </div>
-                <div className="hist-detail-tabs" role="tablist">
-                  {AI_TABS.map((x) => <button key={x} role="tab" aria-selected={tab === x} onClick={() => setTab(x)}>{x}</button>)}
-                </div>
-                <div className="hist-detail-body">
-                  {tab === "概述" && (
-                    <dl className="hist-meta">
-                      <dt>类型</dt><dd>{KIND_META[sel.kind].label}</dd>
-                      <dt>名称</dt><dd>{sel.name || "（消息）"}</dd>
-                      <dt>所属对话</dt><dd>{conv?.title || cur.title || "—"}</dd>
-                      <dt>范围</dt><dd>{(conv?.scope || cur.scope) === "paper" ? "论文对话" : "文库对话"}</dd>
-                      {sel.usage && <><dt>Token</dt><dd>{sel.usage}</dd></>}
-                    </dl>
-                  )}
-                  {tab === "参数" && <pre className="hist-code">{prettyArgs(sel.args)}</pre>}
-                  {tab === "结果" && <div className="hist-code hist-wrap">{sel.result || sel.text || "（无返回）"}</div>}
-                  {tab === "计时" && (
-                    <dl className="hist-meta">
-                      <dt>开始时间</dt><dd>{sel.at ? fmtTime(sel.at) : "—"}</dd>
-                      <dt>时长</dt><dd>{fmtDuration(sel.ms)}</dd>
-                      <dt>轮次</dt><dd>第 {selIdx + 1} 步 / 共 {steps.length} 步</dd>
-                    </dl>
-                  )}
+                <div className="lg-trace-body" ref={traceRef}>
+                  {steps.length === 0 ? <div className="lg-empty">这条对话没有记录步骤</div> : steps.map((s, i) => {
+                    if (s.kind === "tool") {
+                      return (
+                        <details key={i} className="trace-tool">
+                          <summary>
+                            <span className="trace-tool-name">{s.name}</span>
+                            <span className="trace-tool-args od-truncate">{s.args || ""}</span>
+                            <span className="trace-tool-time">{s.ms != null ? fmtDuration(s.ms) : ""}</span>
+                            <Icon name="chev-down" small />
+                          </summary>
+                          <div className="trace-tool-body">
+                            <div className="trace-label">参数</div>
+                            <pre className="trace-code">{prettyArgs(s.args)}</pre>
+                            <div className="trace-label">结果</div>
+                            <pre className="trace-code">{s.result || "（无返回）"}</pre>
+                          </div>
+                        </details>
+                      );
+                    }
+                    return (
+                      <div key={i} className={"trace-msg" + (s.kind === "user" ? " is-user" : "")}>
+                        <div className="trace-role">{s.kind === "user" ? "你" : "Arxiver"}</div>
+                        <div className="trace-text">{s.text || "（空消息）"}</div>
+                        {s.usage ? <div className="trace-usage">{s.usage}</div> : null}
+                      </div>
+                    );
+                  })}
                 </div>
               </>
             )}
-          </div>
+          </section>
         </div>
-      )}
+      </div>
     </section>
   );
 }
 
-export default function LogsView({ logKey, logStatus, onClose }: { logKey: string; logStatus: string; onClose: () => void }): JSX.Element {
+export default function LogsView({ logKey, setLogKey, logStatus, setLogStatus, onClose }: {
+  logKey: string;
+  setLogKey: (k: string) => void;
+  logStatus: string;
+  setLogStatus: (v: string) => void;
+  onClose: () => void;
+}): JSX.Element {
   // 三个视图常驻挂载，只切换显示：否则每次切分类都要重新拉数据，右侧会先闪一下"暂无记录"
+  const switchKey = (k: string): void => { setLogKey(k); setLogStatus("all"); };
   return (
     <>
-      <TranslationLog logStatus={logStatus} onClose={onClose} active={logKey === "tlog"} />
-      <AiLog logStatus={logStatus} onClose={onClose} active={logKey === "ailog"} />
-      <SystemLog logStatus={logStatus} onClose={onClose} active={logKey === "syslog"} />
+      <TranslationLog logStatus={logStatus} setLogStatus={setLogStatus} setLogKey={switchKey} onClose={onClose} active={logKey === "tlog"} />
+      <AiLog setLogKey={switchKey} onClose={onClose} active={logKey === "ailog"} />
+      <SystemLog logStatus={logStatus} setLogStatus={setLogStatus} setLogKey={switchKey} onClose={onClose} active={logKey === "syslog"} />
     </>
   );
 }
