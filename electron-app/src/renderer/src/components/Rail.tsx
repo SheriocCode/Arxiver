@@ -6,6 +6,7 @@ const ITEMS: { id: Section; label: string; ic: string }[] = [
   { id: "collections", label: "文献库", ic: "folder" },
   { id: "tags", label: "标签", ic: "tag" },
   { id: "recent", label: "最近", ic: "clock" },
+  { id: "overleaf", label: "Overleaf", ic: "leaf" },
   { id: "logs", label: "日志", ic: "log" }
 ];
 
@@ -21,9 +22,9 @@ export default function Rail({
   return (
     <nav className="rail" aria-label="主导航">
       <div className="rail-nav">
-        {ITEMS.map((item, index) => (
+        {ITEMS.map((item) => (
           <div key={item.id} style={{ display: "contents" }}>
-            {index === 3 && <div className="rail-divider" role="separator" aria-hidden="true" />}
+            {item.id === "logs" && <div className="rail-divider" role="separator" aria-hidden="true" />}
             <button
               className={"rail-btn" + (section === item.id ? " is-active" : "")}
               title={item.label}

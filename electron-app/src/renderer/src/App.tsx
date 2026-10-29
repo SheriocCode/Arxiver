@@ -12,6 +12,7 @@ import Viewer, { type ViewerHandle } from "./components/Viewer";
 import SettingsView from "./components/SettingsView";
 import NewItemModal from "./components/NewItemModal";
 import LogsView from "./components/LogsView";
+import OverleafView from "./components/OverleafView";
 import { startRuntimeMonitor } from "./state/runtimeMonitor";
 import SplashScreen from "./components/SplashScreen";
 import { useLibrary, type Section } from "./state/useLibrary";
@@ -62,6 +63,7 @@ export default function App(): JSX.Element {
   const [logStatus, setLogStatus] = useState("all");
   const [tabsOverflow, setTabsOverflow] = useState(false);
   const [tabListOpen, setTabListOpen] = useState(false);
+  const [titleMenuOpen, setTitleMenuOpen] = useState(false);
   const stripRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const viewerRefs = useRef<Map<string, ViewerHandle>>(new Map());
@@ -227,6 +229,7 @@ export default function App(): JSX.Element {
   // a tab just adds it; the viewer loads its own source and translation.
   const openDoc = useCallback((doc: { id: string; title: string; read: boolean; translations?: { cacheKey: string; pages?: string }[] }) => {
     if (!doc) { return; }
+    if (lib.section === "logs" || lib.section === "overleaf") { lib.setSection("collections"); }
     if (!doc.read) { void lib.update(doc.id, { read: true }); }
     lib.select(doc.id);
     const list = doc.translations || [];
@@ -243,6 +246,7 @@ export default function App(): JSX.Element {
   }, [lib]);
 
   const activateDoc = useCallback((id: string) => {
+    if (lib.section === "logs" || lib.section === "overleaf") { lib.setSection("collections"); }
     lib.select(id);
     setActiveDocId(id);
     setActiveTab("doc");
@@ -348,9 +352,11 @@ export default function App(): JSX.Element {
     });
   }, []);
 
-  // 「日志」是覆盖整片区域的整页视图：不渲染侧栏、把底下的列表/详情收起来（用 CSS 隐藏，
-  // 保留各自状态），这样自定义背景才不会被整片不透明面板挡住。
-  const overlayView = lib.section === "logs";
+  // 「日志 / Overleaf」都是覆盖整片区域的整页视图：不渲染侧栏、把底下的列表/详情收起来
+  // （用 CSS 隐藏，保留各自状态），这样自定义背景才不会被整片不透明面板挡住。
+  const logsOpen = lib.section === "logs";
+  const overleafOpen = lib.section === "overleaf";
+  const overlayView = logsOpen || overleafOpen;
   useEffect(() => {
     document.documentElement.style.setProperty("--sidebar-w", sidebarCollapsed ? "0px" : "268px");
   }, [sidebarCollapsed]);
@@ -367,7 +373,7 @@ export default function App(): JSX.Element {
         // Esc 只关掉弹层/整页视图，不动"打开的文章"和右侧详情面板
         if (settingsOpen) { setSettingsOpen(false); }
         else if (newOpen) { setNewOpen(false); }
-        else if (lib.section === "logs") { lib.setSection("collections"); }
+        else if (lib.section === "logs" || lib.section === "overleaf") { lib.setSection("collections"); }
       }
     };
     document.addEventListener("keydown", onKey);
@@ -406,8 +412,9 @@ export default function App(): JSX.Element {
           onSettings={() => openSettings()}
           update={badge}
           onUpdate={() => openSettings("about")}
+          onMenuOpenChange={setTitleMenuOpen}
         />
-        <div className={"app" + (detailOpen ? " detail-open" : "") + (sidebarCollapsed ? " sidebar-collapsed" : "") + (overlayView ? " logs-open" : "")}>
+        <div className={"app" + (detailOpen ? " detail-open" : "") + (sidebarCollapsed ? " sidebar-collapsed" : "") + (logsOpen ? " logs-open" : "") + (overleafOpen ? " overleaf-open" : "")}>
           <Rail section={lib.section} onChange={navigate} onSettings={() => setSettingsOpen(true)} />
           <Sidebar
             lib={lib}
@@ -420,9 +427,9 @@ export default function App(): JSX.Element {
             <div className="tabbar">
               <button
                 className={"tb-tab tb-tab-lib" + (overlayView || activeTab === "library" ? " active" : "")}
-                onClick={() => { if (!overlayView) { setActiveTab("library"); } }}
+                onClick={() => { if (logsOpen || overleafOpen) { lib.setSection("collections"); } else { setActiveTab("library"); } }}
               >
-                <Icon name={overlayView ? "log" : "book"} small /> {overlayView ? "日志" : "文库"}
+                <Icon name={logsOpen ? "log" : overleafOpen ? "leaf" : "book"} small /> {logsOpen ? "日志" : overleafOpen ? "Overleaf" : "文库"}
               </button>
               <div className="tb-strip" ref={stripRef}>
                 {docs.map((d) => (
@@ -477,7 +484,7 @@ export default function App(): JSX.Element {
                 fetchMeta={settings.fetchMeta}
                 onOpenDoc={openDocById}
               />
-              {detailOpen && (
+              {detailOpen && !overlayView && (
                 <span
                   className="detail-resize"
                   role="separator"
@@ -502,6 +509,12 @@ export default function App(): JSX.Element {
                 onOpenSettings={openSettings}
               />
               {lib.section === "logs" && <LogsView logKey={logCat} setLogKey={setLogCat} logStatus={logStatus} setLogStatus={setLogStatus} onClose={() => lib.setSection("collections")} />}
+              <OverleafView
+                onScreen={overleafOpen}
+                active={overleafOpen && !settingsOpen && !newOpen && !titleMenuOpen && !tabListOpen}
+                config={config}
+                onOpenSettings={() => openSettings("ai")}
+              />
               <div className="reader-overlay" hidden={activeTab !== "doc"}>
                 {docs.map((d) => (
                   <Viewer

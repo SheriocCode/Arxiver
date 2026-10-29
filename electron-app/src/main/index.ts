@@ -17,12 +17,14 @@ import * as conversations from "./agent/conversations";
 import * as skills from "./agent/skills";
 import { getOutline } from "./outline";
 import * as viewerCache from "./viewerCache";
+import * as overleaf from "./overleaf";
 import { migrateLegacyData } from "./migrate";
 import { importPaper, fetchPdf } from "./importPaper";
 import { enrichDocMeta } from "./enrich";
 import * as logger from "./logger";
 import { Updater } from "./updater";
-import type { AppChildProc, AppMetrics, AppProcessInfo, LocalModelId, TranslationLogEntry } from "../shared/types";
+import type { AppChildProc, AppMetrics, AppProcessInfo, LocalModelId, OverleafBounds, OverleafChatRequest, TranslationLogEntry } from "../shared/types";
+import type { ReplaceCommand } from "../shared/overleaf-replace";
 
 // Electron 的用户目录（Chromium 缓存 / LocalStorage 等）仍放在 %APPDATA%：
 //   安装版 %APPDATA%\Arxiver，开发版 %APPDATA%\Arxiver-dev。
@@ -118,6 +120,8 @@ function createWindow(): void {
     }
   });
 
+  overleaf.attach(mainWindow);
+
   mainWindow.on("maximize", () => mainWindow?.webContents.send("window:maximized", true));
   mainWindow.on("unmaximize", () => {
     mainWindow?.webContents.send("window:maximized", false);
@@ -173,6 +177,10 @@ function createWindow(): void {
       win.hide();
       tray?.setToolTip("Arxiver — 后台运行中");
     }
+  });
+  win.on("closed", () => {
+    overleaf.dispose();
+    if (mainWindow === win) { mainWindow = null; }
   });
 }
 
@@ -581,6 +589,41 @@ function registerIpc(): void {
     fs.writeFileSync(filePath, bytes);
     return filePath;
   });
+
+  // Overleaf 区：嵌入的网页视图只读，渲染端只通过这几个 IPC 读取。
+  const fromMainWindow = (event: Electron.IpcMainInvokeEvent): boolean => event.sender === mainWindow?.webContents;
+  ipcMain.handle("overleaf:bounds", (event, bounds: OverleafBounds) => {
+    if (fromMainWindow(event)) { overleaf.setBounds(bounds); }
+  });
+  ipcMain.handle("overleaf:reload", (event) => { if (fromMainWindow(event)) { overleaf.reload(); } });
+  ipcMain.handle("overleaf:home", (event) => { if (fromMainWindow(event)) { overleaf.home(); } });
+  ipcMain.handle("overleaf:login", (event) => { if (fromMainWindow(event)) { overleaf.login(); } });
+  ipcMain.handle("overleaf:back", (event) => { if (fromMainWindow(event)) { overleaf.back(); } });
+  ipcMain.handle("overleaf:forward", (event) => { if (fromMainWindow(event)) { overleaf.forward(); } });
+  ipcMain.handle("overleaf:navigate", (event, url: string) => (
+    fromMainWindow(event) ? overleaf.navigate(url) : { ok: false, error: "无效的调用来源" }
+  ));
+  ipcMain.handle("overleaf:status", () => overleaf.getStatus());
+  ipcMain.handle("overleaf:readCurrent", (event) => (fromMainWindow(event) ? overleaf.readCurrent() : { ok: false, error: "无效的调用来源" }));
+  ipcMain.handle("overleaf:syncProject", (event) => (
+    fromMainWindow(event) ? overleaf.syncProject() : { ok: false, files: [], skipped: [], error: "无效的调用来源" }
+  ));
+  ipcMain.handle("overleaf:chat", (event, payload: OverleafChatRequest) => {
+    if (!fromMainWindow(event)) { return { turnId: payload.turnId }; }
+    return overleaf.chat(payload, (data) => mainWindow?.webContents.send("overleaf:event", data));
+  });
+  ipcMain.handle("overleaf:cancel", (event, turnId: string) => {
+    if (fromMainWindow(event)) { overleaf.cancel(turnId); }
+  });
+  ipcMain.handle("overleaf:applyEdit", (event, command: ReplaceCommand) => (
+    fromMainWindow(event) ? overleaf.applyEdit(command) : { ok: false, error: "无效的调用来源" }
+  ));
+  ipcMain.handle("overleaf:undoEdit", (event, command: ReplaceCommand) => (
+    fromMainWindow(event) ? overleaf.undoEdit(command) : { ok: false, error: "无效的调用来源" }
+  ));
+  ipcMain.handle("overleaf:previewEdit", (event, command: ReplaceCommand) => (
+    fromMainWindow(event) ? overleaf.previewEdit(command) : { ok: false, error: "无效的调用来源" }
+  ));
 
   ipcMain.handle("agent:chat", (_event, payload: AgentChatRequest) => agent.run(payload));
   ipcMain.handle("agent:cancel", (_event, turnId: string) => agent.cancel(turnId));

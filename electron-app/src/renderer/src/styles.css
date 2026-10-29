@@ -160,9 +160,11 @@ html.kb-focus :focus-visible { outline: 2px solid var(--accent); outline-offset:
   height: 100dvh;
   overflow: hidden;
 }
-/* 日志是独立的整页视图：隐藏侧栏，把整块宽度让给日志中心 */
-.app.logs-open { grid-template-columns: var(--rail-w) 0 minmax(0, 1fr) 0; }
-.app.logs-open .sidebar { display: none; }
+/* 日志 / Overleaf 是独立的整页视图：隐藏侧栏，把整块宽度让给整页视图 */
+.app.logs-open,
+.app.overleaf-open { grid-template-columns: var(--rail-w) 0 minmax(0, 1fr) 0; }
+.app.logs-open .sidebar,
+.app.overleaf-open .sidebar { display: none; }
 
 /* ---------- rail ---------- */
 .rail {
@@ -645,6 +647,14 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
   border-radius: var(--radius-lg); padding: 8px 8px 8px 12px;
   transition: border-color var(--dur) var(--ease);
 }
+.ov-composer-model {
+  display: inline-flex; align-items: center; gap: 4px;
+  max-width: 100%; height: 18px; padding: 0 4px; margin: 0 0 2px;
+  border-radius: var(--pill); color: var(--faint); font-size: 10.5px;
+}
+.ov-composer-model:hover { color: var(--accent); background: var(--accent-soft); }
+.ov-composer-model .icon { width: 12px; height: 12px; }
+.ov-composer-model span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-box:focus-within { border-color: #575757; }
 .composer-box textarea {
   width: 100%; border: 0; background: none; outline: none; resize: none;
@@ -1818,6 +1828,7 @@ html.has-bg .history { background: color-mix(in srgb, var(--bg) 68%, transparent
 /* 整页视图（日志）打开时收起身后的列表、详情与阅读器（保留挂载，不丢状态） */
 .main-body.is-overlay-view > .list-pane,
 .main-body.is-overlay-view > .detail,
+.main-body.is-overlay-view > .detail-resize,
 .main-body.is-overlay-view > .reader-overlay { display: none; }
 html.has-bg .detail { background: color-mix(in srgb, var(--bg-panel) 74%, transparent); }
 /* 日志中的代码块 / 备注在自定义背景下也保持可读 */
@@ -2346,3 +2357,220 @@ textarea.ai-confirm-args { width: 100%; min-height: 96px; border: 0; outline: no
 }
 .img-lightbox-close:hover { background: var(--surface-3); }
 .img-viewport.is-panning .img-draw { cursor: grabbing; }
+
+/* ---------- Overleaf 区 ---------- */
+/* 整页视图：左侧是主进程定位的 WebContentsView，右侧是本地 React 聊天面板 */
+.overleaf-page {
+  position: absolute; inset: 0; z-index: 6;
+  display: none; flex-direction: column;
+  min-width: 0; min-height: 0;
+  background: var(--bg); border-left: 1px solid var(--border);
+}
+.overleaf-page.is-on { display: flex; }
+.ov-tools { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
+.ov-tools .btn { height: 28px; padding: 0 8px; font-size: 11.5px; }
+.ov-tools-sep { width: 1px; height: 18px; flex: none; margin: 0 4px; background: var(--border-strong); }
+
+.ov-body { flex: 1; display: flex; min-width: 0; min-height: 0; }
+.ov-web { position: relative; flex: 1; min-width: 0; background: var(--bg); }
+.ov-web-hint {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px;
+  padding: 24px; text-align: center; color: var(--muted);
+}
+.ov-web-hint .icon { width: 28px; height: 28px; color: var(--accent); }
+.ov-web-hint b { color: var(--text); font-size: 15px; }
+.ov-web-hint span { max-width: 380px; font-size: 12.5px; line-height: 1.7; }
+
+.ov-chat {
+  flex: none; display: flex; flex-direction: column;
+  min-height: 0; background: var(--bg-panel); border-left: 1px solid var(--border);
+  container-type: inline-size;
+}
+.ov-chat-head {
+  display: flex; align-items: center; gap: 7px; min-height: 42px;
+  padding: 8px 10px 7px 14px; border-bottom: 1px solid var(--border);
+  font-size: 13px; color: var(--text-2);
+}
+.ov-chat-head .icon-btn { flex: none; width: 24px; height: 24px; }
+.ov-brand { display: flex; flex: 1 1 auto; align-items: center; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.ov-brand b { color: var(--text); font-weight: 600; }
+.ov-brand .icon { width: 16px; height: 16px; flex: none; }
+.ov-brand-x { color: var(--faint); font-size: 11px; }
+
+.ov-chat-resize {
+  width: 5px; flex: none; cursor: col-resize;
+  background: var(--border); transition: background var(--dur) var(--ease);
+}
+.ov-chat-resize:hover, body.ov-chat-resizing .ov-chat-resize { background: var(--accent); }
+body.ov-chat-resizing, body.ov-chat-resizing * { cursor: col-resize !important; user-select: none !important; }
+
+
+.ov-context { padding: 6px 10px 8px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.ov-context-row { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
+.ov-context-toggle {
+  display: inline-flex; align-items: center; gap: 3px;
+  flex: none; color: var(--text-2); font-size: 11.5px;
+}
+.ov-context-toggle:hover { color: var(--text); }
+.ov-context-count { margin-left: auto; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ov-extract-icon { flex: none; width: 24px; height: 24px; color: var(--accent); }
+.ov-file input { flex: none; accent-color: var(--accent); }
+.ov-file-size { flex: none; margin-left: auto; color: var(--faint); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+
+.ov-files { margin-top: 6px; }
+.ov-files-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 10.5px; }
+.ov-file-actions { display: flex; gap: 2px; margin: 0; }
+.ov-file-actions .btn { height: 20px; padding: 0 5px; font-size: 10.5px; }
+.ov-context-empty { margin-top: 6px; color: var(--faint); font-size: 10.5px; line-height: 1.55; }
+.ov-file-list { display: flex; flex-direction: column; gap: 3px; max-height: 170px; overflow: auto; padding-right: 2px; }
+.ov-file { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 2px 0; font-size: 11.5px; color: var(--text-2); }
+.ov-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ov-msgs { padding-top: 6px; }
+.ov-empty { padding: 26px 8px; text-align: center; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+.ov-empty b { display: block; margin-bottom: 8px; color: var(--text); font-size: 14px; }
+.ov-empty p { margin: 5px 0; }
+.ov-usage { margin-top: 5px; color: var(--faint); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.ov-copy { width: 22px; height: 22px; margin-left: 4px; opacity: .45; }
+.ov-copy:hover { opacity: 1; }
+.ov-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11px; }
+
+.ov-banner {
+  display: flex; align-items: center; gap: 8px; padding: 7px 14px;
+  background: var(--accent-soft); border-bottom: 1px solid var(--border);
+  color: var(--text-2); font-size: 12px;
+}
+.ov-banner .btn { height: 26px; padding: 0 8px; margin-left: auto; font-size: 11.5px; }
+
+html.has-bg .overleaf-page { background: color-mix(in srgb, var(--bg) 68%, transparent); }
+html.has-bg .ov-chat { background: color-mix(in srgb, var(--bg-panel) 74%, transparent); }
+
+/* Overleaf 编辑建议卡片 */
+.ov-edits { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 2px; }
+.ov-edits-count { color: var(--muted); font-size: 11px; }
+.ov-edit { overflow: hidden; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.ov-edit.is-applied { border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong)); }
+.ov-edit.is-rejected { opacity: .72; }
+.ov-edit.is-error { border-color: color-mix(in srgb, #ef5350 50%, var(--border-strong)); }
+.ov-edit-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: var(--surface-2); font-size: 11px; }
+.ov-edit-file { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 500; }
+.ov-edit-kind {
+  flex: none; padding: 0 4px; border-radius: var(--radius-sm);
+  color: var(--accent); background: var(--accent-soft); font-size: 10px;
+}
+.ov-edit-match { flex: none; color: var(--accent); font-size: 10px; font-variant-numeric: tabular-nums; }
+.ov-edit-match.is-bad { color: #f0857b; }
+.ov-edit-state { flex: none; margin-left: auto; color: var(--faint); font-size: 10px; }
+.ov-edit-body { display: flex; flex-direction: column; gap: 5px; padding: 6px 8px; }
+.ov-edit-row { display: flex; align-items: flex-start; gap: 6px; }
+.ov-edit-tag {
+  flex: none; padding: 0 4px; border-radius: var(--radius-sm);
+  color: var(--muted); background: var(--surface-2); font-size: 9px; line-height: 16px;
+}
+.ov-edit-anchor, .ov-edit-old, .ov-edit-new {
+  max-height: 120px; margin: 0; padding: 4px 6px; overflow: auto;
+  border-radius: var(--radius-sm); font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+}
+.ov-edit-anchor { flex: 1; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); }
+.ov-edit-old { color: #f0aaa4; background: rgba(239, 83, 80, .12); border: 1px solid rgba(239, 83, 80, .28); }
+.ov-edit-new { color: #9fe3d1; background: rgba(16, 163, 127, .12); border: 1px solid rgba(16, 163, 127, .28); }
+.ov-edit-error {
+  padding: 3px 5px; border-radius: var(--radius-sm);
+  color: #f0857b; background: rgba(239, 83, 80, .1); font-size: 10.5px;
+}
+.ov-edit-actions {
+  display: flex; align-items: center; justify-content: flex-end; gap: 6px;
+  padding: 5px 8px; border-top: 1px solid var(--border);
+}
+.ov-edit-actions .btn { height: 24px; padding: 0 7px; font-size: 11px; }
+.ov-edit-note { margin-right: auto; color: var(--muted); font-size: 10.5px; }
+
+.ov-thinking { margin: 5px 0 7px; color: var(--muted); font-size: 11px; }
+.ov-thinking summary { cursor: pointer; color: var(--faint); }
+.ov-thinking pre {
+  max-height: 180px; margin: 5px 0 0; padding: 6px 8px; overflow: auto;
+  border-radius: var(--radius-sm); background: var(--surface-2);
+  color: var(--muted); font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+}
+
+/* Overleaf 地址栏 / 加载状态 */
+.ov-browserbar {
+  display: flex; align-items: center; gap: 4px;
+  min-height: 40px; padding: 5px 10px;
+  background: var(--bg-panel); border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.ov-browserbar::-webkit-scrollbar { display: none; }
+.ov-browserbar .icon-btn { width: 26px; height: 26px; }
+.ov-browserbar .icon-btn:disabled { opacity: .32; cursor: default; }
+.ov-address {
+  flex: 0 1 520px; min-width: 160px; max-width: 520px;
+  display: flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--pill);
+  background: var(--surface); color: var(--text-2); font-size: 11.5px;
+}
+.ov-address.is-loading { color: var(--muted); }
+.ov-address .icon { color: var(--faint); flex: none; }
+.ov-url-input {
+  flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: none;
+  background: transparent; color: var(--text-2); font: inherit;
+}
+.ov-url-input::placeholder { color: var(--faint); }
+.ov-spinner {
+  width: 11px; height: 11px; flex: none; border-radius: 50%;
+  border: 1.5px solid var(--border-strong); border-top-color: var(--accent);
+  animation: ov-spin .8s linear infinite;
+}
+.ov-spinner-lg { width: 22px; height: 22px; border-width: 2px; }
+@keyframes ov-spin { to { transform: rotate(360deg); } }
+
+.ov-edit-warning {
+  padding: 4px 6px; border-radius: var(--radius-sm);
+  color: var(--star); background: color-mix(in srgb, var(--star) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--star) 28%, transparent);
+  font-size: 10.5px; line-height: 1.55;
+}
+
+
+
+.ov-file-del { width: 20px; height: 20px; flex: none; opacity: .35; }
+.ov-file-del:hover { opacity: 1; color: #f0857b; }
+.ov-session {
+  flex: none; padding: 8px 12px 0;
+  background: var(--bg-panel); border-top: 1px solid var(--border);
+}
+.ov-session-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 5px; color: var(--muted); font-size: 11px;
+}
+.ov-session-head > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-session-head .btn { flex: none; height: 22px; padding: 0 6px; font-size: 10.5px; }
+.ov-session-chips {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  max-height: 76px; overflow: auto; padding-bottom: 6px;
+}
+.ov-chip {
+  display: inline-flex; align-items: center; gap: 2px; max-width: 100%;
+  padding: 1px 3px 1px 7px; border: 1px solid var(--border-strong);
+  border-radius: var(--pill); background: var(--surface);
+  color: var(--text-2); font-size: 10.5px;
+}
+.ov-chip-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-chip-x {
+  display: grid; place-items: center; width: 16px; height: 16px;
+  flex: none; border-radius: 50%; color: var(--faint);
+}
+.ov-chip-x:hover { background: var(--hover-strong); color: var(--text); }
+
+.ov-tool-status {
+  display: flex; align-items: center; gap: 6px;
+  margin: 4px 0 6px; padding: 4px 7px;
+  border-radius: var(--radius-sm); background: var(--surface-2);
+  color: var(--muted); font-size: 10.5px;
+}
+.ov-tool-status .icon { color: var(--accent); }
+.ov-tool-status .ov-spinner { width: 10px; height: 10px; }

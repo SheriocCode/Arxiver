@@ -1,3 +1,5 @@
+import type { ReplaceCommand } from "./overleaf-replace";
+
 export interface AppConfig {
   translate_mode: "local" | "remote";
   service: string;
@@ -465,6 +467,80 @@ export interface LibraryState {
   tag_names: string[];
 }
 
+/** Overleaf 嵌入式视图在窗口内容区里的位置（CSS 像素 / DIP） */
+export interface OverleafBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  visible: boolean;
+}
+
+/** 从 Overleaf 读取到的一个文本文件 */
+export interface OverleafFile {
+  path: string;
+  content: string;
+  size?: number;
+}
+
+export interface OverleafReadResult {
+  ok: boolean;
+  fileName?: string;
+  content?: string;
+  selection?: string;
+  error?: string;
+}
+
+export interface OverleafSyncResult {
+  ok: boolean;
+  projectId?: string;
+  files: OverleafFile[];
+  skipped: string[];
+  syncedAt?: number;
+  error?: string;
+}
+
+export interface OverleafChatRequest {
+  turnId: string;
+  message: string;
+  files: OverleafFile[];
+  history: { role: "user" | "assistant"; content: string }[];
+  selection?: string;
+  currentFile?: string;
+}
+
+export interface OverleafEditResult {
+  ok: boolean;
+  error?: string;
+  replaced?: number;
+}
+
+export interface OverleafStatus {
+  url: string;
+  title: string;
+  loading: boolean;
+  ready: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+}
+
+export interface OverleafEvent {
+  turnId: string;
+  type: "delta" | "reasoning" | "tool" | "done" | "error" | "usage";
+  text?: string;
+  name?: string;
+  error?: string;
+  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+}
+
+/** 嵌在 Overleaf 页面里的观察脚本捕获到的当前文档快照 */
+export interface OverleafDocEvent {
+  path: string;
+  content: string;
+  selection?: string;
+  at?: number;
+}
+
 export interface AppInfo {
   version: string;
   engineVersion: string;
@@ -600,6 +676,24 @@ export interface Api {
   onJobUpdate(cb: (job: JobSummary) => void): () => void;
   onJobPartial(cb: (info: { id: string; done_pages: number; total_pages: number }) => void): () => void;
   onJobBlocks(cb: (info: { id: string; blocks: BlockEvent[] }) => void): () => void;
+  overleafSetBounds(bounds: OverleafBounds): Promise<void>;
+  overleafReload(): Promise<void>;
+  overleafHome(): Promise<void>;
+  overleafLogin(): Promise<void>;
+  overleafBack(): Promise<void>;
+  overleafForward(): Promise<void>;
+  overleafNavigate(url: string): Promise<{ ok: boolean; error?: string }>;
+  overleafGetStatus(): Promise<OverleafStatus>;
+  onOverleafStatus(cb: (status: OverleafStatus) => void): () => void;
+  overleafReadCurrent(): Promise<OverleafReadResult>;
+  overleafSyncProject(): Promise<OverleafSyncResult>;
+  overleafChat(payload: OverleafChatRequest): Promise<{ turnId: string }>;
+  overleafCancel(turnId: string): Promise<void>;
+  overleafApplyEdit(command: ReplaceCommand): Promise<OverleafEditResult>;
+  overleafUndoEdit(command: ReplaceCommand): Promise<OverleafEditResult>;
+  overleafPreviewEdit(command: ReplaceCommand): Promise<OverleafEditResult>;
+  onOverleafEvent(cb: (event: OverleafEvent) => void): () => void;
+  onOverleafDoc(cb: (event: OverleafDocEvent) => void): () => void;
   agentChat(payload: AgentChatRequest): Promise<{ turnId: string }>;
   agentCancel(turnId: string): Promise<void>;
   agentConfirm(confirmId: string, decision: { approved: boolean; args?: string }): Promise<void>;

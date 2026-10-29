@@ -6,6 +6,7 @@ const SECTION_LABEL: Record<Section, string> = {
   collections: "文献库",
   tags: "标签",
   recent: "最近",
+  overleaf: "Overleaf",
   logs: "日志"
 };
 
@@ -13,6 +14,7 @@ const SECTION_ICON: Record<Section, string> = {
   collections: "folder",
   tags: "tag",
   recent: "clock",
+  overleaf: "leaf",
   logs: "log"
 };
 
@@ -26,7 +28,8 @@ export default function TitleBar({
   onNavigate,
   onSettings,
   update,
-  onUpdate
+  onUpdate,
+  onMenuOpenChange
 }: {
   section: Section;
   canBack: boolean;
@@ -38,9 +41,16 @@ export default function TitleBar({
   onSettings: () => void;
   update?: { label: string; state: string } | null;
   onUpdate?: () => void;
+  onMenuOpenChange?: (open: boolean) => void;
 }): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // 嵌入式 Overleaf 页面是独立的 WebContentsView，会盖住渲染端的下拉菜单；
+  // 菜单打开时让 App 暂时把网页视图藏起来。
+  useEffect(() => {
+    onMenuOpenChange?.(menuOpen);
+  }, [menuOpen, onMenuOpenChange]);
 
   useEffect(() => {
     if (!menuOpen) { return; }
@@ -61,7 +71,7 @@ export default function TitleBar({
           </button>
           {menuOpen && (
             <div className="tb-dropdown">
-              {(["collections", "tags", "recent", "logs"] as Section[]).map((s) => (
+              {(["collections", "tags", "recent", "overleaf", "logs"] as Section[]).map((s) => (
                 <button key={s} className={section === s ? "is-active" : ""} onClick={() => { onNavigate(s); setMenuOpen(false); }}>
                   <Icon name={SECTION_ICON[s]} small />
                   {SECTION_LABEL[s]}
