@@ -21,13 +21,13 @@
 <p align="center">
   <a href="https://github.com/SheriocCode/Arxiver/releases/latest"><img src="https://img.shields.io/badge/下载-Windows%20安装包-10a37f?style=for-the-badge" alt="下载 Windows 安装包"></a>
   &#160;
-  <a href="https://sherioccode.github.io/Arxiver/"><img src="https://img.shields.io/badge/官网-sherioccode.github.io-2f81f7?style=for-the-badge" alt="官网"></a>
+  <a href="https://sherioccode.github.io/arxiver/"><img src="https://img.shields.io/badge/官网-sherioccode.github.io-2f81f7?style=for-the-badge" alt="官网"></a>
   &#160;
-  <a href="https://sherioccode.github.io/Arxiver/guide.html"><img src="https://img.shields.io/badge/文档-使用指南-6e7781?style=for-the-badge" alt="文档"></a>
+  <a href="https://sherioccode.github.io/arxiver/guide.html"><img src="https://img.shields.io/badge/文档-使用指南-6e7781?style=for-the-badge" alt="文档"></a>
 </p>
 
 <p align="center">
-  <a href="https://sherioccode.github.io/Arxiver/changelog.html">更新日志</a> ·
+  <a href="https://sherioccode.github.io/arxiver/changelog.html">更新日志</a> ·
   <a href="https://github.com/SheriocCode/Arxiver/issues">问题反馈</a>
 </p>
 
@@ -152,7 +152,9 @@ docs/             文档站构建产物
 tools/            打包、发布、文档构建脚本
 ```
 
-本地打包用 `tools/build.ps1`，发布用 `tools/publish.ps1`（详见 `NOTES.local.md`）；文档站见 `site/`，构建产物在 `docs/`，用 `tools/build-docs.ps1` 生成。
+本地打包用 `tools/build.ps1`，发布用 `tools/publish.ps1`（详见 `NOTES.local.md`）。文档站已并入个人主页
+[SheriocCode.github.io](https://sherioccode.github.io/)，Arxiver 专区在 [`arxiver/`](https://sherioccode.github.io/arxiver/)，
+文档源文件在个人站仓库，本仓库 `docs/` 只保留旧地址跳转页。
 
 ## 第三方许可
 

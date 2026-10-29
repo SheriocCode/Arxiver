@@ -125,11 +125,12 @@ foreach ($asset in $assets) {
 Write-Host "published $tag" -ForegroundColor Green
 
 # ---- 8. 文档站提醒 ----------------------------------------------------------
-$siteDir = Join-Path $root "site"
-if (Test-Path $siteDir) {
-    Write-Host ""
-    Write-Host "Post-release checklist:" -ForegroundColor Cyan
-    Write-Host "  [ ] update site/changelog.md (and home page if needed)"
-    Write-Host "  [ ] powershell -File tools/build-docs.ps1"
-    Write-Host "  [ ] git add site docs && git commit && git push origin $Branch"
+$siteRepo = Join-Path (Split-Path -Parent $root) "SheriocCode.github.io"
+Write-Host ""
+Write-Host "Post-release checklist:" -ForegroundColor Cyan
+if (Test-Path $siteRepo) {
+    Write-Host "  [ ] update arxiver/changelog.md in $siteRepo"
+    Write-Host "  [ ] git add arxiver && git commit && git push origin master"
+} else {
+    Write-Host "  [ ] update arxiver/changelog.md in the SheriocCode.github.io repo"
 }

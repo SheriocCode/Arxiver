@@ -3,181 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Arxiver — 把英文论文读成中文</title>
-<meta name="description" content="导入本地 PDF 或 arXiv 链接，用本机翻译引擎离线翻译；原文 / 对照 / 译文三视图逐页阅读，另有能跨文献问答、联网检索的内置 AI 助手。">
-<link rel="icon" href="assets/img/icon128.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/style.css">
+<title>Arxiver 官网已迁移</title>
+<link rel="canonical" href="https://sherioccode.github.io/arxiver/">
+<meta http-equiv="refresh" content="0; url=https://sherioccode.github.io/arxiver/">
+<script>location.replace("https://sherioccode.github.io/arxiver/" + location.search + location.hash);</script>
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: #fdfcfc; color: #424245;
+    font: 400 16px/1.6 "JetBrains Mono", ui-monospace, Consolas, monospace; }
+  main { max-width: 520px; padding: 32px 24px; }
+  h1 { margin: 0 0 12px; font-size: 20px; color: #201d1d; }
+  a { color: #007aff; }
+</style>
 </head>
 <body>
-
-<header class="site-header">
-  <div class="container">
-    <a class="brand" href="index.html"><img class="mark" src="assets/img/logo.svg" alt=""><img class="word" src="assets/img/arxiver_black.svg" alt="Arxiver"></a>
-    <nav class="site-nav" id="site-nav">
-      <a href="index.html" class="active">首页</a>
-      <a href="guide.html">文档</a>
-      <a href="reference.html">参考</a>
-      <a href="changelog.html">更新日志</a>
-      <a href="https://github.com/SheriocCode/Arxiver" target="_blank" rel="noopener">GitHub</a>
-    </nav>
-    <a class="btn primary nav-download" href="https://github.com/SheriocCode/Arxiver/releases/latest" target="_blank" rel="noopener">Download</a>
-    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="展开导航">
-      <span>菜单</span><b class="nav-toggle-mark"></b>
-    </button>
-  </div>
-</header>
-
 <main>
-<svg class="sprite" aria-hidden="true" focusable="false" width="0" height="0">
-  <symbol id="i-languages" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></symbol>
-  <symbol id="i-bot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></symbol>
-  <symbol id="i-arrow-right-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></symbol>
-  <symbol id="i-columns-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/></symbol>
-  <symbol id="i-book-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></symbol>
-</svg>
-
-<section class="hero container">
-  <span class="badge">本机离线 · 0 费用</span>
-  <h1>把英文论文，读成中文</h1>
-  <p class="lead">导入本地 PDF 或 arXiv 链接。本机翻译引擎完成翻译：约 10 页/分钟、边翻边看，论文不出本机；模型按需下载，另有能跨文献问答的内置 AI 助手。</p>
-  <div class="btn-row">
-    <a class="btn primary" href="https://github.com/SheriocCode/Arxiver/releases/latest" target="_blank" rel="noopener">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      下载安装包
-    </a>
-    <a class="btn" href="guide.html">阅读文档 →</a>
-  </div>
-</section>
-
-<section class="tui">
-  <div class="tui-grid">
-    <div class="tui-text">
-      <img class="wordmark" src="assets/img/arxiver.svg" alt="Arxiver">
-      <div class="prompt">
-        <span class="dim">$</span> Arxiver<br>
-        <span class="dim">[engine]</span>  bundled · PyMuPDF + translate engine<br>
-        <span class="dim">[model ]</span>  DeepSeek (OpenAI-compatible)<br>
-        <span class="dim">[open  ]</span>  2211.15658v2.pdf  en → zh-CN<br>
-        <span style="color:var(--success)">[DONE]</span> 15/15 pages  ▸  bilingual ready
-      </div>
-      <div class="hints"><b>原文 / 对照 / 译文</b> 三视图 &nbsp;·&nbsp; <b>块框</b> 段落级溯源 &nbsp;·&nbsp; <b>Arxiver</b> 助手（引用跳转 / 跨文献）</div>
-    </div>
-    
-    <div class="carousel">
-      
-      <figure><img src="assets/index/首页.jpg" alt="主界面"><figcaption>主界面</figcaption></figure>
-      
-      <figure><img src="assets/index/翻译.jpg" alt="翻译与对照"><figcaption>翻译与对照</figcaption></figure>
-      
-      <figure><img src="assets/index/AI助手.jpg" alt="AI 助手"><figcaption>AI 助手</figcaption></figure>
-      
-      <figure><img src="assets/index/日志追溯.jpg" alt="AI 对话日志"><figcaption>AI 对话日志</figcaption></figure>
-      
-      <figure><img src="assets/index/运行状态监控.jpg" alt="运行状态"><figcaption>运行状态</figcaption></figure>
-      
-      <figure><img src="assets/index/设置面板.jpg" alt="设置"><figcaption>设置</figcaption></figure>
-      
-    </div>
-    
-  </div>
-</section>
-
-
-<section class="home-sec container" id="compare">
-  <div class="sec-head">
-    <h2>Why Arxiver?</h2>
-    <p>我们真正需要的是一个<strong>便携、好用、免费、不需要订阅</strong>的翻译工具，和一个能让 AI 趁手地帮我们<strong>读、理解、管理</strong>论文的地方——而不是一座要精心陈列的图书馆。<strong><u>科研缺的从来不是「摆得更整齐」，而是读得过来、读得明白</u></strong>。</p>
-  </div>
-  <div class="cmp-card">
-    <table class="cmp">
-      <thead>
-        <tr>
-          <th class="cmp-cap-head">能力</th>
-          <th class="cmp-a">
-            <span class="cmp-brand">
-              <img class="mark" src="assets/img/logo.svg" alt="">
-              <img class="word" src="assets/img/arxiver_black.svg" alt="Arxiver">
-            </span>
-          </th>
-          <th class="cmp-z">
-            <span class="cmp-brand"><img class="logo" src="assets/img/zotero-logo.svg" alt="Zotero"></span>
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        
-        <tr>
-          <td class="cmp-cap">
-            <svg class="ic" aria-hidden="true"><use href="#i-languages"></use></svg><span class="cmp-label">论文翻译</span><button type="button" class="help" aria-label="更多说明">?<span class="help-pop">本地模式由 llama.cpp 在本机推理，有 NVIDIA 显卡走 GPU，无独显或驱动不匹配时自动回退 CPU（功能不受影响，速度较慢）。「边翻边看」＝每翻完一页，阅读器里的预览就刷新一次；切到在线模式则改为调用你配置的大模型接口。</span></button>
-          </td>
-          <td class="cmp-a"><span class="m plus"></span><strong>内置</strong>：默认本机模型离线完成——<strong>约 10 页/分钟</strong>、<strong>0 费用</strong>、<strong>边翻边看</strong>，论文不出本机；<strong>也可切换自定义在线大模型接口</strong></td>
-          <td class="cmp-z"><span class="m part"></span>无内置，需装第三方插件；多为在线服务（正文发往服务商、额度用完要订阅），通常要整篇翻完才能看</td>
-        </tr>
-        
-        <tr>
-          <td class="cmp-cap">
-            <svg class="ic" aria-hidden="true"><use href="#i-bot"></use></svg><span class="cmp-label">AI Harness</span><button type="button" class="help" aria-label="更多说明">?<span class="help-pop">助手使用独立配置的 OpenAI 兼容接口，与翻译互不影响；联网搜索默认关闭，开启后可选 Tavily / 博查 / DeepSeek，Key 各存一份。</span></button>
-          </td>
-          <td class="cmp-a"><span class="m plus"></span><strong>跨文献问答、联网检索与读正文、导入外部论文、改标签 / 分类（写操作先确认），长任务显示进度与已用时间</strong></td>
-          <td class="cmp-z"><span class="m no"></span>官方无内置；第三方 AI 插件零散，配置与体验参差</td>
-        </tr>
-        
-        <tr>
-          <td class="cmp-cap">
-            <svg class="ic" aria-hidden="true"><use href="#i-book-open"></use></svg><span class="cmp-label">文献库与导入</span>
-          </td>
-          <td class="cmp-a"><span class="m equal"></span>分类层级、标签、笔记、回收站、全文检索；粘贴 arXiv 编号 / DOI / 链接即导入并自动补全元信息</td>
-          <td class="cmp-z"><span class="m equal"></span>元数据与检索更完整、浏览器连接器抓取</td>
-        </tr>
-        
-      </tbody>
-    </table>
-  </div>
-  <div class="cmp-note">
-    <p>图例：<span class="m plus"></span> 内置或强项 · <span class="m equal"></span> 双方都有 · <span class="m part"></span> 需插件或部分支持 · <span class="m no"></span> 无。</p><p>浏览器扩展、与 Zotero 的双向同步、批注等能力 <strong>已在开发计划中</strong>。</p>
-  </div>
-</section>
-
-
-<div class="container home-content">
-<h1 id="section">下载</h1>
-
-<ul>
-  <li><strong>Windows 安装包</strong> — 双击向导安装，开箱即用。<a href="https://github.com/SheriocCode/Arxiver/releases/latest">前往 Releases →</a></li>
-</ul>
-
-<ol>
-  <li><strong>安装并启动</strong> 运行 <code class="language-plaintext highlighter-rouge">Arxiver Setup vX.exe</code>（内置翻译引擎与运行时）。</li>
-  <li><strong>下载模型</strong> 首次翻译前到「设置 → 本地模型」下载版面识别模型（约 72 MB，必需）和本地翻译模型（约 1.1 GB，仅本地模式）。使用在线接口时只需版面识别模型。</li>
-  <li><strong>导入并翻译</strong> 导入本地 PDF 或 arXiv 链接，打开后点「翻译」，在阅读器里切换 原文 / 对照 / 译文。</li>
-  <li>（可选）<strong>配置助手</strong> 需要对话式助手时，在「设置 → AI 助手」填入 OpenAI 兼容接口。</li>
-</ol>
-
-<ul>
-  <li><strong>自动更新</strong> — 内置差量更新，升级只下载变化的块；引擎与翻译模型没变就不会重下。</li>
-  <li><strong>源码（开发者）</strong> — 克隆仓库后进入 <code class="language-plaintext highlighter-rouge">electron-app/</code>：<code class="language-plaintext highlighter-rouge">npm install</code> → <code class="language-plaintext highlighter-rouge">npm run dev</code>。<a href="https://github.com/SheriocCode/Arxiver">查看仓库 →</a></li>
-</ul>
-
-</div>
-
+  <h1>Arxiver 官网已迁移</h1>
+  <p>新地址：<a href="https://sherioccode.github.io/arxiver/">https://sherioccode.github.io/arxiver/</a></p>
+  <p>正在跳转，如果没有自动跳转请点击上面的链接。</p>
 </main>
-
-<footer class="site-footer">
-  <div class="container">
-    <div>©2026 Arxiver · 本机离线翻译，开箱即用</div>
-    <div>
-      <a href="https://github.com/SheriocCode/Arxiver" target="_blank" rel="noopener">GitHub</a> ·
-      <a href="guide.html">文档</a> ·
-      <a href="changelog.html">更新日志</a>
-    </div>
-  </div>
-</footer>
-
-<script src="assets/carousel.js" defer></script>
-<script src="assets/nav.js" defer></script>
-
 </body>
 </html>

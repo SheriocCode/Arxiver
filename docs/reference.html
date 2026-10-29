@@ -3,222 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>参考 — Arxiver</title>
-<meta name="description" content="Arxiver 架构、数据、构建与发布参考。">
-<link rel="icon" href="assets/img/icon128.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/style.css">
+<title>Arxiver 官网已迁移</title>
+<link rel="canonical" href="https://sherioccode.github.io/arxiver/reference.html">
+<meta http-equiv="refresh" content="0; url=https://sherioccode.github.io/arxiver/">
+<script>location.replace("https://sherioccode.github.io/arxiver/reference.html" + location.search + location.hash);</script>
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: #fdfcfc; color: #424245;
+    font: 400 16px/1.6 "JetBrains Mono", ui-monospace, Consolas, monospace; }
+  main { max-width: 520px; padding: 32px 24px; }
+  h1 { margin: 0 0 12px; font-size: 20px; color: #201d1d; }
+  a { color: #007aff; }
+</style>
 </head>
 <body>
-
-<header class="site-header">
-  <div class="container">
-    <a class="brand" href="index.html"><img class="mark" src="assets/img/logo.svg" alt=""><img class="word" src="assets/img/arxiver_black.svg" alt="Arxiver"></a>
-    <nav class="site-nav" id="site-nav">
-      <a href="index.html">首页</a>
-      <a href="guide.html">文档</a>
-      <a href="reference.html" class="active">参考</a>
-      <a href="changelog.html">更新日志</a>
-      <a href="https://github.com/SheriocCode/Arxiver" target="_blank" rel="noopener">GitHub</a>
-    </nav>
-    <a class="btn primary nav-download" href="https://github.com/SheriocCode/Arxiver/releases/latest" target="_blank" rel="noopener">Download</a>
-    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="展开导航">
-      <span>菜单</span><b class="nav-toggle-mark"></b>
-    </button>
-  </div>
-</header>
-
 <main>
-<div class="container doc">
-  <aside class="toc">
-    <h4>目录</h4>
-    <a href="#arch">工作原理</a>
-    <a href="#layout">组成</a>
-    <a href="#data">数据格式</a>
-    <a href="#agent">Arxiver 助手</a>
-    <a href="#websearch">联网搜索与读正文</a>
-    <a href="#release">更新与发布</a>
-    <a href="#build">构建</a>
-    <a href="#license">第三方许可</a>
-  </aside>
-  <article class="doc-body">
-<h2 id="arch">工作原理</h2>
-
-<p>Electron 桌面应用：渲染进程（React）负责界面与 PDF.js 渲染，主进程负责文库/存储，并调用内嵌的本地翻译引擎（Python，内置离线翻译模型）与独立配置的在线接口（Arxiver 助手）。</p>
-
-<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>导入 PDF ─▶ 文库 storage/&lt;docId&gt;/paper.pdf
-打开 ─▶ 渲染进程用 PDF.js 渲染原文 / 译文（对照）
-点翻译 ─▶ 主进程调用内嵌引擎（engine/）─▶ 内置本地翻译模型（离线；也可切换在线接口）
-        └▶ 生成 dual/mono PDF + blocks.jsonl，落盘到 storage/&lt;docId&gt;/
-Arxiver ─▶ 主进程检索 storage/*/text.json（BM25）；联网时再走搜索服务商（Tavily / 博查 / DeepSeek）+ 读正文
-        └▶ 调用（独立配置的）在线接口流式作答（function calling；写操作先请用户批准）
-</code></pre></div></div>
-
-<h2 id="layout">组成</h2>
-
-<table>
-  <thead>
-    <tr>
-      <th>目录</th>
-      <th>说明</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><code class="language-plaintext highlighter-rouge">electron-app/src/main/</code></td>
-      <td>主进程：引擎调度、本地翻译服务（<code class="language-plaintext highlighter-rouge">localmodel</code>）、文库/存储、Agent（模型 + 工具 + 审批）、自动更新</td>
-    </tr>
-    <tr>
-      <td><code class="language-plaintext highlighter-rouge">electron-app/src/renderer/src/</code></td>
-      <td>渲染进程：React 组件、<code class="language-plaintext highlighter-rouge">styles.css</code>、PDF 阅读器引擎、Arxiver 面板</td>
-    </tr>
-    <tr>
-      <td><code class="language-plaintext highlighter-rouge">electron-app/src/preload/</code>、<code class="language-plaintext highlighter-rouge">src/shared/</code></td>
-      <td><code class="language-plaintext highlighter-rouge">window.api</code>（IPC）与共享类型</td>
-    </tr>
-    <tr>
-      <td><code class="language-plaintext highlighter-rouge">electron-app/engine/</code></td>
-      <td>本机翻译引擎（Python）：源码进 git；CPU 版 llama.cpp 与 python 运行时随安装包分发；GPU 加速包、HY-MT gguf 与版面识别 ONNX 按需下载</td>
-    </tr>
-    <tr>
-      <td><code class="language-plaintext highlighter-rouge">icons/</code>、<code class="language-plaintext highlighter-rouge">site/</code>→<code class="language-plaintext highlighter-rouge">docs/</code></td>
-      <td>品牌资源与文档站</td>
-    </tr>
-  </tbody>
-</table>
-
-<h2 id="data">数据格式</h2>
-
-<p>数据都在<strong>安装目录下的 <code class="language-plaintext highlighter-rouge">data\</code></strong>（例如 <code class="language-plaintext highlighter-rouge">E:\develop\Arxiver\data\</code>）：<code class="language-plaintext highlighter-rouge">storage/index.json</code>（文库元数据）、
-<code class="language-plaintext highlighter-rouge">storage/&lt;docId&gt;/</code>（<code class="language-plaintext highlighter-rouge">paper.pdf</code>、<code class="language-plaintext highlighter-rouge">&lt;cacheKey&gt;.dual.pdf</code>、<code class="language-plaintext highlighter-rouge">&lt;cacheKey&gt;.mono.pdf</code>、<code class="language-plaintext highlighter-rouge">&lt;cacheKey&gt;.blocks.jsonl</code>、
-<code class="language-plaintext highlighter-rouge">text.json</code>）、<code class="language-plaintext highlighter-rouge">storage/conversations/</code>（Arxiver 会话）、<code class="language-plaintext highlighter-rouge">config.json</code>（设置，含联网搜索的服务商与 API Key）、
-<code class="language-plaintext highlighter-rouge">models/</code>（按需下载的模型）、<code class="language-plaintext highlighter-rouge">runtime/vulkan/</code>（GPU 加速包）、<code class="language-plaintext highlighter-rouge">home/.cache/babeldoc/</code>（引擎缓存）、<code class="language-plaintext highlighter-rouge">logs/app.log</code>（运行日志）。
-Chromium 缓存 / LocalStorage / Cookies 仍在 <code class="language-plaintext highlighter-rouge">%APPDATA%\Arxiver\</code>（开发版 <code class="language-plaintext highlighter-rouge">Arxiver-dev</code>）；安装目录不可写时应用数据回退到该目录。详见<a href="../guide.html#storage">文档</a>。</p>
-
-<p><code class="language-plaintext highlighter-rouge">&lt;cacheKey&gt;.blocks.jsonl</code> 每行是一个段落块（<code class="language-plaintext highlighter-rouge">page / index / bbox / src / dst</code>）。片段里出现公式占位符时还带
-<code class="language-plaintext highlighter-rouge">vars</code>：页内编号 → 引擎从 PDF 字形抽出的公式文本（<code class="language-plaintext highlighter-rouge">{vN}</code> 与 `` 都认）；数学字体没有 Unicode 映射、抽不出内容时该键缺省，界面退回显示占位符。</p>
-
-<h2 id="agent">Arxiver 助手</h2>
-
-<ul>
-  <li><strong>模型</strong>：OpenAI 兼容 <code class="language-plaintext highlighter-rouge">chat/completions</code>（流式、function calling、usage），读取 <code class="language-plaintext highlighter-rouge">config.json</code> 中的 <code class="language-plaintext highlighter-rouge">chat_*</code> 配置（与翻译接口分离）；一轮提问最多 8 次工具往返（<code class="language-plaintext highlighter-rouge">MAX_ROUNDS</code>）。</li>
-  <li><strong>只读工具</strong>：<code class="language-plaintext highlighter-rouge">list_library</code>（含分类 / 标签）、<code class="language-plaintext highlighter-rouge">list_collections</code>、<code class="language-plaintext highlighter-rouge">search_library</code>（整库 BM25）、<code class="language-plaintext highlighter-rouge">search_in_document</code>、<code class="language-plaintext highlighter-rouge">read_document</code>（按页读 <code class="language-plaintext highlighter-rouge">text.json</code>）。</li>
-  <li><strong>写入工具</strong>：<code class="language-plaintext highlighter-rouge">update_metadata</code>、<code class="language-plaintext highlighter-rouge">apply_tags</code>、<code class="language-plaintext highlighter-rouge">set_flags</code>、<code class="language-plaintext highlighter-rouge">move_to_trash</code>、<code class="language-plaintext highlighter-rouge">restore_from_trash</code>、<code class="language-plaintext highlighter-rouge">add_to_collection</code>、<code class="language-plaintext highlighter-rouge">remove_from_collection</code>、<code class="language-plaintext highlighter-rouge">rename_collection</code>、<code class="language-plaintext highlighter-rouge">delete_collection</code>、<code class="language-plaintext highlighter-rouge">import_paper</code>、<code class="language-plaintext highlighter-rouge">add_note</code>、<code class="language-plaintext highlighter-rouge">delete_note</code> —— 一律先弹确认卡片（批准 / 修改 / 拒绝）。分类名 / 标签名对不上时，工具返回相近候选让模型自己纠正，而不是让用户去核对拼写。</li>
-  <li><strong>联网工具</strong>：<code class="language-plaintext highlighter-rouge">search_web</code>、<code class="language-plaintext highlighter-rouge">fetch_url</code>（见下一节）。</li>
-  <li><strong>图片输入</strong>：<code class="language-plaintext highlighter-rouge">AgentChatRequest.images</code>（<code class="language-plaintext highlighter-rouge">dataUrl</code> + <code class="language-plaintext highlighter-rouge">page</code> + <code class="language-plaintext highlighter-rouge">anchor</code> + <code class="language-plaintext highlighter-rouge">text</code>）拼成 OpenAI 兼容内容块（<code class="language-plaintext highlighter-rouge">[{type:"text"},{type:"image_url"}]</code>），历史消息里的图片随 <code class="language-plaintext highlighter-rouge">history[].images</code> 一起回传（只有 user 消息允许带图）。阅读器里的区域截图是<strong>自动进入</strong>的：<code class="language-plaintext highlighter-rouge">root</code> 上的 <code class="language-plaintext highlighter-rouge">pointerdown</code> 先用 <code class="language-plaintext highlighter-rouge">elementsFromPoint</code> 找到所在页，再用 <code class="language-plaintext highlighter-rouge">textLines()</code> 按行判断落点是否在文字行内（仅 2px 容差）——在文字上就完全交给浏览器原生选区（不做任何锚点/终点干预），否则（图 / 空白，或按住 <code class="language-plaintext highlighter-rouge">Alt</code>）开始拖框；移动超过 4px 才创建遮罩（单纯点击不会闪），松开后选区保留、选框外侧出现小操作条（Arxiver 图标 = 添加到对话，× = 取消），可拖 8 个手柄缩放 / 拖框内移动 / 点空白或 <code class="language-plaintext highlighter-rouge">Esc</code> 取消，点图标才裁剪入队（页面不压暗）。裁剪时 <code class="language-plaintext highlighter-rouge">cropRegion()</code> 同时算 <code class="language-plaintext highlighter-rouge">anchor</code>（选区顶部在页面里的纵向比例）和 <code class="language-plaintext highlighter-rouge">regionText()</code>（与选区相交的文本层 span；几乎没字时补上相交段落的译文），一起写进提示词，供模型定位。粘贴/选文件走 <code class="language-plaintext highlighter-rouge">lib/images.ts</code> 统一压到最长边 1600px。<code class="language-plaintext highlighter-rouge">runChat()</code> 对 <code class="language-plaintext highlighter-rouge">api.deepseek.com</code> + <code class="language-plaintext highlighter-rouge">deepseek-chat/reasoner/coder</code> 直接拦截图片请求（这些模型会静默忽略图片），前端也会在输入框上方提前提示。裁剪时 <code class="language-plaintext highlighter-rouge">cropRegion()</code> 同时算 <code class="language-plaintext highlighter-rouge">anchor</code>（选区顶部在页面里的纵向比例）和 <code class="language-plaintext highlighter-rouge">regionText()</code>（与选区相交的文本层 span；几乎没字时补上相交段落的译文），一起写进提示词，供模型定位。粘贴/选文件走 <code class="language-plaintext highlighter-rouge">lib/images.ts</code> 统一压到最长边 1600px。<code class="language-plaintext highlighter-rouge">runChat()</code> 对 <code class="language-plaintext highlighter-rouge">api.deepseek.com</code> + <code class="language-plaintext highlighter-rouge">deepseek-chat/reasoner/coder</code> 直接拦截图片请求（这些模型会静默忽略图片），前端也会在输入框上方提前提示。</li>
-  <li><strong>智能路由</strong>：当前文章为默认上下文，跨文献 / 整库问题自动检索；信息不足时追问。</li>
-  <li><strong>检索卡片</strong>：<code class="language-plaintext highlighter-rouge">search_web</code> 的结果带会话全局编号（<code class="language-plaintext highlighter-rouge">cardBase</code> + 序号 = <code class="language-plaintext highlighter-rouge">idx</code>），推给界面渲染成卡片；历史消息里每张卡片压成一行摘要（<code class="language-plaintext highlighter-rouge">#N 标题（site · year）</code>），模型用 <code class="language-plaintext highlighter-rouge">[[card:N]]</code> 指代，界面渲染为可点击胶囊（滚动到对应卡片并高亮）；本地文献用 <code class="language-plaintext highlighter-rouge">[[cite:&lt;docId&gt;#&lt;page&gt;]]</code>。</li>
-  <li><strong>进度事件</strong>：长耗时工具（<code class="language-plaintext highlighter-rouge">import_paper</code> / <code class="language-plaintext highlighter-rouge">fetch_url</code>）通过 <code class="language-plaintext highlighter-rouge">progress</code> 回调上报阶段，界面显示转圈 + 阶段 + 已用秒数。</li>
-</ul>
-
-<h2 id="websearch">联网搜索与读正文</h2>
-
-<p>相关配置（<code class="language-plaintext highlighter-rouge">config.json</code>）：<code class="language-plaintext highlighter-rouge">search_enabled</code>（总开关，默认 <code class="language-plaintext highlighter-rouge">false</code>）、<code class="language-plaintext highlighter-rouge">search_provider</code>（<code class="language-plaintext highlighter-rouge">tavily</code> | <code class="language-plaintext highlighter-rouge">bocha</code> | <code class="language-plaintext highlighter-rouge">deepseek</code>）、
-<code class="language-plaintext highlighter-rouge">search_key_tavily</code> / <code class="language-plaintext highlighter-rouge">search_key_bocha</code> / <code class="language-plaintext highlighter-rouge">search_key_deepseek</code>（各家 Key 分别保存）、<code class="language-plaintext highlighter-rouge">search_scope</code>（<code class="language-plaintext highlighter-rouge">academic</code> | <code class="language-plaintext highlighter-rouge">web</code>）。
-开关关闭时联网工具不暴露给模型；<code class="language-plaintext highlighter-rouge">search_web</code> 需要<strong>当前服务商</strong>有 Key，<code class="language-plaintext highlighter-rouge">fetch_url</code> 只要有开关（没 Key 就用本机抓取）。
-每次请求都会把联网状态（未开启 / 已开启但当前服务商缺 Key / 可用）写进上下文（<code class="language-plaintext highlighter-rouge">webSearchState()</code>），
-避免模型把「缺 Key」说成「没开启」，或在不可用时编造外部资料。
-不再调用 arXiv / OpenAlex 的检索接口（曾受 IP 限流）。</p>
-
-<h3 id="searchweb--searchweb">聚合搜索（<code class="language-plaintext highlighter-rouge">search_web</code> → <code class="language-plaintext highlighter-rouge">searchWeb()</code>）</h3>
-
-<ul>
-  <li><strong>查询扇出</strong>：模型给出 1~4 条<strong>英文</strong>受控检索式（可带会议名 / 年份 / <code class="language-plaintext highlighter-rouge">site:</code> 限定），并行请求（DeepSeek 并发限 2），去重后统一排序。</li>
-  <li><strong>归一化</strong>：各家结果都收敛成 <code class="language-plaintext highlighter-rouge">RawHit{title,url,content,date,site}</code>，之后共用清洗：
-    <ul>
-      <li>标题剥掉 arXiv 的 <code class="language-plaintext highlighter-rouge">[2509.15459]</code> 前缀；博查另外剥站点后缀（<code class="language-plaintext highlighter-rouge">… – arxiv</code> / <code class="language-plaintext highlighter-rouge">… | researchgate</code>）；</li>
-      <li>摘要优先从 <code class="language-plaintext highlighter-rouge">Abstract:</code> 之后截取——arXiv 摘要页常混入 arXivLabs / Announce Type / Subjects / Cite as 等样板，抽不到就留空，不显示噪声；</li>
-      <li>arXiv 编号先看 URL、取不到再从正文里找（<code class="language-plaintext highlighter-rouge">arXiv:…</code> 写法）；DOI <strong>只从 URL 里识别</strong>（防从摘要里误抓别人的 DOI）。两者决定条目能否一键导入；</li>
-      <li>去重键：DOI → arXiv 编号 → 归一化 URL（去 <code class="language-plaintext highlighter-rouge">utm_*</code> / 锚点 / <code class="language-plaintext highlighter-rouge">www</code>）。</li>
-    </ul>
-  </li>
-  <li><strong>排序</strong>：<code class="language-plaintext highlighter-rouge">tier = 学术域名(1) + 带标识符(1)</code>，同 tier 按年份降序。学术白名单含 arXiv / ar5iv / OpenReview / NeurIPS / CVF / ECVA / PMLR / ACL / AAAI / IJCAI / ACM / IEEE / Springer / ScienceDirect / Nature / Science / PubMed / bioRxiv 等。</li>
-  <li><strong>Tavily</strong>：<code class="language-plaintext highlighter-rouge">POST /search</code>，<code class="language-plaintext highlighter-rouge">search_depth=basic</code>、<code class="language-plaintext highlighter-rouge">include_usage</code>、<code class="language-plaintext highlighter-rouge">include_published_date</code>；学术时带 <code class="language-plaintext highlighter-rouge">include_domains</code> + <code class="language-plaintext highlighter-rouge">include_domains_mode</code>（<code class="language-plaintext highlighter-rouge">prefer</code> 加权 / <code class="language-plaintext highlighter-rouge">restrict</code> 限定），<code class="language-plaintext highlighter-rouge">time_range</code> 透传；用量取 <code class="language-plaintext highlighter-rouge">usage.credits</code>。</li>
-  <li><strong>博查</strong>：<code class="language-plaintext highlighter-rouge">POST /v1/web-search</code>，<code class="language-plaintext highlighter-rouge">summary=true</code>（长摘要比 <code class="language-plaintext highlighter-rouge">snippet</code> 完整）、<code class="language-plaintext highlighter-rouge">count</code>、<code class="language-plaintext highlighter-rouge">freshness</code>（<code class="language-plaintext highlighter-rouge">day/week/month/year</code> → <code class="language-plaintext highlighter-rouge">oneDay/oneWeek/oneMonth/oneYear</code>）；字段映射 <code class="language-plaintext highlighter-rouge">name→title</code>、<code class="language-plaintext highlighter-rouge">summary || snippet→content</code>、<code class="language-plaintext highlighter-rouge">datePublished || dateLastCrawled→date</code>。它<strong>没有域名参数、没有 extract、也不返回 credits</strong>，所以 <code class="language-plaintext highlighter-rouge">academic + restrict</code> 由本地白名单兜底（<code class="language-plaintext highlighter-rouge">prefer</code> 本来就只是排序加权）。</li>
-  <li><strong>DeepSeek</strong>：<code class="language-plaintext highlighter-rouge">POST https://api.deepseek.com/v1/tools/search</code>（Bearer 用 DeepSeek Key），<code class="language-plaintext highlighter-rouge">count</code>、<code class="language-plaintext highlighter-rouge">need_content=false</code>；字段映射 <code class="language-plaintext highlighter-rouge">summary || snippet→content</code>、<code class="language-plaintext highlighter-rouge">date→date</code>、<code class="language-plaintext highlighter-rouge">site_name→site</code>（本地认不出域名时用作 venue）。检索式按 <strong>128 字符</strong>预算截断（超长直接 400），时间范围转成 <code class="language-plaintext highlighter-rouge">after:YYYY-MM-DD</code>（比 day/week/month/year 更细）。它同样没有域名参数（<code class="language-plaintext highlighter-rouge">site:</code> 是 query 语法，26 个学术域名拼不进 128 字符），<code class="language-plaintext highlighter-rouge">academic + restrict</code> 也走本地白名单；<strong>账号级 5 QPS</strong>，所以四条查询限并发 2，408/429/5xx 等 800ms 重试一次；按请求计费（¥5 / 1000 次，无结果不计费），日志里记「N 次请求」而不是 credits。</li>
-  <li><strong>失败处理</strong>：401/403 → Key 无效、402 → 余额不足、432/433 → 额度用尽、429 → 频繁；所有查询都失败且无结果时抛出错误交给模型，让它如实说明，而不是编造论文。</li>
-</ul>
-
-<h3 id="fetchurl--readpage">读正文（<code class="language-plaintext highlighter-rouge">fetch_url</code> → <code class="language-plaintext highlighter-rouge">readPage()</code>）</h3>
-
-<p>预算默认 8000 字（<code class="language-plaintext highlighter-rouge">max_chars</code> 限 2000~20000），三条路径：</p>
-
-<ol>
-  <li><strong>Tavily extract</strong>（配了 Tavily Key 时优先）：<code class="language-plaintext highlighter-rouge">POST /extract</code>，带上 <code class="language-plaintext highlighter-rouge">query</code> 让服务端挑相关段落（<code class="language-plaintext highlighter-rouge">chunks_per_source=4</code>），1 credit / 5 个 URL，超时 25s；返回文本只做长度收敛。</li>
-  <li><strong>DeepSeek Fetch</strong>（配了 DeepSeek Key 且上一步没取到）：<code class="language-plaintext highlighter-rouge">POST https://api.deepseek.com/v1/tools/fetch</code>，直接返回 Markdown 正文（<code class="language-plaintext highlighter-rouge">title</code> + <code class="language-plaintext highlighter-rouge">content</code>），超时 30s；先走一次内网地址校验（不把 <code class="language-plaintext highlighter-rouge">localhost</code> / 内网 URL 发给服务商），取回的正文同样用 <code class="language-plaintext highlighter-rouge">pickPassages()</code> 按 query 挑段。它有域名级 QPS 且对无正文的页面返回 404，所以只作兜底。</li>
-  <li><strong>本机抓取</strong>（没配 Key 或上面都失败）：<code class="language-plaintext highlighter-rouge">fetchPageText()</code>
-    <ul>
-      <li>只允许 <code class="language-plaintext highlighter-rouge">http</code> / <code class="language-plaintext highlighter-rouge">https</code>；拒绝 <code class="language-plaintext highlighter-rouge">localhost</code>、<code class="language-plaintext highlighter-rouge">*.local</code> / <code class="language-plaintext highlighter-rouge">*.internal</code>、IPv4 私网（<code class="language-plaintext highlighter-rouge">10.</code> / <code class="language-plaintext highlighter-rouge">127.</code> / <code class="language-plaintext highlighter-rouge">192.168.</code> / <code class="language-plaintext highlighter-rouge">172.16-31.</code> / <code class="language-plaintext highlighter-rouge">169.254.</code> / <code class="language-plaintext highlighter-rouge">0.</code> / CGNAT）与 IPv6 私网，<strong>DNS 解析后再校验一次</strong>（防内网域名与 DNS 重绑定）；</li>
-      <li>手动跟随跳转、最多 4 跳、<strong>每一跳重新校验</strong>；单跳 20s 超时；响应体最大 3MB；</li>
-      <li><code class="language-plaintext highlighter-rouge">application/pdf</code> → 落临时文件后调 <code class="language-plaintext highlighter-rouge">engine/extract_text.py</code>（PyMuPDF）逐页抽文本；HTML → 去 <code class="language-plaintext highlighter-rouge">script/style</code> / 标签、还原实体、取 <code class="language-plaintext highlighter-rouge">&lt;title&gt;</code>；其它按纯文本；</li>
-      <li>再本地挑段落 <code class="language-plaintext highlighter-rouge">pickPassages()</code>：按空行切段（&gt;40 字），用 <code class="language-plaintext highlighter-rouge">agent/text.ts</code> 的 <code class="language-plaintext highlighter-rouge">tokenize</code> 算与 query 的词重合度打分、轻微偏好靠前段落，拼到预算为止，段间用 <code class="language-plaintext highlighter-rouge">---</code>。</li>
-    </ul>
-  </li>
-</ol>
-
-<p>读到的内容一方面以 <code class="language-plaintext highlighter-rouge">read</code> 事件推给界面（「已读正文」行：站点 · 字数，悬停看途径与完整链接），另一方面作为工具结果回给模型。主进程日志（<code class="language-plaintext highlighter-rouge">websearch:</code> 前缀）记录每条检索式命中数、<code class="language-plaintext highlighter-rouge">&lt;服务商&gt; 合计 N 条，用量 X credits / N 次请求，耗时 Yms</code>、<code class="language-plaintext highlighter-rouge">读取 &lt;域名&gt;（&lt;途径&gt;，N 字，Yms）</code>。</p>
-
-<blockquote>
-  <p>Key 以明文存于 <code class="language-plaintext highlighter-rouge">config.json</code>（仅本机、不进 git）；对外只发检索式与要读的 URL，本地文献内容不外发。</p>
-</blockquote>
-
-<h3 id="section">导入</h3>
-
-<p><code class="language-plaintext highlighter-rouge">import_paper</code> 与「新建文献」共用 <code class="language-plaintext highlighter-rouge">importPaper.ts</code>：接受 arXiv 编号 / DOI / arXiv abs 页 / PDF 直链，页面里会找 <code class="language-plaintext highlighter-rouge">citation_pdf_url</code>；下载后经 <code class="language-plaintext highlighter-rouge">engine/pdfmeta.py</code> 与 <code class="language-plaintext highlighter-rouge">enrich.ts</code> 补全标题 / 作者 / 年份 / 期刊 / DOI 再落库，全程通过 <code class="language-plaintext highlighter-rouge">progress</code> 回调报阶段（查询元信息 → 下载 PDF → 补全元数据）。</p>
-
-<h2 id="release">更新与发布</h2>
-
-<ul>
-  <li>本地打包：<code class="language-plaintext highlighter-rouge">powershell -File tools/build.ps1</code>（<code class="language-plaintext highlighter-rouge">electron-builder</code> NSIS，产出安装包、<code class="language-plaintext highlighter-rouge">.exe.blockmap</code>、<code class="language-plaintext highlighter-rouge">latest.yml</code> 于 <code class="language-plaintext highlighter-rouge">electron-app/dist/</code>）。</li>
-  <li>发布：<code class="language-plaintext highlighter-rouge">powershell -File tools/publish.ps1 -Version X.Y.Z</code>（提交版本、打 tag 并上传到 GitHub Release）。</li>
-  <li>更新：<code class="language-plaintext highlighter-rouge">electron-updater</code> 读取 <code class="language-plaintext highlighter-rouge">latest.yml</code>，差量下载（只下变化块）；引擎文件未变不会重下。</li>
-  <li>引擎版本记于 <code class="language-plaintext highlighter-rouge">electron-app/engine/VERSION</code>；引擎有实质更新时 bump 并在 changelog 注明。</li>
-</ul>
-
-<h2 id="build">构建</h2>
-
-<div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">cd</span><span class="w"> </span><span class="nx">electron-app</span><span class="w">
-</span><span class="n">npm</span><span class="w"> </span><span class="nx">install</span><span class="w">
-</span><span class="n">npm</span><span class="w"> </span><span class="nx">run</span><span class="w"> </span><span class="nx">dev</span><span class="w">        </span><span class="c"># 开发运行</span><span class="w">
-</span><span class="n">npm</span><span class="w"> </span><span class="nx">run</span><span class="w"> </span><span class="nx">typecheck</span><span class="w">  </span><span class="c"># tsc（node + web）</span><span class="w">
-</span><span class="n">npm</span><span class="w"> </span><span class="nx">run</span><span class="w"> </span><span class="nx">build</span><span class="w">      </span><span class="c"># electron-vite 构建</span><span class="w">
-</span><span class="n">npm</span><span class="w"> </span><span class="nx">run</span><span class="w"> </span><span class="nx">dist</span><span class="w">       </span><span class="c"># 打包安装包（electron-builder）</span><span class="w">
-</span></code></pre></div></div>
-
-<p>仓库根 <code class="language-plaintext highlighter-rouge">tools/</code>：<code class="language-plaintext highlighter-rouge">build.ps1</code>（本地打包）、<code class="language-plaintext highlighter-rouge">publish.ps1</code>（发布，先打包）、<code class="language-plaintext highlighter-rouge">build-docs.ps1</code>（文档站 <code class="language-plaintext highlighter-rouge">site/</code> → <code class="language-plaintext highlighter-rouge">docs/</code>）、<code class="language-plaintext highlighter-rouge">fetch-llm.ps1</code>（装配 CPU / Vulkan 运行时与 HY-MT 模型）。</p>
-
-<h2 id="license">第三方许可</h2>
-
-<ul>
-  <li><strong>PDF.js</strong>（Mozilla，Apache-2.0）：PDF 渲染与文本层。</li>
-  <li><strong>HY-MT</strong>（腾讯混元，Apache-2.0）：本地翻译模型，在应用内按需下载。</li>
-  <li><strong>llama.cpp</strong>（MIT）：本地翻译推理运行时。</li>
-  <li><strong>ONNX Runtime</strong>（MIT，含 DirectML 执行后端）：版面识别。</li>
-  <li><strong>BabelDOC / PyMuPDF</strong>（AGPL-3.0）：随引擎分发的翻译引擎与文本抽取。</li>
-  <li><strong>KaTeX</strong>（MIT）、<strong>react-markdown / remark / rehype</strong>（MIT）：Arxiver 回答渲染。</li>
-  <li>图标集移植自 <strong>Lucide</strong>（ISC）。</li>
-</ul>
-
-  </article>
-</div>
-
+  <h1>Arxiver 官网已迁移</h1>
+  <p>新地址：<a href="https://sherioccode.github.io/arxiver/">https://sherioccode.github.io/arxiver/</a></p>
+  <p>正在跳转，如果没有自动跳转请点击上面的链接。</p>
 </main>
-
-<footer class="site-footer">
-  <div class="container">
-    <div>©2026 Arxiver · 本机离线翻译，开箱即用</div>
-    <div>
-      <a href="https://github.com/SheriocCode/Arxiver" target="_blank" rel="noopener">GitHub</a> ·
-      <a href="guide.html">文档</a> ·
-      <a href="changelog.html">更新日志</a>
-    </div>
-  </div>
-</footer>
-
-<script src="assets/carousel.js" defer></script>
-<script src="assets/nav.js" defer></script>
-
 </body>
 </html>
