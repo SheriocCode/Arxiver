@@ -1,23 +1,36 @@
 import type { ReplaceCommand } from "./overleaf-replace";
 
+export interface AiConnection {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export interface AiConnectionTestResult {
+  ok: boolean;
+  message: string;
+  latencyMs?: number;
+}
+
 export interface AppConfig {
+  /** OpenAI 兼容连接：密钥只存一次，各功能引用同一个连接 */
+  ai_connections: AiConnection[];
   translate_mode: "local" | "remote";
   service: string;
-  translate_base_url: string;
-  translate_api_key: string;
-  translate_model: string;
+  translate_connection: string;
   local_model: string;
   local_gpu_layers: number;
   local_extra_args: string;
-  chat_base_url: string;
-  chat_api_key: string;
-  chat_model: string;
+  /** 文献助手使用的连接；Overleaf 默认跟随它 */
+  chat_connection: string;
+  /** 留空表示跟随文献助手 */
+  overleaf_connection: string;
   search_enabled: boolean;
   search_provider: "tavily" | "bocha" | "deepseek";
   search_key_tavily: string;
   search_key_bocha: string;
-  search_key_deepseek: string;
-  search_scope: "academic" | "web";
   source_lang: string;
   target_lang: string;
   output_variant: string;
@@ -601,10 +614,11 @@ export interface LocalModelProgress {
 export interface Api {
   getConfig(): Promise<AppConfig>;
   setConfig(patch: Partial<AppConfig>): Promise<AppConfig>;
+  aiTestConnection(connection: Pick<AiConnection, "baseUrl" | "apiKey">): Promise<AiConnectionTestResult>;
   appInfo(): Promise<AppInfo>;
   localStatus(): Promise<LocalModelStatus>;
   modelsList(): Promise<LocalModelInfo[]>;
-  modelsDir(): Promise<string>;
+  modelsReveal(id: LocalModelId): Promise<boolean>;
   modelDownload(id: LocalModelId, source?: string): Promise<boolean>;
   modelTestSource(url: string): Promise<ModelSourceTest>;
   modelCancel(id: LocalModelId): Promise<boolean>;

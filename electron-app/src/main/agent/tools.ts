@@ -37,9 +37,6 @@ export function webSearchState(): { on: boolean; key: boolean; provider: string 
 function webProvider(): websearch.SearchProvider {
   return searchProvider(getConfig());
 }
-function webScope(): "academic" | "web" {
-  return getConfig().search_scope === "web" ? "web" : "academic";
-}
 
 interface DocMeta { id: string; title: string; year: string; authors: string }
 
@@ -139,7 +136,8 @@ export const TOOLS: ToolImpl[] = [
       if (queries.some((q) => /[\u4e00-\u9fff]/.test(q))) {
         return "检索式必须是英文：请先把中文需求改写成 1~4 条英文受控检索式（可加会议名/年份/site: 限定）再调用本工具。";
       }
-      const scope = args.scope === "web" || args.scope === "academic" ? args.scope : webScope();
+      // 默认学术加权；模型可以根据问题自己传 web，不再有全局设置。
+      const scope = args.scope === "web" || args.scope === "academic" ? args.scope : "academic";
       const timeRange = ["day", "week", "month", "year"].includes(String(args.time_range))
         ? (String(args.time_range) as websearch.WebSearchOptions["timeRange"])
         : undefined;
@@ -678,11 +676,11 @@ export async function runTool(name: string, argsJson: string, ctx?: ToolContext)
   if (name === "search_web" && !webSearchEnabled()) {
     const st = webSearchState();
     return st.on
-      ? `「联网搜索」已开启，但服务商「${st.provider}」还没填 API Key，搜索不可用：请让用户在 设置 → AI 助手 → 联网搜索 里填「${st.provider}」的 Key 并保存，然后再试（在此之前不要猜测外部论文）。`
-      : "「联网搜索」未开启：请让用户在 设置 → AI 助手 → 联网搜索 里开启后再试（在此之前不要猜测外部论文）。";
+      ? `「联网搜索」已开启，但服务商「${st.provider}」还没填 API Key，搜索不可用：请让用户在 设置 → AI 服务 → 联网搜索 里填「${st.provider}」的 Key 并保存，然后再试（在此之前不要猜测外部论文）。`
+      : "「联网搜索」未开启：请让用户在 设置 → AI 服务 → 联网搜索 里开启后再试（在此之前不要猜测外部论文）。";
   }
   if (name === "fetch_url" && !webEnabled()) {
-    return "「联网搜索」未开启：联网功能在 设置 → AI 助手 → 联网搜索 里，请让用户开启后再试。";
+    return "「联网搜索」未开启：联网功能在 设置 → AI 服务 → 联网搜索 里，请让用户开启后再试。";
   }
   let args: Record<string, unknown> = {};
   try { args = argsJson ? JSON.parse(argsJson) : {}; } catch { args = {}; }

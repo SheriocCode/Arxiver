@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import type { AppConfig, OverleafDocEvent, OverleafEvent, OverleafFile, OverleafStatus } from "../../../shared/types";
+import { overleafTarget } from "../../../shared/ai";
 import { parseReplaceCommands, stripPendingCommandBlocks, type ReplaceCommand } from "../../../shared/overleaf-replace";
 import { Icon } from "./Icons";
 import { Markdown } from "../lib/markdown";
@@ -93,7 +94,9 @@ export default function OverleafView({ onScreen, active, config, onOpenSettings 
   projectFilesRef.current = projectFiles;
   syncingRef.current = syncing;
 
-  const aiReady = !!(config?.chat_base_url && config?.chat_api_key && config?.chat_model);
+  const target = overleafTarget(config);
+  const aiReady = !!(target.baseUrl && target.apiKey && target.model);
+  const inProject = /\/project\/[A-Za-z0-9]+/.test(pageStatus.url);
 
   const selectedFiles = useMemo(
     () => projectFiles.filter((file) => selected.has(file.path)),
@@ -494,7 +497,7 @@ export default function OverleafView({ onScreen, active, config, onOpenSettings 
       setTurns((prev) => [
         ...prev,
         { id: "u" + stamp, role: "user", text: question },
-        { id: "a" + stamp, role: "assistant", text: "", error: "AI 助手尚未配置：请在「设置 → AI 助手」填写接口地址、API Key 和模型。" }
+        { id: "a" + stamp, role: "assistant", text: "", error: "AI 助手尚未配置：请在「设置 → AI 服务」里选择连接并填写模型。" }
       ]);
       setInput("");
       return;
@@ -768,7 +771,7 @@ export default function OverleafView({ onScreen, active, config, onOpenSettings 
                   </div>
                 </div>
               ) : (
-                <div className="ov-context-empty">打开文件会自动加入，或点右上角提取全部文本文件。</div>
+                <div className="ov-context-empty">还没有加入文件</div>
               )
             ) : null}
           </div>
@@ -776,12 +779,22 @@ export default function OverleafView({ onScreen, active, config, onOpenSettings 
           <div className="ai-scroll ov-msgs" ref={scrollRef}>
             {turns.length === 0 ? (
               <div className="ov-empty">
-                <b>让 AI 读你的 LaTeX 项目</b>
-                <p>登录 Overleaf 并打开项目后，打开文件会自动加入列表，也可以点「提取项目文件」一次读取全部文本。</p>
-                <p>如果需要的文件不在上下文里，直接问；AI 会自己打开并读取对应文件。</p>
-                <p>AI 可以生成带 SEARCH / WITH 的修改块；只有你点「应用」时才会写入 Overleaf。</p>
-                <p>默认约定：<b>正文只写英文</b>，中文只放在 <code>%</code> 注释里，避免 pdfLaTeX 的 Unicode 报错。</p>
-                <p>提问时，勾选的 tex/bib 内容会发送到「设置 → AI 助手」配置的服务商。</p>
+                <div className="ov-empty-title"><Icon name="sparkle" small /> 让 AI 参与写作</div>
+                <p>打开文件会自动加入上下文，也可以一次读取整个项目。</p>
+                {inProject ? (
+                  <button
+                    type="button"
+                    className="btn btn-primary ov-empty-action"
+                    onClick={() => void syncProject()}
+                    disabled={syncing || !onScreen}
+                  >
+                    {syncing ? <span className="ov-spinner" /> : <Icon name="files" small />}
+                    {syncing ? "正在读取…" : "读取项目文件"}
+                  </button>
+                ) : (
+                  <div className="ov-empty-hint">先在上方打开一个 Overleaf 项目</div>
+                )}
+                <div className="ov-empty-foot">修改先确认再写入 · 正文英文，中文用 <code>%</code> 注释</div>
               </div>
             ) : null}
 
@@ -906,7 +919,7 @@ export default function OverleafView({ onScreen, active, config, onOpenSettings 
                 onClick={onOpenSettings}
               >
                 <Icon name="sparkle" small />
-                <span>{config?.chat_model || "未配置模型"}</span>
+                <span>{target.model || "未配置模型"}</span>
               </button>
               <textarea
                 rows={2}

@@ -1,57 +1,34 @@
 import fs from "node:fs";
 import path from "node:path";
+import type { AiConnection, AppConfig } from "../shared/types";
+import { searchConnection } from "../shared/ai";
 import { configPath } from "./paths";
 
-export interface AppConfig {
-  // 翻译引擎：local = 内置 llama.cpp + HY-MT 模型；remote = OpenAI 兼容 API
-  translate_mode: "local" | "remote";
-  service: string;
-  translate_base_url: string;
-  translate_api_key: string;
-  translate_model: string;
-  local_model: string;
-  local_gpu_layers: number;
-  local_extra_args: string;
-  // AI 助手（会话）：始终走独立的接口，避免与翻译互抢额度
-  chat_base_url: string;
-  chat_api_key: string;
-  chat_model: string;
-  // 联网搜索（AI 助手，默认关闭）：可选服务商，各家 Key 分别保存，方便切换对比
-  search_enabled: boolean;
-  search_provider: "tavily" | "bocha" | "deepseek";
-  search_key_tavily: string;
-  search_key_bocha: string;
-  search_key_deepseek: string;
-  search_scope: "academic" | "web";
-  source_lang: string;
-  target_lang: string;
-  output_variant: string;
-  threads: number;
-  use_babeldoc: boolean;
-  skip_subset_fonts: boolean;
-  extra_args: string;
-  prompt: string;
-  timeout: number;
-}
+export type { AppConfig };
+
+const DEFAULT_CONNECTION: AiConnection = {
+  id: "deepseek",
+  name: "DeepSeek",
+  baseUrl: "https://api.deepseek.com",
+  apiKey: "",
+  model: "deepseek-flash"
+};
 
 const DEFAULT_CONFIG: AppConfig = {
+  // 连接只配置一次，翻译 / 助手 / Overleaf / DeepSeek 搜索都引用它
+  ai_connections: [DEFAULT_CONNECTION],
   translate_mode: "local",
   service: "openai",
-  translate_base_url: "https://api.deepseek.com",
-  translate_api_key: "",
-  translate_model: "deepseek-chat",
+  translate_connection: "deepseek",
   local_model: "",
   local_gpu_layers: 99,
   local_extra_args: "",
-  chat_base_url: "https://api.deepseek.com",
-  chat_api_key: "",
-  chat_model: "deepseek-chat",
+  chat_connection: "deepseek",
+  overleaf_connection: "",
   search_enabled: false,
   search_provider: "tavily",
   search_key_tavily: "",
   search_key_bocha: "",
-  search_key_deepseek: "",
-  search_scope: "academic",
   source_lang: "en",
   target_lang: "zh-CN",
   output_variant: "dual",
@@ -67,11 +44,38 @@ const WRITABLE = Object.keys(DEFAULT_CONFIG) as (keyof AppConfig)[];
 
 let current: AppConfig | null = null;
 
+function normalize(config: AppConfig): void {
+  const seen = new Set<string>();
+  const list: AiConnection[] = [];
+  for (const item of Array.isArray(config.ai_connections) ? config.ai_connections : []) {
+    const id = String(item?.id || "").trim();
+    if (!id || seen.has(id)) { continue; }
+    seen.add(id);
+    list.push({
+      id,
+      name: String(item?.name || id),
+      baseUrl: String(item?.baseUrl || ""),
+      apiKey: String(item?.apiKey || ""),
+      model: String(item?.model || "") || (id === "deepseek" ? "deepseek-flash" : "")
+    });
+  }
+  if (!list.length) { list.push({ ...DEFAULT_CONNECTION }); }
+  config.ai_connections = list;
+
+  const ids = new Set(list.map((item) => item.id));
+  const fallback = list[0].id;
+  const keep = (value: string): string => (value && ids.has(value) ? value : "");
+  config.chat_connection = keep(config.chat_connection) || fallback;
+  config.translate_connection = keep(config.translate_connection) || fallback;
+  // 留空表示跟随文献助手
+  config.overleaf_connection = keep(config.overleaf_connection);
+}
+
 function load(): AppConfig {
   if (current) {
     return current;
   }
-  current = { ...DEFAULT_CONFIG };
+  current = { ...DEFAULT_CONFIG, ai_connections: [{ ...DEFAULT_CONNECTION }] };
   try {
     const raw = JSON.parse(fs.readFileSync(configPath(), "utf8")) as Partial<AppConfig>;
     for (const key of WRITABLE) {
@@ -82,6 +86,7 @@ function load(): AppConfig {
   } catch {
     // first run or unreadable file
   }
+  normalize(current);
   return current;
 }
 
@@ -93,21 +98,25 @@ function save(): void {
 }
 
 export function get(): AppConfig {
-  return { ...load() };
+  const config = load();
+  return { ...config, ai_connections: config.ai_connections.map((item) => ({ ...item })) };
 }
 
-// 联网搜索当前服务商的 Key
+// 联网搜索当前服务商的 Key（DeepSeek 复用连接里的 Key）
 export function searchKey(c: AppConfig = get()): string {
   switch (searchProvider(c)) {
     case "bocha": return String(c.search_key_bocha || "");
-    case "deepseek": return String(c.search_key_deepseek || "");
+    case "deepseek": return String(searchConnection(c)?.apiKey || "");
     default: return String(c.search_key_tavily || "");
   }
 }
 
 // 读正文用的 Key：Tavily extract 优先、DeepSeek Fetch 兜底，两家都配了就都带上，都没配就本机抓
 export function readKeys(c: AppConfig = get()): { tavily: string; deepseek: string } {
-  return { tavily: String(c.search_key_tavily || ""), deepseek: String(c.search_key_deepseek || "") };
+  return {
+    tavily: String(c.search_key_tavily || ""),
+    deepseek: String(searchConnection(c)?.apiKey || "")
+  };
 }
 
 export function searchProvider(c: AppConfig = get()): "tavily" | "bocha" | "deepseek" {
@@ -120,9 +129,10 @@ export function update(patch: Partial<AppConfig>): AppConfig {
   const next = load();
   for (const key of WRITABLE) {
     if (patch && Object.prototype.hasOwnProperty.call(patch, key)) {
-      (next as unknown as Record<string, unknown>)[key] = (patch as unknown as Record<string, unknown>)[key];
+      (next as unknown as Record<string, unknown>)[key] = (patch as Record<string, unknown>)[key];
     }
   }
+  normalize(next);
   save();
   return get();
 }

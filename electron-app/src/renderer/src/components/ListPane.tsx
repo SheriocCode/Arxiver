@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type JSX, type MouseEvent as ReactMouseEvent } from "react";
 import type { LibraryDoc } from "../../../shared/types";
 import { Icon } from "./Icons";
 import type { LibraryApi } from "../state/useLibrary";
@@ -43,6 +43,7 @@ export default function ListPane({
 }): JSX.Element {
   const [cols, setCols] = useState(DEFAULT_COLS);
   const dragging = useRef<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; doc: LibraryDoc } | null>(null);
   const [dropOver, setDropOver] = useState(false);
   const [importing, setImporting] = useState("");
@@ -52,7 +53,25 @@ export default function ListPane({
     if (!menu) { return; }
     const close = (): void => setMenu(null);
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [menu]);
+
+  // 右键菜单在靠近窗口边缘时向内收，避免下半部分被窗口裁掉。
+  useLayoutEffect(() => {
+    if (!menu || !menuRef.current) { return; }
+    const el = menuRef.current;
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    const x = Math.max(pad, Math.min(menu.x, window.innerWidth - rect.width - pad));
+    const y = Math.max(pad, Math.min(menu.y, window.innerHeight - rect.height - pad));
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
   }, [menu]);
 
   // 拖入后的读取 / 解析阶段提示（来自主进程）；只在本列表自己的拖拽导入期间显示
@@ -236,7 +255,7 @@ export default function ListPane({
       )}
 
       {menu && (
-        <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <div ref={menuRef} className="ctx-menu" onMouseDown={(e) => e.stopPropagation()}>
           <button onClick={() => { const id = menu.doc.id; setMenu(null); onOpenDoc(id); }}><Icon name="book" small /> 查看</button>
           <button onClick={() => { void navigator.clipboard.writeText(citationText(menu.doc)); setMenu(null); }}><Icon name="copy" small /> 复制引用</button>
           {!menu.doc.trash && curCol && menu.doc.collections.includes(curCol.id) && (

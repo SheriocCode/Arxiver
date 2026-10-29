@@ -1,4 +1,4 @@
-import { BrowserWindow, net } from "electron";
+import { BrowserWindow, net, shell } from "electron";
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -93,12 +93,13 @@ const active = new Map<LocalModelId, AbortController>();
 const cancelled = new Set<LocalModelId>();
 
 function ensureTargetDir(id: LocalModelId): void {
-  fs.mkdirSync(id === "gpu" ? paths.runtimeDir() : paths.managedModelsDir(), { recursive: true });
+  fs.mkdirSync(path.dirname(downloadPath(id)), { recursive: true });
 }
 
 /** 下载文件的落盘路径（zip 运行时保存为 data/runtime/<file>.zip 后解压） */
 function downloadPath(id: LocalModelId): string {
-  if (id === "layout") { return paths.managedLayoutModelPath(); }
+  // babeldoc 只认 ~/.cache/babeldoc/models；直接下到这里，避免再复制一份。
+  if (id === "layout") { return paths.babeldocModelPath(); }
   if (id === "translate") { return paths.managedTranslateModelPath(); }
   return path.join(paths.runtimeDir(), SPECS.gpu.file);
 }
@@ -114,6 +115,26 @@ function sleep(ms: number): Promise<void> {
 
 function fileSize(file: string): number {
   try { return fs.statSync(file).size; } catch { return 0; }
+}
+
+/** 旧版本把版面模型下载到 data/models；现在统一放在 babeldoc 缓存目录。 */
+function migrateLegacyLayout(): boolean {
+  const cache = paths.babeldocModelPath();
+  if (fileSize(cache) === LAYOUT.size) { return true; }
+  const legacy = paths.managedLayoutModelPath();
+  if (fileSize(legacy) !== LAYOUT.size) { return false; }
+  try {
+    fs.mkdirSync(path.dirname(cache), { recursive: true });
+    fs.renameSync(legacy, cache);
+    return true;
+  } catch { /* fall through */ }
+  try {
+    fs.copyFileSync(legacy, cache);
+    fs.rmSync(legacy, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readText(file: string): string {
@@ -134,8 +155,10 @@ function installedSource(id: LocalModelId): LocalModelInfo["source"] {
     const version = readText(paths.gpuRuntimeVersionFile());
     return fs.existsSync(paths.gpuRuntimeExe()) && version === SPECS.gpu.file ? "managed" : "none";
   }
+  if (id === "layout") {
+    return migrateLegacyLayout() ? "cache" : "none";
+  }
   if (fileSize(downloadPath(id)) === spec.size) { return "managed"; }
-  if (id === "layout" && fileSize(paths.babeldocModelPath()) === spec.size) { return "cache"; }
   return "none";
 }
 
@@ -152,19 +175,11 @@ export function layoutModelReady(): boolean {
  * 缺失时抛出可展示给用户的错误（不触发 babeldoc 自己的静默下载）。
  */
 export function ensureLayoutModel(): void {
-  const spec = LAYOUT;
-  const cache = paths.babeldocModelPath();
-  if (fileSize(cache) === spec.size) { return; }
-  const src = downloadPath("layout");
-  if (fileSize(src) !== spec.size) {
+  if (!migrateLegacyLayout()) {
     throw new Error("缺少版面识别模型（DocLayout-YOLO），请到「设置 → 本地模型」下载");
   }
-  try {
-    fs.mkdirSync(path.dirname(cache), { recursive: true });
-    fs.copyFileSync(src, cache);
-  } catch (err) {
-    throw new Error("版面识别模型复制失败：" + (err instanceof Error ? err.message : String(err)));
-  }
+  // 缓存已经就绪时，清掉旧版本可能留下的重复文件。
+  try { fs.rmSync(paths.managedLayoutModelPath(), { force: true }); } catch { /* ignore */ }
 }
 
 /** 升级后加速包的构建版本可能变了：清掉旧目录，让设置页重新提示下载 */
@@ -175,9 +190,27 @@ export function pruneStaleRuntime(): void {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
-export function modelsDirectory(): string {
-  fs.mkdirSync(paths.managedModelsDir(), { recursive: true });
-  return paths.managedModelsDir();
+/** 打开某个模型实际所在的目录；文件会定位到所在文件夹，GPU 运行时直接打开目录。 */
+export async function revealModel(id: LocalModelId): Promise<boolean> {
+  if (!SPECS[id]) { return false; }
+  const source = installedSource(id);
+  if (source === "none") { return false; }
+  const target = id === "gpu"
+    ? paths.gpuRuntimeDir()
+    : id === "translate" && source === "custom"
+      ? customTranslateModel()
+      : id === "layout"
+        ? paths.babeldocModelPath()
+        : downloadPath(id);
+  try {
+    if (fs.statSync(target).isDirectory()) {
+      return !(await shell.openPath(target));
+    }
+    shell.showItemInFolder(target);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function listModels(): LocalModelInfo[] {
@@ -356,11 +389,6 @@ export async function downloadModel(id: LocalModelId, source?: string): Promise<
             try { fs.renameSync(part, target); moved = true; } catch { await sleep(200); }
           }
           if (!moved) { throw new Error("无法替换模型文件（可能仍被占用），请稍后重试"); }
-          if (id === "layout") {
-            const cache = paths.babeldocModelPath();
-            fs.mkdirSync(path.dirname(cache), { recursive: true });
-            fs.copyFileSync(target, cache);
-          }
         }
         emitProgress(id, "done", spec.size, spec.size);
         return true;
@@ -404,7 +432,8 @@ export async function removeModel(id: LocalModelId): Promise<boolean> {
     try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
   }
   if (id === "layout") {
-    try { fs.rmSync(paths.babeldocModelPath(), { force: true }); } catch { /* ignore */ }
+    // 兼容旧版本留在 data/models 的那份
+    try { fs.rmSync(paths.managedLayoutModelPath(), { force: true }); } catch { /* ignore */ }
   }
   return true;
 }

@@ -3,6 +3,12 @@ import { normalizeImage, readImageFile } from "../lib/images";
 import type { BlockEvent, JobSummary, PdfAnnotation, PdfAnnotKind, PdfAnnotRect, PdfInkStroke, TransParams } from "../../../shared/types";
 import { zoomImage } from "../lib/lightbox";
 
+function ipcErrorText(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  // Electron 会把主进程 throw 的错误包成 "Error invoking remote method ..."
+  return raw.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, "");
+}
+
 export type View = "source" | "target" | "compare";
 export type Layout = "single" | "double";
 export type Phase = "idle" | "loading" | "running" | "done" | "error";
@@ -2860,7 +2866,7 @@ export class ViewerEngine {
       void this.runSession(session);
     } catch (err) {
       session.state = "error";
-      session.error = err instanceof Error ? err.message : String(err);
+      session.error = ipcErrorText(err);
       if (this.active === session) { this.emitFromActive(); }
     }
   }

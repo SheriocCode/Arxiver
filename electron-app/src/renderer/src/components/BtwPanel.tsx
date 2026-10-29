@@ -137,7 +137,7 @@ export default function BtwPanel({
       setTurns((prev) => [
         ...prev,
         { role: "user", text: q, quote: shownQuote },
-        { role: "assistant", text: "", setup: true, error: "AI 助手还没配置对话模型：请在「设置 → AI 助手」里填写基础地址、API 密钥与模型。" }
+        { role: "assistant", text: "", setup: true, error: "AI 助手还没配置对话模型：请在「设置 → AI 服务」里选择连接并填写模型。" }
       ]);
       return;
     }

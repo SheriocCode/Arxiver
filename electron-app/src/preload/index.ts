@@ -9,10 +9,11 @@ function subscribe(channel: string, callback: (payload: unknown) => void): () =>
 const api = {
   getConfig: () => ipcRenderer.invoke("config:get"),
   setConfig: (patch: unknown) => ipcRenderer.invoke("config:set", patch),
+  aiTestConnection: (connection: unknown) => ipcRenderer.invoke("ai:test", connection),
   appInfo: () => ipcRenderer.invoke("app:info"),
   localStatus: () => ipcRenderer.invoke("local:status"),
   modelsList: () => ipcRenderer.invoke("models:list"),
-  modelsDir: () => ipcRenderer.invoke("models:dir"),
+  modelsReveal: (id: unknown) => ipcRenderer.invoke("models:reveal", id),
   modelDownload: (id: string, source?: string) => ipcRenderer.invoke("models:download", id, source),
   modelTestSource: (url: string) => ipcRenderer.invoke("models:test", url),
   modelCancel: (id: string) => ipcRenderer.invoke("models:cancel", id),

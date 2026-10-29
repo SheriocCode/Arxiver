@@ -14,7 +14,6 @@ import NewItemModal from "./components/NewItemModal";
 import LogsView from "./components/LogsView";
 import OverleafView from "./components/OverleafView";
 import { startRuntimeMonitor } from "./state/runtimeMonitor";
-import SplashScreen from "./components/SplashScreen";
 import { useLibrary, type Section } from "./state/useLibrary";
 import { useSettings } from "./state/settings";
 import type { TranslationDoneInfo } from "./viewer/engine";
@@ -459,7 +458,6 @@ export default function App(): JSX.Element {
               <div className="tb-tabs-right">
                 {!overlayView && detailOpen && lib.selected &&
                   ([["info", "file", "信息"], ["notes", "note", "笔记"], ["tags", "tag", "归类"], ["ai", "arxiver", "Arxiver"]] as const)
-                    .filter(([id]) => id !== "ai" || settings.aiEnabled)
                     .map(([id, ic, label]) => (
                       <button key={id} className={"tb-viewtab" + (lib.tab === id ? " active" : "")} onClick={() => { lib.setTab(id); lib.setEditMode(false); }}>
                         <Icon name={ic} small /> {label}
@@ -536,7 +534,8 @@ export default function App(): JSX.Element {
                     onAskSelection={askSelection}
                     onCaptureImage={captureImage}
                     onOpenModels={() => openSettings("models")}
-                    captureEnabled={settings.aiEnabled}
+                    onOpenAISettings={() => openSettings("ai")}
+                    captureEnabled
                     onTranslationDone={onTranslationDone}
                   />
                 ))}
@@ -569,7 +568,6 @@ export default function App(): JSX.Element {
         />
       )}
 
-      {settings.splashEnabled && <SplashScreen />}
     </>
   );
 }

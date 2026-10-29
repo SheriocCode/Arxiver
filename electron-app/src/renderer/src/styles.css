@@ -956,8 +956,6 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .set-row .set-label { display: block; font-size: 13.5px; color: var(--text); }
 .set-row .set-desc { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
 /* 按需下载的本地模型 */
-.model-dir { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0 0 10px; font-size: 11px; color: var(--faint); }
-.model-dir code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-family: inherit; user-select: all; }
 .model-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; background: var(--surface); margin-bottom: 10px; }
 .model-head { display: flex; align-items: flex-start; gap: 12px; }
 .model-info { flex: 1; min-width: 0; }
@@ -965,6 +963,9 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .model-size { font-weight: 400; font-size: 11.5px; color: var(--faint); }
 .model-tag { font-weight: 500; font-size: 10.5px; color: var(--muted); background: var(--surface-2); border-radius: var(--pill); padding: 1px 7px; }
 .model-desc { font-size: 12px; color: var(--muted); line-height: 1.55; margin-top: 4px; }
+.model-path { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 7px; color: var(--faint); font-size: 10.5px; }
+.model-path .icon { flex: none; }
+.model-path span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
 .model-state { flex: none; font-size: 11.5px; color: var(--faint); }
 .model-state.is-ok { color: var(--accent); }
 .model-progress { margin-top: 10px; display: grid; gap: 5px; font-size: 11.5px; color: var(--muted); }
@@ -1761,7 +1762,13 @@ body.col-resizing { cursor: col-resize; -webkit-user-select: none; user-select: 
 .list-scroll .col-head, .list-scroll .item-list { width: max-content; min-width: 100%; }
 
 /* item context menu */
-.ctx-menu { position: fixed; z-index: 90; min-width: 168px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow); padding: 6px; }
+.ctx-menu {
+  position: fixed; z-index: 90; min-width: 168px;
+  max-width: calc(100vw - 16px); max-height: calc(100vh - 16px);
+  overflow-y: auto; overscroll-behavior: contain;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 6px;
+}
 .ctx-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border-radius: var(--radius-sm); color: var(--text-2); font-size: 13px; background: transparent; border: 0; cursor: pointer; text-align: left; }
 .ctx-menu button:hover { background: var(--hover); color: var(--text); }
 .ctx-menu button.danger { color: var(--danger); }
@@ -1796,21 +1803,6 @@ body.col-resizing { cursor: col-resize; -webkit-user-select: none; user-select: 
 .reader-overlay { z-index: 10; }
 .modal-root { z-index: 200; }
 
-/* 启动动画：App 窗口内的遮罩层（z 高于一切 UI），放完视频淡出 */
-.splash-screen {
-  position: fixed; inset: 0; z-index: 1000;
-  display: grid; place-items: center;
-  background: #0b0b0b; cursor: pointer;
-  transition: opacity 0.4s var(--ease);
-}
-.splash-screen.is-fading { opacity: 0; }
-/* 居中，占窗口约 75%（宽 75%；高度也封顶 75%，用 object-fit 保持视频比例） */
-.splash-screen video { width: 75%; height: 75%; object-fit: contain; }
-.splash-skip {
-  position: absolute; right: 14px; bottom: 12px;
-  font-size: 11px; letter-spacing: 0.04em; color: rgba(255, 255, 255, 0.32);
-}
-
 /* ===== 用户自选的界面背景（图片 / 视频）===== */
 .app-bg { position: fixed; inset: 0; z-index: -1; overflow: hidden; background: #0b0b0b; }
 .app-bg-media { display: block; width: 100%; height: 100%; object-fit: cover; opacity: var(--bg-opacity, 0.9); }
@@ -1843,6 +1835,59 @@ html.has-bg .list-scroll .col-head {
 html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, transparent); }
 
 .set-inline { display: flex; align-items: center; gap: 8px; }
+
+/* AI 服务：紧凑连接卡片 */
+.ai-conn-list { display: flex; flex-direction: column; gap: 8px; }
+.ai-conn {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 10px 9px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  transition: border-color var(--dur) var(--ease);
+}
+.ai-conn:focus-within { border-color: var(--border-strong); }
+.ai-conn-grid {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1.1fr) 30px minmax(0, .9fr);
+  gap: 6px 8px;
+  align-items: center;
+}
+.ai-conn-label { color: var(--muted); font-size: 10.5px; }
+.ai-conn-input {
+  width: 100%; min-width: 0; height: 28px; padding: 0 8px;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); color: var(--text);
+  font-size: 11.5px; outline: none;
+}
+.ai-conn-input:focus { border-color: var(--accent); }
+.ai-conn-status {
+  flex: none; padding: 1px 7px; border-radius: var(--pill);
+  background: rgba(239, 83, 80, .12); color: #f0857b;
+  font-size: 10.5px; white-space: nowrap;
+}
+.ai-conn-foot { display: flex; align-items: center; gap: 8px; }
+.ai-conn-spacer { flex: 1; }
+.ai-conn-test {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  width: 64px; height: 26px; padding: 0; cursor: pointer;
+  background: transparent; border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); color: var(--muted);
+  font-size: 11px;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.ai-conn-test .icon { width: 11px; height: 11px; }
+.ai-conn-test:hover:not(:disabled) { color: var(--text); border-color: var(--text-2); }
+.ai-conn-test:disabled { opacity: .6; cursor: default; }
+.ai-conn-test.is-ok { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong)); background: var(--accent-soft); }
+.ai-conn-test.is-bad { color: #f0857b; border-color: color-mix(in srgb, #f0857b 40%, var(--border-strong)); background: rgba(239, 83, 80, .1); }
+.ai-conn-add {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; height: 34px; margin-top: 8px; cursor: pointer;
+  background: transparent; border: 1px dashed var(--border-strong);
+  border-radius: var(--radius); color: var(--muted); font-size: 12px;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.ai-conn-add:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.ai-conn-hint { margin-top: 6px; text-align: center; color: var(--faint); font-size: 10.5px; }
 /* 细线样式的滑块（默认不透明度） */
 .set-range {
   -webkit-appearance: none; appearance: none;
@@ -1924,7 +1969,7 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 .ai-stopped { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: var(--muted); }
 .ai-stopped button { color: var(--accent); font-size: 12.5px; text-decoration: underline; text-underline-offset: 2px; }
 .ai-stopped button:hover { color: var(--accent-strong-hover); }
-/* 未配置对话模型时的引导：不发起请求，直接把用户送去「设置 → AI 助手」 */
+/* 未配置对话模型时的引导：不发起请求，直接把用户送去「设置 → AI 服务」 */
 .ai-setup-note {
   display: flex; align-items: center; gap: 8px; text-align: left; margin: 16px 0 0;
   padding: 8px 8px 8px 10px; border-radius: var(--radius);
@@ -2428,9 +2473,14 @@ body.ov-chat-resizing, body.ov-chat-resizing * { cursor: col-resize !important; 
 .ov-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .ov-msgs { padding-top: 6px; }
-.ov-empty { padding: 26px 8px; text-align: center; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
-.ov-empty b { display: block; margin-bottom: 8px; color: var(--text); font-size: 14px; }
-.ov-empty p { margin: 5px 0; }
+.ov-empty { max-width: 360px; padding: 18px 2px 8px; text-align: left; color: var(--muted); font-size: 12px; line-height: 1.65; }
+.ov-empty-title { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; color: var(--text); font-size: 13.5px; font-weight: 600; }
+.ov-empty-title .icon { color: var(--accent); }
+.ov-empty p { margin: 0 0 10px; }
+.ov-empty-action { height: 30px; padding: 0 10px; font-size: 12px; }
+.ov-empty-hint { color: var(--faint); font-size: 11.5px; }
+.ov-empty-foot { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--faint); font-size: 10.5px; }
+.ov-empty-foot code { padding: 0 3px; border-radius: 3px; background: var(--surface-2); }
 .ov-usage { margin-top: 5px; color: var(--faint); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 .ov-copy { width: 22px; height: 22px; margin-left: 4px; opacity: .45; }
 .ov-copy:hover { opacity: 1; }

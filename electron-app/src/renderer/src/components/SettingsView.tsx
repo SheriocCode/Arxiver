@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type JSX } from "react";
-import type { AppConfig, AppInfo, LocalModelInfo, LocalModelProgress, LocalModelStatus, ModelSourceTest, UpdateStatus } from "../../../shared/types";
+import type { AiConnection, AiConnectionTestResult, AppConfig, AppInfo, LocalModelInfo, LocalModelProgress, LocalModelStatus, ModelSourceTest, UpdateStatus } from "../../../shared/types";
+import { translationConnection } from "../../../shared/ai";
 import { Icon } from "./Icons";
 import { LANGS } from "../lib/langs";
 import { ACCENTS, PAGE_THEMES, type AppSettings } from "../state/settings";
@@ -7,12 +8,11 @@ import { Markdown } from "../lib/markdown";
 import SystemPanel from "./SystemPanel";
 
 const SECTIONS = [
-  { id: "model", name: "翻译引擎", icon: "settings" },
+  { id: "model", name: "翻译", icon: "settings" },
+  { id: "ai", name: "AI 服务", icon: "message" },
   { id: "models", name: "本地模型", icon: "layers" },
   { id: "general", name: "通用", icon: "settings" },
   { id: "appearance", name: "外观", icon: "sparkle" },
-  { id: "citation", name: "引用", icon: "copy" },
-  { id: "ai", name: "AI 助手", icon: "message" },
   { id: "shortcuts", name: "快捷键", icon: "terminal" },
   { id: "runtime", name: "运行状态", icon: "chart" },
   { id: "about", name: "关于", icon: "book" }
@@ -45,8 +45,18 @@ export default function SettingsView({
   const [sourceChoice, setSourceChoice] = useState<Record<string, string>>(() => settings.modelSources || {});
   const [sourceTests, setSourceTests] = useState<Record<string, ModelSourceTest & { loading?: boolean }>>({});
   const [sourceOpen, setSourceOpen] = useState<Record<string, boolean>>({});
-  const [modelDir, setModelDir] = useState("");
+  const [connTests, setConnTests] = useState<Record<string, AiConnectionTestResult & { loading?: boolean }>>({});
+  const [newConnId, setNewConnId] = useState("");
   const loadModels = useCallback(() => { void window.api.modelsList().then(setModels); }, []);
+
+  // 新增连接后滚到卡片并聚焦名称，多个连接时不会“加了但看不见”。
+  useEffect(() => {
+    if (!newConnId) { return; }
+    const input = document.querySelector<HTMLInputElement>(`[data-conn-id="${newConnId}"] .ai-conn-name`);
+    input?.scrollIntoView({ block: "nearest" });
+    input?.focus();
+    setNewConnId("");
+  }, [newConnId]);
 
   useEffect(() => {
     void window.api.getUpdateStatus().then(setUpdate);
@@ -58,11 +68,20 @@ export default function SettingsView({
       void window.api.localStatus().then(setLocalStatus);
       loadModels();
     }
-    if (section === "models") {
+    if (section !== "models") { return; }
+    // 用户可能在文件管理器里直接删模型；停留在本页时定时重新检测，
+    // 不要一直显示“已安装”。
+    const refresh = (): void => {
       loadModels();
-      void window.api.modelsDir().then(setModelDir);
       void window.api.localStatus().then(setLocalStatus);
-    }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
   }, [section, loadModels]);
 
   useEffect(() => {
@@ -92,29 +111,109 @@ export default function SettingsView({
   useEffect(() => {
     if (config) {
       setForm({
-        translate_mode: config.translate_mode, service: config.service,
-        translate_base_url: config.translate_base_url, translate_api_key: config.translate_api_key,
-        translate_model: config.translate_model, local_model: config.local_model, local_gpu_layers: config.local_gpu_layers,
-        local_extra_args: config.local_extra_args,
-        chat_base_url: config.chat_base_url, chat_api_key: config.chat_api_key, chat_model: config.chat_model,
-        search_enabled: config.search_enabled, search_provider: config.search_provider,
-        search_key_tavily: config.search_key_tavily, search_key_bocha: config.search_key_bocha,
-        search_key_deepseek: config.search_key_deepseek,
-        search_scope: config.search_scope,
-        threads: config.threads, timeout: config.timeout, source_lang: config.source_lang, target_lang: config.target_lang
+        ...config,
+        ai_connections: (config.ai_connections || []).map((item) => ({ ...item }))
       });
+      setConnTests({});
     }
   }, [config]);
 
   const set = <K extends keyof AppConfig>(k: K, v: AppConfig[K]): void => setForm((f) => ({ ...f, [k]: v }));
   const cur = SECTIONS.find((s) => s.id === section) || SECTIONS[0];
+  const connections = form.ai_connections || [];
+  const translationConn = translationConnection(form);
   const searchProvider: AppConfig["search_provider"] =
     form.search_provider === "bocha" ? "bocha" : form.search_provider === "deepseek" ? "deepseek" : "tavily";
-  const searchKeyField: "search_key_tavily" | "search_key_bocha" | "search_key_deepseek" =
-    searchProvider === "bocha" ? "search_key_bocha" : searchProvider === "deepseek" ? "search_key_deepseek" : "search_key_tavily";
-  const searchKeyValue = form[searchKeyField] || "";
-  const searchProviderName = { tavily: "Tavily", bocha: "博查", deepseek: "DeepSeek" }[searchProvider];
+  const translationChoice = (form.translate_mode || "local") === "local"
+    ? "local"
+    : (translationConn?.id || "unconfigured");
+  const searchChoice = !form.search_enabled ? "off" : searchProvider;
   const inputStyle = { height: 34, minWidth: 240, background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", color: "var(--text)", padding: "0 10px", outline: "none" } as const;
+
+  function connectionReady(connection?: AiConnection): boolean {
+    return !!(connection && String(connection.baseUrl || "").trim() && String(connection.apiKey || "").trim() && String(connection.model || "").trim());
+  }
+
+  function connectionLabel(connection: AiConnection): string {
+    return `${connection.name} · ${String(connection.model || "").trim() || "未设置模型"}`;
+  }
+
+  function connectionMissing(connection?: AiConnection): string {
+    if (!connection) { return "连接"; }
+    return [
+      !String(connection.baseUrl || "").trim() ? "接口地址" : "",
+      !String(connection.apiKey || "").trim() ? "API Key" : "",
+      !String(connection.model || "").trim() ? "模型" : ""
+    ].filter(Boolean).join("、") || "配置";
+  }
+
+  function connectionStatus(connection: AiConnection): string {
+    const missing = [
+      !String(connection.baseUrl || "").trim() ? "地址" : "",
+      !String(connection.apiKey || "").trim() ? "Key" : "",
+      !String(connection.model || "").trim() ? "模型" : ""
+    ].filter(Boolean);
+    return missing.length ? `缺 ${missing.join(" / ")}` : "";
+  }
+
+  function updateConnection(id: string, patch: Partial<AiConnection>): void {
+    setForm((f) => ({
+      ...f,
+      ai_connections: (f.ai_connections || []).map((item) => (item.id === id ? { ...item, ...patch } : item))
+    }));
+    setConnTests((prev) => {
+      if (!prev[id]) { return prev; }
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function addConnection(): void {
+    const id = "custom-" + Date.now().toString(36);
+    setForm((f) => ({
+      ...f,
+      ai_connections: [
+        ...(f.ai_connections || []),
+        { id, name: "自定义接口", baseUrl: "", apiKey: "", model: "" }
+      ]
+    }));
+    setNewConnId(id);
+  }
+
+  function removeConnection(id: string): void {
+    setForm((f) => {
+      const list = (f.ai_connections || []).filter((item) => item.id !== id);
+      if (!list.length) { return f; }
+      const fallback = list[0].id;
+      const keep = (value?: string): string => (!value || value === id ? fallback : value);
+      return {
+        ...f,
+        ai_connections: list,
+        translate_connection: keep(f.translate_connection),
+        chat_connection: keep(f.chat_connection),
+        // 留空表示跟随文献助手
+        overleaf_connection: f.overleaf_connection === id ? "" : f.overleaf_connection
+      };
+    });
+  }
+
+  async function testConnection(id: string): Promise<void> {
+    const connection = connections.find((item) => item.id === id);
+    setConnTests((prev) => ({ ...prev, [id]: { ok: false, message: "", loading: true } }));
+    try {
+      const result = await window.api.aiTestConnection({
+        baseUrl: connection?.baseUrl || "",
+        apiKey: connection?.apiKey || ""
+      });
+      setConnTests((prev) => ({ ...prev, [id]: result }));
+    } catch (error) {
+      setConnTests((prev) => ({
+        ...prev,
+        [id]: { ok: false, message: (error as Error)?.message || String(error) }
+      }));
+    }
+  }
 
   function fmtSize(n: number): string {
     if (!n) { return "0 B"; }
@@ -208,12 +307,42 @@ export default function SettingsView({
             {section === "model" && (
               <>
                 <Group title="翻译方式">
-                  <Row label="翻译引擎" desc="本地模型离线运行、不产生费用；在线接口需要 API 密钥">
-                    <select value={form.translate_mode || "local"} onChange={(e) => set("translate_mode", e.target.value as AppConfig["translate_mode"])}>
+                  <Row
+                    label="翻译方式"
+                    desc={(form.translate_mode || "local") === "remote"
+                      ? translationConn
+                        ? connectionReady(translationConn)
+                          ? "使用 AI 服务里已配置的连接和模型"
+                          : "当前连接不可用，请先补全配置"
+                        : "还没有可用的 AI 连接"
+                      : connections.length
+                        ? "本地模型离线运行，不产生费用、不需要 API Key"
+                        : "本地模型离线运行；在线翻译需先在 AI 服务配置连接"}
+                  >
+                    <select
+                      value={translationChoice}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === "local") {
+                          set("translate_mode", "local");
+                        } else if (value !== "unconfigured") {
+                          setForm((f) => ({ ...f, translate_mode: "remote", translate_connection: value }));
+                        }
+                      }}
+                    >
                       <option value="local">本地模型（HY-MT）</option>
-                      <option value="remote">在线接口</option>
+                      {connections.map((item) => <option key={item.id} value={item.id}>{connectionLabel(item)}</option>)}
+                      {translationChoice === "unconfigured" ? <option value="unconfigured" disabled>AI 连接未配置</option> : null}
                     </select>
                   </Row>
+                  {(form.translate_mode || "local") === "remote" && !connectionReady(translationConn) ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#f0857b", fontSize: 12, padding: "2px 0 6px" }}>
+                      <span style={{ flex: 1 }}>
+                        {translationConn ? `「${translationConn.name}」还缺 ${connectionMissing(translationConn)}。` : "还没有可用的 AI 连接。"}
+                      </span>
+                      <button type="button" className="btn btn-ghost" onClick={() => setSection("ai")}>去配置</button>
+                    </div>
+                  ) : null}
                   {modelStatus("layout") && !modelStatus("layout")!.installed && (
                     <Row label="版面识别模型" desc="翻译前需要先下载（约 72 MB）；使用在线接口也需要本机做版面识别">
                       <button className="btn btn-primary" onClick={() => setSection("models")}>去下载</button>
@@ -242,14 +371,6 @@ export default function SettingsView({
                     </Row>
                   )}
                 </Group>
-                {(form.translate_mode || "local") === "remote" && (
-                  <Group title="在线接口">
-                    <Row label="接口地址"><input style={inputStyle} value={form.translate_base_url || ""} onChange={(e) => set("translate_base_url", e.target.value)} /></Row>
-                    <Row label="API 密钥" desc={<>默认服务商是 DeepSeek：在 <ExtLink href="https://platform.deepseek.com/">DeepSeek 官网</ExtLink> 创建 API Key 并订阅额度；换别家就改上面的接口地址与模型</>}><input type="password" style={inputStyle} value={form.translate_api_key || ""} onChange={(e) => set("translate_api_key", e.target.value)} /></Row>
-                    <Row label="模型"><input style={inputStyle} value={form.translate_model || ""} onChange={(e) => set("translate_model", e.target.value)} /></Row>
-                    <Row label="默认服务"><input style={inputStyle} value={form.service || ""} onChange={(e) => set("service", e.target.value)} /></Row>
-                  </Group>
-                )}
                 <Group title="翻译参数">
                   <Row label="线程"><input type="number" min={1} max={32} style={{ ...inputStyle, minWidth: 90 }} value={form.threads || 4} onChange={(e) => set("threads", parseInt(e.target.value, 10) || 4)} /></Row>
                   <Row label="超时（秒）"><input type="number" min={60} style={{ ...inputStyle, minWidth: 100 }} value={form.timeout || 3600} onChange={(e) => set("timeout", parseInt(e.target.value, 10) || 3600)} /></Row>
@@ -270,11 +391,6 @@ export default function SettingsView({
             {section === "models" && (
               <>
                 <Group title="按需下载">
-                  <div className="model-dir">
-                    <span>保存位置</span>
-                    <code title={modelDir}>{modelDir || "…"}</code>
-                    <button type="button" className="model-link" disabled={!modelDir} onClick={() => { void window.api.openPath(modelDir); }}>打开目录</button>
-                  </div>
                   {models.map((m) => {
                     const pr = modelProgress[m.id];
                     const busy = pr && (pr.state === "downloading" || pr.state === "verifying");
@@ -297,6 +413,12 @@ export default function SettingsView({
                             {m.source === "custom" ? "自定义路径" : m.installed ? "已安装" : "未安装"}
                           </span>
                         </div>
+                        {m.installed ? (
+                          <div className="model-path" title={m.path}>
+                            <Icon name="folder" small />
+                            <span>{m.path}</span>
+                          </div>
+                        ) : null}
                         {busy && (
                           <div className="model-progress">
                             <div className="model-progress-bar"><i style={{ width: `${Math.round(pr.percent)}%` }} /></div>
@@ -344,6 +466,9 @@ export default function SettingsView({
                           )}
                         </div>
                         <div className="model-actions">
+                          {m.installed && !busy ? (
+                            <button type="button" className="model-link" onClick={() => { void window.api.modelsReveal(m.id); }}>打开目录</button>
+                          ) : null}
                           {busy ? (
                             <button className="btn" onClick={() => { void window.api.modelCancel(m.id); }}>取消下载</button>
                           ) : m.installed && (m.source === "managed" || m.source === "cache") ? (
@@ -382,6 +507,9 @@ export default function SettingsView({
                   <Row label="显示未读标记" desc="在文献列表中标出未读条目"><Switch on={settings.showUnread} onToggle={() => updateSettings({ showUnread: !settings.showUnread })} /></Row>
                   <Row label="自动抓取元数据" desc="通过 DOI 自动补全标题、作者与来源"><Switch on={settings.fetchMeta} onToggle={() => updateSettings({ fetchMeta: !settings.fetchMeta })} /></Row>
                 </Group>
+                <Group title="引用格式">
+                  <Row label="包含 DOI" desc="复制引用时附带 DOI 与标识符"><Switch on={settings.citeDoi} onToggle={() => updateSettings({ citeDoi: !settings.citeDoi })} /></Row>
+                </Group>
               </>
             )}
 
@@ -415,11 +543,8 @@ export default function SettingsView({
                     <Switch on={settings.showBlocksTranslation} onToggle={() => updateSettings({ showBlocksTranslation: !settings.showBlocksTranslation })} />
                   </Row>
                 </Group>
-                <Group title="启动与背景">
-                  <Row label="开屏动画" desc="启动时播放一段开屏动画">
-                    <Switch on={settings.splashEnabled} onToggle={() => updateSettings({ splashEnabled: !settings.splashEnabled })} />
-                  </Row>
-                  <Row label="界面背景" desc="在界面底层显示自定义图片或视频（面板会变半透明以露出背景）">
+                <Group title="界面背景">
+                  <Row label="显示背景" desc="在界面底层显示自定义图片或视频（面板会变半透明以露出背景）">
                     <Switch on={settings.backgroundEnabled} onToggle={() => updateSettings({ backgroundEnabled: !settings.backgroundEnabled })} />
                   </Row>
                   <Row label="背景文件" desc={settings.backgroundFile ? `当前：${settings.backgroundFile}` : "支持图片（png / jpg / webp / gif）与视频（mp4 / webm）"}>
@@ -446,64 +571,138 @@ export default function SettingsView({
               </>
             )}
 
-            {section === "citation" && (
-              <Group title="引用格式">
-                <Row label="包含 DOI" desc="复制引用时附带 DOI 与标识符"><Switch on={settings.citeDoi} onToggle={() => updateSettings({ citeDoi: !settings.citeDoi })} /></Row>
-              </Group>
-            )}
-
             {section === "ai" && (
               <>
-                <Group title="对话接口">
-                  <Row label="接口地址" desc="AI 助手使用的 OpenAI 兼容接口，与翻译引擎相互独立"><input style={inputStyle} value={form.chat_base_url || ""} onChange={(e) => set("chat_base_url", e.target.value)} /></Row>
-                  <Row label="API 密钥" desc={<>默认用 DeepSeek（deepseek-chat）：在 <ExtLink href="https://platform.deepseek.com/">DeepSeek 官网</ExtLink> 创建 API Key 并订阅额度</>}><input type="password" style={inputStyle} value={form.chat_api_key || ""} onChange={(e) => set("chat_api_key", e.target.value)} /></Row>
-                  <Row label="模型" desc="图片提问需要模型支持视觉输入（如 DeepSeek 的 deepseek-flash）；纯文本模型收到图片会报错"><input style={inputStyle} value={form.chat_model || ""} onChange={(e) => set("chat_model", e.target.value)} /></Row>
-                  <div className="modal-foot" style={{ border: 0, padding: "4px 0" }}>
-                    <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>
-                    <button className="btn btn-primary" onClick={save}>保存设置</button>
+                <Group title="连接">
+                  <div className="ai-conn-list">
+                    {connections.map((item) => {
+                      const test = connTests[item.id];
+                      return (
+                        <div className="ai-conn" key={item.id} data-conn-id={item.id}>
+                          <div className="ai-conn-grid">
+                            <span className="ai-conn-label">名称</span>
+                            <input
+                              className="ai-conn-input"
+                              aria-label="连接名称"
+                              value={item.name}
+                              placeholder="连接名称"
+                              onChange={(e) => updateConnection(item.id, { name: e.target.value })}
+                            />
+                            <span className="ai-conn-label">模型</span>
+                            <input
+                              className="ai-conn-input"
+                              aria-label="模型"
+                              value={item.model}
+                              placeholder="模型"
+                              onChange={(e) => updateConnection(item.id, { model: e.target.value })}
+                            />
+                            <span className="ai-conn-label">地址</span>
+                            <input
+                              className="ai-conn-input"
+                              aria-label="接口地址"
+                              value={item.baseUrl}
+                              placeholder="https://api.deepseek.com"
+                              onChange={(e) => updateConnection(item.id, { baseUrl: e.target.value })}
+                            />
+                            <span className="ai-conn-label">密钥</span>
+                            <input
+                              className="ai-conn-input"
+                              type="password"
+                              aria-label="API Key"
+                              value={item.apiKey}
+                              placeholder="sk-…"
+                              onChange={(e) => updateConnection(item.id, { apiKey: e.target.value })}
+                            />
+                          </div>
+                          <div className="ai-conn-foot">
+                            {connectionStatus(item) ? <span className="ai-conn-status">{connectionStatus(item)}</span> : null}
+                            <span className="ai-conn-spacer" />
+                            <button
+                              type="button"
+                              className={"ai-conn-test" + (test && !test.loading ? (test.ok ? " is-ok" : " is-bad") : "")}
+                              title={test && !test.loading
+                                ? `${test.ok ? "连接正常" : "测试失败"}：${test.message}${test.latencyMs ? ` · ${test.latencyMs}ms` : ""}`
+                                : "测试连接"}
+                              disabled={test?.loading}
+                              onClick={() => void testConnection(item.id)}
+                            >
+                              {test?.loading
+                                ? <span className="ov-spinner" />
+                                : test
+                                  ? (test.ok ? <><Icon name="check" small /> 正常</> : <><Icon name="x" small /> 失败</>)
+                                  : "测试"}
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              title={connections.length <= 1 ? "至少保留一个连接" : "删除连接"}
+                              disabled={connections.length <= 1}
+                              onClick={() => removeConnection(item.id)}
+                            >
+                              <Icon name="trash" small />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
+                  <button type="button" className="ai-conn-add" onClick={addConnection}>
+                    <Icon name="plus" small /> 添加连接
+                  </button>
+                  <div className="ai-conn-hint">支持 OpenAI 兼容接口</div>
                 </Group>
-                <Group title="联网搜索">
-                  <Row label="启用联网搜索" desc="允许 AI 搜索文库外的论文与资料；只发送检索式，不上传本地文献内容。默认关闭">
-                    <Switch on={!!form.search_enabled} onToggle={() => set("search_enabled", !form.search_enabled)} />
+
+                <Group title="用途">
+                  <Row label="文献助手">
+                    <select value={form.chat_connection || ""} onChange={(e) => set("chat_connection", e.target.value)}>
+                      {connections.map((item) => <option key={item.id} value={item.id}>{connectionLabel(item)}</option>)}
+                    </select>
                   </Row>
-                  <Row label="搜索服务商" desc="Tavily：学术结果稳、域名加权更细；博查：国内网络友好、返回摘要更完整；DeepSeek：自研搜索，国内直连、长摘要 + 权威性排序（可在各家之间随时切换对比）">
-                    <select value={searchProvider} onChange={(e) => set("search_provider", e.target.value as AppConfig["search_provider"])} disabled={!form.search_enabled}>
+                  <Row label="Overleaf">
+                    <select value={form.overleaf_connection || ""} onChange={(e) => set("overleaf_connection", e.target.value)}>
+                      <option value="">跟随文献助手</option>
+                      {connections.map((item) => <option key={item.id} value={item.id}>{connectionLabel(item)}</option>)}
+                    </select>
+                  </Row>
+                  <Row label="联网搜索">
+                    <select
+                      value={searchChoice}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === "off") {
+                          set("search_enabled", false);
+                        } else {
+                          setForm((f) => ({ ...f, search_enabled: true, search_provider: value as AppConfig["search_provider"] }));
+                        }
+                      }}
+                    >
+                      <option value="off">关闭</option>
                       <option value="tavily">Tavily</option>
-                      <option value="bocha">博查（Bocha）</option>
+                      <option value="bocha">博查</option>
                       <option value="deepseek">DeepSeek</option>
                     </select>
                   </Row>
-                  {searchProvider === "bocha" ? (
-                    <Row label="博查 API Key" desc={<>在 <ExtLink href="https://open.bochaai.com/">博查官网</ExtLink> 控制台获取（Bearer sk-…）</>}>
-                      <input type="password" style={inputStyle} value={form.search_key_bocha || ""} onChange={(e) => set("search_key_bocha", e.target.value)} />
+                  {form.search_enabled && searchProvider !== "deepseek" ? (
+                    <Row
+                      label={searchProvider === "bocha" ? "博查 API Key" : "Tavily API Key"}
+                      desc={searchProvider === "bocha"
+                        ? <>在 <ExtLink href="https://open.bochaai.com/">博查官网</ExtLink> 获取</>
+                        : <>在 <ExtLink href="https://app.tavily.com/">Tavily 官网</ExtLink> 获取</>}
+                    >
+                      <input
+                        type="password"
+                        style={inputStyle}
+                        value={searchProvider === "bocha" ? (form.search_key_bocha || "") : (form.search_key_tavily || "")}
+                        onChange={(e) => set(searchProvider === "bocha" ? "search_key_bocha" : "search_key_tavily", e.target.value)}
+                      />
                     </Row>
-                  ) : searchProvider === "deepseek" ? (
-                    <Row label="DeepSeek API Key" desc={<>在 <ExtLink href="https://platform.deepseek.com/">DeepSeek 官网</ExtLink> 创建（可与对话接口用同一把）；搜索 ¥5 / 1000 次，账号级 5 QPS。读正文兜底也用它</>}>
-                      <input type="password" style={inputStyle} value={form.search_key_deepseek || ""} onChange={(e) => set("search_key_deepseek", e.target.value)} />
-                    </Row>
-                  ) : (
-                    <Row label="Tavily API Key" desc={<>在 <ExtLink href="https://app.tavily.com/">Tavily 官网</ExtLink> 注册后获取；每次提问约消耗 3~6 credits（免费额度 1000/月）。读正文优先用它</>}>
-                      <input type="password" style={inputStyle} value={form.search_key_tavily || ""} onChange={(e) => set("search_key_tavily", e.target.value)} />
-                    </Row>
-                  )}
-                  <Row label="检索范围" desc="学术优先会对 arXiv / 会议 / 期刊等域名加权（不排他），也可切换到全网">
-                    <select value={form.search_scope || "academic"} onChange={(e) => set("search_scope", e.target.value as AppConfig["search_scope"])} disabled={!form.search_enabled}>
-                      <option value="academic">学术优先</option>
-                      <option value="web">全网</option>
-                    </select>
-                  </Row>
-                  {form.search_enabled && !searchKeyValue ? (
-                    <div style={{ color: "var(--danger)", fontSize: 12 }}>还没填 {searchProviderName} API Key，联网搜索不会生效。</div>
                   ) : null}
-                  <div className="modal-foot" style={{ border: 0, padding: "4px 0" }}>
-                    <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>
-                    <button className="btn btn-primary" onClick={save}>保存设置</button>
-                  </div>
                 </Group>
-                <Group title="AI 助手">
-                  <Row label="启用 AI 助手" desc="在详情栏显示 AI 标签页"><Switch on={settings.aiEnabled} onToggle={() => updateSettings({ aiEnabled: !settings.aiEnabled })} /></Row>
-                </Group>
+
+                <div className="modal-foot" style={{ border: 0, padding: "4px 0" }}>
+                  <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>
+                  <button className="btn btn-primary" onClick={save}>保存设置</button>
+                </div>
               </>
             )}
 

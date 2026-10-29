@@ -2,7 +2,9 @@ import path from "node:path";
 import { BrowserWindow, WebContentsView, session, shell } from "electron";
 
 import { runChat, type ChatMessage, type ToolDef } from "./agent/model";
+import { get as getConfig } from "./config";
 import * as logger from "./logger";
+import { overleafTarget } from "../shared/ai";
 import {
   COMMENT_PLACEHOLDER,
   getMatchPositions,
@@ -368,6 +370,75 @@ const EXTRACT_SCRIPT = String.raw`
 })()
 `;
 
+// 嵌入式窗口不支持第三方 OAuth / SSO；拦截登录页上的这些按钮，避免跳到外部页面。
+const AUTH_GUARD_SCRIPT = String.raw`
+(() => {
+  if (window.__arxiverAuthGuard) return;
+  window.__arxiverAuthGuard = true;
+
+  const style = document.createElement('style');
+  style.id = 'arxiver-auth-guard-style';
+  style.textContent = [
+    '#arxiver-auth-notice{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(17,24,39,.48);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;}',
+    '#arxiver-auth-notice .box{width:min(440px,100%);background:#fff;color:#1f2937;border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,.28);padding:22px 22px 18px;}',
+    '#arxiver-auth-notice .title{font-size:16px;font-weight:600;color:#111827;margin-bottom:10px;}',
+    '#arxiver-auth-notice p{margin:0 0 10px;font-size:13px;line-height:1.65;color:#4b5563;}',
+    '#arxiver-auth-notice b{color:#111827;}',
+    '#arxiver-auth-notice .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap;}',
+    '#arxiver-auth-notice a,#arxiver-auth-notice button{font:inherit;font-size:12.5px;border-radius:8px;padding:7px 12px;cursor:pointer;text-decoration:none;}',
+    '#arxiver-auth-notice .secondary{color:#374151;border:1px solid #d1d5db;background:#fff;}',
+    '#arxiver-auth-notice .secondary:hover{background:#f3f4f6;}',
+    '#arxiver-auth-notice .primary{color:#fff;background:#138a36;border:1px solid #138a36;}',
+    '#arxiver-auth-notice .primary:hover{background:#0f722c;}'
+  ].join('');
+  document.head.appendChild(style);
+
+  const show = () => {
+    if (document.getElementById('arxiver-auth-notice')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'arxiver-auth-notice';
+    overlay.innerHTML = [
+      '<div class="box">',
+      '<div class="title">请使用邮箱和密码登录</div>',
+      '<p>Google、ORCID、IEEE 和学校 SSO 登录需要第三方弹窗或跨站跳转，在嵌入式窗口中会被安全策略拦截。</p>',
+      '<p>如果你的账号最初用 Google 注册，请先在浏览器中登录 Overleaf，在 <b>Account Settings → Password</b> 设置密码，再回到这里用邮箱 + 密码登录。</p>',
+      '<div class="actions">',
+      '<a class="secondary" href="https://www.overleaf.com/user/settings" target="_blank" rel="noreferrer">在浏览器中打开设置</a>',
+      '<button type="button" class="primary" data-close>知道了</button>',
+      '</div>',
+      '</div>'
+    ].join('');
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target === overlay || target.closest('[data-close]')) { overlay.remove(); }
+    });
+  };
+  window.__arxiverShowAuthNotice = show;
+
+  const isThirdPartyLogin = (el) => {
+    const text = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+    const href = String(el.getAttribute('href') || '');
+    if (/accounts\.google\.|orcid\.org|ieee\.org/i.test(href)) return true;
+    if (/(log\s*in|sign\s*in|continue)\s*with\s*(google|orcid|ieee|sso)/i.test(text)) return true;
+    if (/single\s*sign[-\s]*on/i.test(text)) return true;
+    return false;
+  };
+
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const el = target.closest('a,button');
+    if (!el || !isThirdPartyLogin(el)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    show();
+  }, true);
+})()
+`;
+
 function permissionSession(): Electron.Session {
   const ses = session.fromPartition(PARTITION);
   if (!permissionsReady) {
@@ -378,6 +449,31 @@ function permissionSession(): Electron.Session {
     });
   }
   return ses;
+}
+
+async function showAuthNotice(wc: Electron.WebContents): Promise<void> {
+  try {
+    await wc.executeJavaScript("window.__arxiverShowAuthNotice && window.__arxiverShowAuthNotice()", true);
+  } catch {
+    /* 页面正在跳转时忽略 */
+  }
+}
+
+function isThirdPartyAuthUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    if (/(^|\.)google\.[a-z.]+$/.test(host)) { return true; }
+    if (/(^|\.)orcid\.org$/.test(host) || /(^|\.)ieee\.org$/.test(host)) { return true; }
+    const overleaf = host === "overleaf.com" || host.endsWith(".overleaf.com");
+    if (overleaf && host.startsWith("sso.")) { return true; }
+    if (overleaf && /(^|\/)(login|oauth|sso|saml)(\/|$)/i.test(url.pathname)) {
+      return /(google|orcid|ieee|sso|institutional)/i.test(url.pathname);
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 function ensureView(): WebContentsView {
@@ -406,11 +502,20 @@ function ensureView(): WebContentsView {
 
   const wc = next.webContents;
   wc.setWindowOpenHandler(({ url }) => {
+    if (isThirdPartyAuthUrl(url)) {
+      void showAuthNotice(wc);
+      return { action: "deny" };
+    }
     if (/^https?:\/\//i.test(url)) { void shell.openExternal(url); }
     return { action: "deny" };
   });
   wc.on("will-navigate", (event, url) => {
     try {
+      if (isThirdPartyAuthUrl(url)) {
+        event.preventDefault();
+        void showAuthNotice(wc);
+        return;
+      }
       const host = new URL(url).hostname.toLowerCase();
       if (host !== "overleaf.com" && !host.endsWith(".overleaf.com")) {
         event.preventDefault();
@@ -440,8 +545,17 @@ function ensureView(): WebContentsView {
       logger.warn("overleaf", "安装文档观察器失败: " + logger.errText(error));
     });
   };
-  wc.on("dom-ready", () => {
+  const installAuthGuard = (): void => {
+    void wc.executeJavaScript(AUTH_GUARD_SCRIPT).catch((error) => {
+      logger.warn("overleaf", "安装登录拦截失败: " + logger.errText(error));
+    });
+  };
+  const installPageScripts = (): void => {
     installSnapshot();
+    installAuthGuard();
+  };
+  wc.on("dom-ready", () => {
+    installPageScripts();
     // DOM 就绪就先显示页面（登录页/项目页的首屏通常已经可用），
     // 子资源（字体、验证码等）继续在后台加载，避免让用户一直看加载提示。
     const readyUrl = wc.getURL();
@@ -456,7 +570,7 @@ function ensureView(): WebContentsView {
     sendStatus();
   });
   wc.on("did-finish-load", () => {
-    installSnapshot();
+    installPageScripts();
     const loadedUrl = wc.getURL();
     if (/^https:\/\/([a-z0-9-]+\.)?overleaf\.com\//i.test(loadedUrl)) {
       pageReady = true;
@@ -1349,6 +1463,7 @@ export function chat(payload: OverleafChatRequest, emit: (event: OverleafEvent) 
         const result = await runChat({
           messages,
           tools: OVERLEAF_TOOLS,
+          target: overleafTarget(getConfig()),
           signal: controller.signal,
           onDelta: (text) => emit({ turnId, type: "delta", text }),
           onReasoning: (text) => emit({ turnId, type: "reasoning", text })

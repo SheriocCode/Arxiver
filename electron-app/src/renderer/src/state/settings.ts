@@ -19,10 +19,8 @@ export interface AppSettings {
   accent: Accent;
   reduceMotion: boolean;
   citeDoi: boolean;
-  aiEnabled: boolean;
   showBlocksTranslating: boolean;
   showBlocksTranslation: boolean;
-  splashEnabled: boolean;
   backgroundEnabled: boolean;
   backgroundFile: string;
   backgroundOpacity: number;
@@ -41,10 +39,8 @@ const DEFAULTS: AppSettings = {
   accent: "green",
   reduceMotion: false,
   citeDoi: true,
-  aiEnabled: true,
   showBlocksTranslating: true,
   showBlocksTranslation: false,
-  splashEnabled: true,
   backgroundEnabled: false,
   backgroundFile: "",
   backgroundOpacity: 0.9,

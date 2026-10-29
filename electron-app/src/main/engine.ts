@@ -11,6 +11,7 @@ import * as localModel from "./localmodel";
 import { LOCAL_MODEL_ALIAS } from "./localmodel";
 import * as models from "./models";
 import { get as getConfig } from "./config";
+import { translationConnection } from "../shared/ai";
 
 export interface TransParams {
   source_lang: string;
@@ -476,9 +477,10 @@ export class EngineManager extends EventEmitter {
   private async run(job: Job): Promise<void> {
     const config = getConfig();
     const isLocal = config.translate_mode === "local";
+    const connection = translationConnection(config);
     // 先解析有效的服务端信息（本地模式不在此启动服务，仅确定端名以便计算缓存键）。
     job.params.service = isLocal ? "openai" : (config.service || "openai");
-    job.params.model = isLocal ? LOCAL_MODEL_ALIAS : config.translate_model;
+    job.params.model = isLocal ? LOCAL_MODEL_ALIAS : String(connection?.model || "");
     if (isLocal && !job.params.prompt) {
       job.params.prompt = hyMtPrompt(job.params.source_lang, job.params.target_lang);
     }
@@ -511,9 +513,9 @@ export class EngineManager extends EventEmitter {
 
       fs.writeFileSync(path.join(job.workdir, "source.pdf"), sourceBytes);
 
-      let baseUrl = String(config.translate_base_url || "");
-      let apiKey = String(config.translate_api_key || "");
-      let model = String(config.translate_model || "");
+      let baseUrl = String(connection?.baseUrl || "");
+      let apiKey = String(connection?.apiKey || "");
+      let model = String(connection?.model || "");
       if (isLocal) {
         try {
           const server = await localModel.ensureServer();

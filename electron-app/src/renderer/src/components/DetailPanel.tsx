@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type JSX, type MutableRefObject } from "react";
 import { createPortal } from "react-dom";
 import type { LibraryDoc, Conversation, ConversationSummary, PaperHit, ConvBlock, AppConfig, Skill } from "../../../shared/types";
+import { chatTarget } from "../../../shared/ai";
 import { Icon } from "./Icons";
 import { formatDate } from "../lib/format";
 import { getPdfjs } from "../lib/pdf";
@@ -90,7 +91,7 @@ export default function DetailPanel({
           </div>
         ) : null}
         {/* AI 面板常驻挂载（切到别的标签只是隐藏），否则切一次标签会话就被卸载重建，上下文全丢 */}
-        {settings.aiEnabled && doc ? (
+        {doc ? (
           <div className="tab-panel ai-tab" hidden={lib.tab !== "ai"}>
             <AiPanel lib={lib} doc={doc} settings={settings} config={config} onOpenSettings={onOpenSettings} active={lib.tab === "ai"} selection={aiSelection} image={aiImage} onCite={onCite || (() => {})} onClearSelection={onClearSelection || (() => {})} onClearImage={onClearAiImage || (() => {})} openDocs={openDocs || []} resolveDocTitle={(id) => lib.documents.find((d) => d.id === id)?.title || id} />
           </div>
@@ -861,12 +862,13 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   const [paperOpen, setPaperOpen] = useState<Record<string, boolean>>({});
   const [jumped, setJumped] = useState("");
   const [pendingJump, setPendingJump] = useState(0);
-  // 对话模型是否已配置（基础地址 + 密钥 + 模型）：没配就别真的发起请求，直接引导去设置
-  const aiReady = !!(config && config.chat_base_url && config.chat_api_key && config.chat_model);
+  // 对话模型是否已配置（连接 + 密钥 + 模型）：没配就别真的发起请求，直接引导去设置
+  const chat = chatTarget(config);
+  const aiReady = !!(chat.baseUrl && chat.apiKey && chat.model);
   // DeepSeek 的 deepseek-chat / reasoner 收图片不会报错、只是当没传，这里提前提示换模型
   let chatHost = "";
-  try { chatHost = new URL(config?.chat_base_url || "").hostname; } catch { /* 非标准地址交给服务端判断 */ }
-  const visionBlocked = /(^|\.)deepseek\.com$/i.test(chatHost) && /^deepseek-(chat|reasoner|coder)/i.test(String(config?.chat_model || ""));
+  try { chatHost = new URL(chat.baseUrl).hostname; } catch { /* 非标准地址交给服务端判断 */ }
+  const visionBlocked = /(^|\.)deepseek\.com$/i.test(chatHost) && /^deepseek-(chat|reasoner|coder)/i.test(chat.model);
   const openAiSettings = (): void => onOpenSettings?.("ai");
   // 长耗时工具运行时每秒推进一次，让"已 Ns"和进度看起来是活的
   const [, setTick] = useState(0);
@@ -1184,13 +1186,13 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     const skillIds = attached;
     if ((!q && !imgs.length && !skillIds.length) || sending) { return; }
     // 没配置对话模型：不要真的发起请求（主进程只能回一句冷冰冰的报错，界面还会一直转圈），
-    // 直接把问题记下来并引导用户去「设置 → AI 助手」。
+    // 直接把问题记下来并引导用户去「设置 → AI 服务」。
     if (!aiReady) {
       setInput("");
       setImages([]);
       atBottomRef.current = true;
       setShowJump(false);
-      setTurns((prev) => [...prev, { role: "user", text: q, images: imgs.map((i) => i.dataUrl), skills: skillIds }, { role: "assistant", text: "", setup: true, error: "AI 助手还没配置对话模型：请在「设置 → AI 助手」里填写基础地址、API 密钥与模型。" }]);
+      setTurns((prev) => [...prev, { role: "user", text: q, images: imgs.map((i) => i.dataUrl), skills: skillIds }, { role: "assistant", text: "", setup: true, error: "AI 助手还没配置对话模型：请在「设置 → AI 服务」里选择连接并填写模型。" }]);
       return;
     }
     if (!convIdRef.current) {
@@ -1691,7 +1693,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
         ) : null}
         {images.length > 0 && visionBlocked ? (
           <div className="ai-img-warn">
-            <span>当前对话模型「{config?.chat_model}」不支持图片输入，请改为 deepseek-flash</span>
+            <span>当前对话模型「{chat.model}」不支持图片输入，请改为 deepseek-flash</span>
             <button type="button" onClick={openAiSettings}>去设置</button>
           </div>
         ) : null}

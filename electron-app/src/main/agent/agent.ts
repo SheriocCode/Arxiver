@@ -121,9 +121,9 @@ export class AgentService extends EventEmitter {
     // 联网能力的三态：别让模型把「缺 Key」猜成「没开启」，也别在不可用时编造外部资料
     const web = webSearchState();
     if (!web.on) {
-      ctx.push("【联网搜索】未开启：search_web / fetch_url 都不可用。需要最新或外部资料时，如实说明并引导用户到 设置 → AI 助手 → 联网搜索 开启。");
+      ctx.push("【联网搜索】未开启：search_web / fetch_url 都不可用。需要最新或外部资料时，如实说明并引导用户到 设置 → AI 服务 → 联网搜索 开启。");
     } else if (!web.key) {
-      ctx.push(`【联网搜索】已开启，但服务商「${web.provider}」没有配置 API Key：search_web 不可用（fetch_url 仍可读用户给出的网页/PDF）。需要联网检索时，直接告诉用户去 设置 → AI 助手 → 联网搜索 填「${web.provider}」的 API Key；不要说你没有联网能力，也不要编造外部资料。`);
+      ctx.push(`【联网搜索】已开启，但服务商「${web.provider}」没有配置 API Key：search_web 不可用（fetch_url 仍可读用户给出的网页/PDF）。需要联网检索时，直接告诉用户去 设置 → AI 服务 → 联网搜索 填「${web.provider}」的 API Key；不要说你没有联网能力，也不要编造外部资料。`);
     } else {
       ctx.push(`【联网搜索】已开启（服务商：${web.provider}）：search_web 与 fetch_url 均可用。`);
     }

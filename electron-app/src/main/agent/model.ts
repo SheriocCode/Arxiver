@@ -1,4 +1,5 @@
 import { get as getConfig } from "../config";
+import { chatTarget, type AiTarget } from "../../shared/ai";
 
 export interface ToolCall {
   id: string;
@@ -32,38 +33,38 @@ export interface StepResult {
 }
 
 export function modelConfigured(): boolean {
-  const c = getConfig();
-  return !!(c.chat_base_url && c.chat_api_key && c.chat_model);
+  const target = chatTarget(getConfig());
+  return !!(target.baseUrl && target.apiKey && target.model);
 }
 
-function endpoint(): string {
-  const base = String(getConfig().chat_base_url || "").replace(/\/+$/, "");
-  return base + "/chat/completions";
+function endpoint(target: AiTarget): string {
+  return String(target.baseUrl || "").replace(/\/+$/, "") + "/chat/completions";
 }
 
 export async function runChat(opts: {
   messages: ChatMessage[];
   tools?: ToolDef[];
   signal: AbortSignal;
+  target?: AiTarget;
   onDelta?: (text: string) => void;
   onReasoning?: (text: string) => void;
 }): Promise<StepResult> {
-  const config = getConfig();
-  if (!config.chat_base_url || !config.chat_api_key || !config.chat_model) {
-    throw new Error("未配置对话模型：请在设置中填写 AI 助手的基础地址 / 密钥 / 模型");
+  const target = opts.target || chatTarget(getConfig());
+  if (!target.baseUrl || !target.apiKey || !target.model) {
+    throw new Error("未配置模型：请在「设置 → AI 服务」里填写连接地址、API Key 和模型");
   }
   const hasImages = opts.messages.some((m) => Array.isArray(m.content) && m.content.some((p) => p.type === "image_url"));
   // DeepSeek 的 deepseek-chat / reasoner 不支持图片：它们不会报错，而是当作没传（模型会说"没有图片"），
   // 所以这里直接拦下来，免得用户以为是自己截图的问题。
   if (hasImages) {
     let host = "";
-    try { host = new URL(config.chat_base_url).hostname.toLowerCase(); } catch { /* 非标准地址就交给服务端判断 */ }
-    if (/(^|\.)deepseek\.com$/.test(host) && /^deepseek-(chat|reasoner|coder)/.test(String(config.chat_model).toLowerCase())) {
-      throw new Error(`当前对话模型 ${config.chat_model} 不支持图片输入：请在 设置 → AI 助手 → 模型 改为 deepseek-flash 后重试。`);
+    try { host = new URL(target.baseUrl).hostname.toLowerCase(); } catch { /* 非标准地址就交给服务端判断 */ }
+    if (/(^|\.)deepseek\.com$/.test(host) && /^deepseek-(chat|reasoner|coder)/.test(String(target.model).toLowerCase())) {
+      throw new Error(`当前对话模型 ${target.model} 不支持图片输入：请在「设置 → AI 服务」把模型改为 deepseek-flash 后重试。`);
     }
   }
   const body: Record<string, unknown> = {
-    model: config.chat_model,
+    model: target.model,
     messages: opts.messages,
     stream: true,
     stream_options: { include_usage: true }
@@ -73,9 +74,9 @@ export async function runChat(opts: {
     body.tool_choice = "auto";
   }
 
-  const res = await fetch(endpoint(), {
+  const res = await fetch(endpoint(target), {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + String(config.chat_api_key) },
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + String(target.apiKey) },
     body: JSON.stringify(body),
     signal: opts.signal
   });

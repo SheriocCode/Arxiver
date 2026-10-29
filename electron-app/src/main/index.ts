@@ -5,6 +5,8 @@ import { execFile } from "node:child_process";
 import { Readable } from "node:stream";
 
 import * as config from "./config";
+import * as ai from "./ai";
+import { translationConnection } from "../shared/ai";
 import * as storage from "./storage";
 import * as library from "./library";
 import * as annotations from "./annotations";
@@ -309,14 +311,38 @@ updater.on("status", (status: unknown) => send("update:status", status));
 
 
 function resolveParams(overrides?: Partial<TransParams>): TransParams {
-  const base = config.get() as unknown as Record<string, unknown>;
+  const settings = config.get();
+  const base = settings as unknown as Record<string, unknown>;
   const merged = { ...base, ...(overrides || {}) } as Record<string, unknown>;
   const isLocal = merged.translate_mode === "local";
+  const connection = isLocal ? undefined : translationConnection(settings);
+  if (isLocal) {
+    // 模型可能被用户从文件夹里手动删掉；开始任务前重新检查，避免任务创建后空转。
+    const status = localModel.localModelStatus();
+    if (!status.available) {
+      throw new Error("本地翻译不可用：" + status.reason);
+    }
+    if (!models.layoutModelReady()) {
+      throw new Error("缺少版面识别模型（DocLayout-YOLO），请到「设置 → 本地模型」下载");
+    }
+  } else {
+    if (!connection) {
+      throw new Error("没有可用的 AI 连接：请到「设置 → AI 服务」添加连接并填写模型。");
+    }
+    const missing = [
+      !String(connection.baseUrl || "").trim() ? "接口地址" : "",
+      !String(connection.apiKey || "").trim() ? "API Key" : "",
+      !String(connection.model || "").trim() ? "模型" : ""
+    ].filter(Boolean);
+    if (missing.length) {
+      throw new Error(`在线翻译使用的「${connection.name}」还缺 ${missing.join("、")}：请到「设置 → AI 服务」补全后再试。`);
+    }
+  }
   return {
     source_lang: (merged.source_lang as string) || "en",
     target_lang: (merged.target_lang as string) || "zh-CN",
     service: isLocal ? "openai" : (merged.service as string) || "openai",
-    model: isLocal ? "hy-mt" : (merged.translate_model as string) || "",
+    model: isLocal ? "hy-mt" : String(connection?.model || ""),
     output_variant: (merged.output_variant as string) || "dual",
     pages: (merged.pages as string) || "",
     threads: (merged.threads as number) || 4,
@@ -520,9 +546,10 @@ function registerIpc(): void {
 
   ipcMain.handle("config:get", () => config.get());
   ipcMain.handle("config:set", (_event, patch) => config.update(patch));
+  ipcMain.handle("ai:test", (_event, input: { baseUrl?: string; apiKey?: string }) => ai.testConnection(input || {}));
   ipcMain.handle("local:status", () => localModel.localModelStatus());
   ipcMain.handle("models:list", () => models.listModels());
-  ipcMain.handle("models:dir", () => models.modelsDirectory());
+  ipcMain.handle("models:reveal", (_event, id: LocalModelId) => models.revealModel(id));
   ipcMain.handle("models:download", (_event, id: LocalModelId, source?: string) => models.downloadModel(id, source));
   ipcMain.handle("models:test", (_event, url: string) => models.testModelSource(url));
   ipcMain.handle("models:cancel", (_event, id: LocalModelId) => models.cancelModelDownload(id));
