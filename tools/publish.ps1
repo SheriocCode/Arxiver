@@ -129,8 +129,8 @@ $siteRepo = Join-Path (Split-Path -Parent $root) "SheriocCode.github.io"
 Write-Host ""
 Write-Host "Post-release checklist:" -ForegroundColor Cyan
 if (Test-Path $siteRepo) {
-    Write-Host "  [ ] update arxiver/changelog.md in $siteRepo"
-    Write-Host "  [ ] git add arxiver && git commit && git push origin master"
+    Write-Host "  [ ] update _pages/arxiver.md (changelog section) in $siteRepo"
+    Write-Host "  [ ] git add _pages/arxiver.md && git commit && git push origin master"
 } else {
-    Write-Host "  [ ] update arxiver/changelog.md in the SheriocCode.github.io repo"
+    Write-Host "  [ ] update _pages/arxiver.md in the SheriocCode.github.io repo"
 }

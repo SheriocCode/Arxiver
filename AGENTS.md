@@ -13,19 +13,18 @@
 
 ## 文档站点（已迁到个人站）
 
-- 站点不再由本仓库发布，源码在 `../SheriocCode.github.io/arxiver/`，线上地址
-  <https://sherioccode.github.io/arxiver/>。
+- 线上地址 <https://sherioccode.github.io/arxiver/>，源码在 `../SheriocCode.github.io/`。
+- 概览、使用文档、参考、更新日志**合并为一页**：`../SheriocCode.github.io/_pages/arxiver.md`；
+  左侧目录在 front matter `toc:` 维护，版式在 `_layouts/manual.html`。
 - 本仓库 `docs/` 只保留旧地址（`/Arxiver/...`）的跳转页，**不要在这里加内容**。
-- 需要改文档时，直接改个人站仓库的 `arxiver/*.md`、`_layouts/arxiver/`、`arxiver/assets/`，提交推送即可
-  （GitHub Pages 自动构建）。
+- 需要改文档时直接改 `_pages/arxiver.md`（更新日志是同一页的最后一段），提交推送个人站仓库即可。
 - **内容以 Electron 桌面应用为准**；旧扩展 / 本机服务 / 托盘启动器的内容一律删除。
-- 约定：代码块用 `~~~` 围栏；图片放 `arxiver/assets/img|index/`，Markdown 用相对路径；标题锚点用
-  `## 标题 {#id}`，左侧目录在 front matter `toc:` 维护；新增页面设 `layout: arxiver/doc` 并在
-  `_layouts/arxiver/default.html` 导航里加一项。
+- 约定：代码块用 `~~~` 围栏；图片放 `../SheriocCode.github.io/arxiver/assets/index/`；
+  标题锚点用 `## 标题 {#id}`。
 
 ## 发布（手动，勿主动执行）
 
 - 发布由人工执行；**不要**在无关任务里 bump 版本或发版。
 - 基于 Electron 构建（`electron-builder` + 差量更新），见 `NOTES.local.md` 与 `tools/publish.ps1`。
 - 发布前：bump `electron-app/package.json` 的 `version`；引擎有变则更新 `electron-app/engine/VERSION`。
-- 发布后**同步文档**：更新 `../SheriocCode.github.io/arxiver/changelog.md`，在个人站仓库提交并推送。
+- 发布后**同步文档**：更新 `../SheriocCode.github.io/_pages/arxiver.md` 的更新日志段，在个人站仓库提交并推送。

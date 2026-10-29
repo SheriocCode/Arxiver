@@ -23,11 +23,11 @@
   &#160;
   <a href="https://sherioccode.github.io/arxiver/"><img src="https://img.shields.io/badge/官网-sherioccode.github.io-2f81f7?style=for-the-badge" alt="官网"></a>
   &#160;
-  <a href="https://sherioccode.github.io/arxiver/guide.html"><img src="https://img.shields.io/badge/文档-使用指南-6e7781?style=for-the-badge" alt="文档"></a>
+  <a href="https://sherioccode.github.io/arxiver/#install"><img src="https://img.shields.io/badge/文档-使用指南-6e7781?style=for-the-badge" alt="文档"></a>
 </p>
 
 <p align="center">
-  <a href="https://sherioccode.github.io/arxiver/changelog.html">更新日志</a> ·
+  <a href="https://sherioccode.github.io/arxiver/#changelog">更新日志</a> ·
   <a href="https://github.com/SheriocCode/Arxiver/issues">问题反馈</a>
 </p>
 
