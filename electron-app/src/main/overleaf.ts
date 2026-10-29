@@ -525,6 +525,14 @@ function ensureView(): WebContentsView {
       /* 非法 URL 交给 Chromium 处理 */
     }
   });
+  // OAuth 有时不是页面主动跳转，而是 Overleaf 返回 302 后才到 Google；
+  // will-navigate 不一定覆盖这种重定向，需要单独拦截。
+  wc.on("will-redirect", (event, url) => {
+    if (isThirdPartyAuthUrl(url)) {
+      event.preventDefault();
+      void showAuthNotice(wc);
+    }
+  });
   wc.on("did-start-loading", () => sendStatus());
   wc.on("did-stop-loading", () => sendStatus());
   wc.on("did-navigate", () => sendStatus());

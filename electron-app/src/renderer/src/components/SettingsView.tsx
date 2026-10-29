@@ -38,6 +38,7 @@ export default function SettingsView({
   const [section, setSection] = useState(initialSection || "model");
   const [form, setForm] = useState<Partial<AppConfig>>({});
   const [hint, setHint] = useState("");
+  const [saving, setSaving] = useState(false);
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [localStatus, setLocalStatus] = useState<LocalModelStatus | null>(null);
   const [models, setModels] = useState<LocalModelInfo[]>([]);
@@ -118,8 +119,15 @@ export default function SettingsView({
     }
   }, [config]);
 
-  const set = <K extends keyof AppConfig>(k: K, v: AppConfig[K]): void => setForm((f) => ({ ...f, [k]: v }));
+  const set = <K extends keyof AppConfig>(k: K, v: AppConfig[K]): void => {
+    setForm((f) => ({ ...f, [k]: v }));
+    setHint("");
+  };
   const cur = SECTIONS.find((s) => s.id === section) || SECTIONS[0];
+  // config 里的字段都由底部保存；其他设置项是即时保存的。
+  const configSection = section === "model" || section === "ai";
+  const dirty = !!(config && form.ai_connections && JSON.stringify(form) !== JSON.stringify(config));
+  const showFooter = configSection || dirty;
   const connections = form.ai_connections || [];
   const translationConn = translationConnection(form);
   const searchProvider: AppConfig["search_provider"] =
@@ -161,6 +169,7 @@ export default function SettingsView({
       ...f,
       ai_connections: (f.ai_connections || []).map((item) => (item.id === id ? { ...item, ...patch } : item))
     }));
+    setHint("");
     setConnTests((prev) => {
       if (!prev[id]) { return prev; }
       const next = { ...prev };
@@ -178,6 +187,7 @@ export default function SettingsView({
         { id, name: "自定义接口", baseUrl: "", apiKey: "", model: "" }
       ]
     }));
+    setHint("");
     setNewConnId(id);
   }
 
@@ -196,6 +206,7 @@ export default function SettingsView({
         overleaf_connection: f.overleaf_connection === id ? "" : f.overleaf_connection
       };
     });
+    setHint("");
   }
 
   async function testConnection(id: string): Promise<void> {
@@ -268,10 +279,23 @@ export default function SettingsView({
   }
 
   async function save(): Promise<void> {
-    const saved = await window.api.setConfig(form);
-    onSaved(saved);
-    setHint("已保存");
-    setTimeout(() => setHint(""), 2000);
+    if (saving) { return; }
+    setSaving(true);
+    try {
+      const saved = await window.api.setConfig(form);
+      onSaved(saved);
+      setHint("已保存");
+      setTimeout(() => setHint(""), 2000);
+    } catch (error) {
+      setHint("保存失败：" + ((error as Error)?.message || String(error)));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function requestClose(): void {
+    if (dirty && !window.confirm("有未保存的设置，确定关闭吗？")) { return; }
+    onClose();
   }
 
   async function pickBackground(): Promise<void> {
@@ -286,7 +310,7 @@ export default function SettingsView({
   }
 
   return (
-    <div className="modal-root" onMouseDown={(e) => { if (e.target === e.currentTarget) { onClose(); } }}>
+    <div className="modal-root" onMouseDown={(e) => { if (e.target === e.currentTarget) { requestClose(); } }}>
       <div className="settings-modal" role="dialog" aria-label="设置">
         <div className="settings-side">
           <img className="settings-logo" src="icons/wordmark.svg" alt="Arxiver" />
@@ -301,7 +325,7 @@ export default function SettingsView({
         <div className="settings-main">
           <div className="settings-head">
             <h2>{cur.name}</h2>
-            <button className="icon-btn" title="关闭" onClick={onClose}><Icon name="x" small /></button>
+            <button className="icon-btn" title="关闭" onClick={requestClose}><Icon name="x" small /></button>
           </div>
           <div className="settings-body">
             {section === "model" && (
@@ -381,10 +405,6 @@ export default function SettingsView({
                     <select value={form.target_lang || "zh-CN"} onChange={(e) => set("target_lang", e.target.value)}>{LANGS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select>
                   </Row>
                 </Group>
-                <div className="modal-foot" style={{ border: 0, padding: "4px 0" }}>
-                  <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>
-                  <button className="btn btn-primary" onClick={save}>保存设置</button>
-                </div>
               </>
             )}
 
@@ -699,10 +719,6 @@ export default function SettingsView({
                   ) : null}
                 </Group>
 
-                <div className="modal-foot" style={{ border: 0, padding: "4px 0" }}>
-                  <span style={{ marginRight: "auto", color: "var(--faint)", fontSize: 12 }}>{hint}</span>
-                  <button className="btn btn-primary" onClick={save}>保存设置</button>
-                </div>
               </>
             )}
 
@@ -747,6 +763,18 @@ export default function SettingsView({
               </Group>
             )}
           </div>
+          {showFooter ? (
+            <div className="settings-footer">
+              <span className={"settings-save-state" + (dirty ? " is-dirty" : "")}>
+                {dirty
+                  ? (hint.startsWith("保存失败") ? hint : "有未保存的修改")
+                  : (hint || "所有更改已保存")}
+              </span>
+              <button className="btn btn-primary" disabled={!dirty || saving} onClick={() => void save()}>
+                {saving ? "保存中…" : "保存设置"}
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

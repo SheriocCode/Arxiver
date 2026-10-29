@@ -948,6 +948,17 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .settings-head { display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); }
 .settings-head h2 { margin: 0; font-size: 15px; font-weight: 600; flex: 1; }
 .settings-body { padding: 4px 16px 20px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.settings-footer {
+  flex: none; display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.settings-save-state { flex: 1; color: var(--faint); font-size: 11.5px; }
+.settings-save-state.is-dirty { color: var(--star); }
+.settings-save-state.is-dirty::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px;
+  border-radius: 50%; background: var(--star); vertical-align: 1px;
+}
 .set-group { padding: 14px 2px; border-bottom: 1px solid var(--border); }
 .set-group:last-child { border-bottom: 0; }
 .set-group-title { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin: 0 0 6px; font-weight: 600; }
