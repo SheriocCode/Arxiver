@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type JSX, type MutableRefObject } from "react";
 import { createPortal } from "react-dom";
-import type { LibraryDoc, Conversation, ConversationSummary, PaperHit, ConvBlock, AppConfig, Skill, BtwThread } from "../../../shared/types";
+import type { LibraryDoc, Conversation, ConversationSummary, PaperHit, ConvBlock, AppConfig, Skill, BtwThread, ItemNote } from "../../../shared/types";
 import { chatTarget } from "../../../shared/ai";
 import { Icon } from "./Icons";
 import { formatDate } from "../lib/format";
@@ -86,7 +86,7 @@ export default function DetailPanel({
             {lib.tab === "info" && (lib.editMode
               ? <InfoEdit lib={lib} doc={doc} />
               : <InfoDisplay lib={lib} doc={doc} onOpenView={openDoc} citeDoi={settings.citeDoi} />)}
-            {lib.tab === "notes" && <NotesPanel lib={lib} doc={doc} />}
+            {lib.tab === "notes" && <NotesPanel lib={lib} doc={doc} onCite={onCite} />}
             {lib.tab === "tags" && <GroupsPanel lib={lib} doc={doc} />}
           </div>
         ) : null}
@@ -189,40 +189,146 @@ function InfoEdit({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Eleme
   );
 }
 
-function NotesPanel({ lib, doc }: { lib: LibraryApi; doc: LibraryDoc }): JSX.Element {
+function NotesPanel({ lib, doc, onCite }: {
+  lib: LibraryApi;
+  doc: LibraryDoc;
+  onCite?: (docId: string, page: number, quote?: string) => void;
+}): JSX.Element {
   const [input, setInput] = useState("");
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const [confirmId, setConfirmId] = useState("");
+  const [copied, setCopied] = useState("");
+  // 长笔记默认折起来，避免一条笔记把整个面板撑满
+  const [openNotes, setOpenNotes] = useState<Record<string, boolean>>({});
   const notes = doc.notes || [];
-  useEffect(() => { setInput(""); }, [doc.id]);
-  const add = (): void => {
-    const text = input.trim();
-    if (!text) { return; }
-    const note = { id: "n" + Date.now(), text, date: new Date().toISOString().slice(0, 10) };
-    void lib.update(doc.id, { notes: [note, ...notes] });
-    setInput("");
+
+  useEffect(() => { setInput(""); setEditing(null); setConfirmId(""); setOpenNotes({}); }, [doc.id]);
+
+  const save = (text: string, note?: ItemNote): void => {
+    const body = text.trim();
+    if (!body) { return; }
+    const today = new Date().toISOString().slice(0, 10);
+    const next = note
+      ? notes.map((n) => (n.id === note.id ? { ...n, text: body, updated: today } : n))
+      : [{ id: "n" + Date.now(), text: body, date: today }, ...notes];
+    void lib.update(doc.id, { notes: next });
   };
+
+  const remove = (id: string): void => {
+    void lib.update(doc.id, { notes: notes.filter((n) => n.id !== id) });
+    setConfirmId("");
+  };
+
+  const copy = (n: ItemNote): void => {
+    void navigator.clipboard?.writeText(n.text).then(() => {
+      setCopied(n.id);
+      window.setTimeout(() => setCopied((cur) => (cur === n.id ? "" : cur)), 1400);
+    }).catch(() => undefined);
+  };
+
   return (
     <>
       <div className="note-editor">
         <textarea
           value={input}
-          placeholder={`为《${doc.title}》添加一条笔记…`}
+          placeholder={`为《${doc.title}》添加一条笔记…
+支持 Markdown：**粗体**、- 列表、> 引用、$公式$、\`\`\`代码\`\`\``}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); } }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(input); setInput(""); }
+          }}
         />
-        <div className="od-row">
+        <div className="note-editor-foot">
+          <span className="note-hint">支持 Markdown · Ctrl / ⌘ + Enter 保存</span>
           <span className="od-fill" />
-          <button className="btn btn-primary" onClick={add}><Icon name="plus" small /> 保存笔记</button>
+          {input.trim() ? <button type="button" className="btn btn-ghost" onClick={() => setInput("")}>清空</button> : null}
+          <button type="button" className="btn btn-primary" disabled={!input.trim()} onClick={() => { save(input); setInput(""); }}>
+            <Icon name="plus" small /> 保存笔记
+          </button>
         </div>
       </div>
+
       {notes.length === 0 ? (
-        <p className="empty" style={{ padding: "20px 0", color: "var(--faint)" }}>还没有笔记，写一条吧。</p>
+        <div className="note-empty">
+          <Icon name="note" small />
+          <p>还没有笔记。可以记录阅读要点、公式推导或待读问题，支持 Markdown 与公式渲染。</p>
+        </div>
       ) : (
-        notes.map((n) => (
-          <div className="note-card" key={n.id}>
-            <p>{n.text}</p>
-            <time>{n.date}</time>
-          </div>
-        ))
+        <div className="note-list">
+          {notes.map((n) => {
+            const isEditing = editing?.id === n.id;
+            return (
+              <article className="note-card" key={n.id}>
+                <header className="note-head">
+                  <time>{n.date}{n.updated && n.updated !== n.date ? ` · 改于 ${n.updated}` : ""}</time>
+                  <span className="od-fill" />
+                  {isEditing ? null : (
+                    <span className="note-actions">
+                      <button type="button" title={copied === n.id ? "已复制" : "复制 Markdown"} onClick={() => copy(n)}>
+                        <Icon name={copied === n.id ? "check" : "copy"} small />
+                      </button>
+                      <button type="button" title="编辑" onClick={() => { setConfirmId(""); setEditing({ id: n.id, text: n.text }); }}>
+                        <Icon name="pencil" small />
+                      </button>
+                      <button type="button" title="删除" onClick={() => setConfirmId(confirmId === n.id ? "" : n.id)}>
+                        <Icon name="trash" small />
+                      </button>
+                    </span>
+                  )}
+                </header>
+
+                {isEditing ? (
+                  <div className="note-edit">
+                    <textarea
+                      autoFocus
+                      value={editing.text}
+                      onChange={(e) => setEditing({ id: n.id, text: e.target.value })}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") { setEditing(null); }
+                        else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(editing.text, n); setEditing(null); }
+                      }}
+                    />
+                    <div className="note-editor-foot">
+                      <span className="note-hint">Ctrl / ⌘ + Enter 保存 · Esc 取消</span>
+                      <span className="od-fill" />
+                      <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)}>取消</button>
+                      <button type="button" className="btn btn-primary" disabled={!editing.text.trim()} onClick={() => { save(editing.text, n); setEditing(null); }}>保存</button>
+                    </div>
+                  </div>
+                ) : (() => {
+                  const long = n.text.length > 700;
+                  const opened = !long || !!openNotes[n.id];
+                  return (
+                    <>
+                      <div className={"note-body" + (opened ? "" : " is-clamped")}>
+                        <Markdown text={n.text} onCite={(id, page, quote) => onCite?.(id, page, quote)} />
+                      </div>
+                      {long ? (
+                        <button
+                          type="button"
+                          className="note-more"
+                          onClick={() => setOpenNotes((s) => ({ ...s, [n.id]: !opened }))}
+                        >
+                          {opened ? "收起" : "展开全文"}
+                          <Icon name={opened ? "chev-down" : "chev-right"} small />
+                        </button>
+                      ) : null}
+                    </>
+                  );
+                })()}
+
+                {confirmId === n.id && !isEditing ? (
+                  <div className="note-confirm">
+                    <span>删除这条笔记？</span>
+                    <span className="od-fill" />
+                    <button type="button" className="btn btn-ghost" onClick={() => setConfirmId("")}>取消</button>
+                    <button type="button" className="btn danger" onClick={() => remove(n.id)}>删除</button>
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
       )}
     </>
   );

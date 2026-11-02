@@ -559,20 +559,73 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 }
 .tag-add:hover { color: var(--text); border-color: var(--accent); }
 
-.note-card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 12px; margin-bottom: 10px;
-}
-.note-card p { margin: 0 0 8px; font-size: 13px; color: var(--text-2); white-space: pre-wrap; }
-.note-card time { font-size: 11.5px; color: var(--faint); }
+/* ---- 笔记：Markdown 渲染 + 就地编辑 ---- */
 .note-editor { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
-.note-editor textarea {
+.note-editor textarea, .note-edit textarea {
   width: 100%; min-height: 84px; resize: vertical;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 10px; outline: none; color: var(--text); line-height: 1.6;
+  padding: 10px; outline: none; color: var(--text); line-height: 1.65; font-size: 13px;
 }
 .note-editor textarea:focus { border-color: var(--accent); }
 .note-editor textarea::placeholder { color: var(--faint); }
+.note-edit { display: flex; flex-direction: column; gap: 8px; }
+.note-edit textarea { background: var(--surface-2); border-color: var(--accent); }
+.note-editor-foot { display: flex; align-items: center; gap: 6px; }
+.note-hint { font-size: 11px; color: var(--faint); }
+.note-list { display: flex; flex-direction: column; gap: 10px; }
+.note-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 12px 12px; transition: border-color var(--dur) var(--ease);
+}
+.note-card:hover { border-color: var(--border-strong); }
+.note-head { display: flex; align-items: center; gap: 6px; min-height: 22px; margin-bottom: 2px; }
+.note-head time { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.note-actions { display: inline-flex; align-items: center; gap: 1px; opacity: 0; transition: opacity var(--dur) var(--ease); }
+.note-card:hover .note-actions, .note-actions:focus-within { opacity: 1; }
+.note-actions button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: var(--radius-sm); color: var(--faint); background: transparent; border: 0; cursor: pointer;
+}
+.note-actions button:hover { background: var(--hover); color: var(--text); }
+.note-confirm {
+  display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 8px;
+  border-top: 1px solid var(--border); font-size: 12px; color: var(--muted);
+}
+.note-empty { display: flex; align-items: flex-start; gap: 8px; padding: 18px 2px; color: var(--faint); font-size: 12.5px; }
+.note-empty .icon { margin-top: 2px; flex: none; }
+.note-empty p { margin: 0; line-height: 1.65; }
+/* 笔记正文按 Markdown 渲染（紧凑一档，和侧栏字号一致） */
+.note-body { font-size: 13px; line-height: 1.72; color: var(--text-2); overflow-wrap: anywhere; }
+.note-body > :first-child { margin-top: 2px; }
+.note-body > :last-child { margin-bottom: 0; }
+.note-body p { margin: 6px 0; }
+.note-body ul, .note-body ol { margin: 6px 0; padding-left: 20px; }
+.note-body li { margin: 2px 0; }
+.note-body h1, .note-body h2, .note-body h3, .note-body h4, .note-body h5, .note-body h6 {
+  margin: 10px 0 4px; font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.45;
+}
+.note-body strong { color: var(--text); font-weight: 600; }
+.note-body a { color: var(--accent); text-decoration: none; }
+.note-body a:hover { text-decoration: underline; }
+.note-body code {
+  background: var(--surface-2); padding: 1px 5px; border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+}
+.note-body pre { margin: 8px 0; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); overflow: auto; }
+.note-body pre code { background: none; padding: 0; }
+.note-body blockquote { margin: 6px 0; padding-left: 10px; border-left: 2px solid var(--border-strong); color: var(--muted); }
+.note-body hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
+.note-body table { border-collapse: collapse; margin: 8px 0; font-size: 12px; display: block; overflow: auto; }
+.note-body th, .note-body td { border: 1px solid var(--border-strong); padding: 3px 8px; text-align: left; }
+.note-body th { background: var(--surface-2); font-weight: 600; }
+.note-body .katex { font-size: 1.02em; }
+.note-body .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
+.note-body.is-clamped { max-height: 300px; overflow: hidden; }
+.note-more {
+  display: inline-flex; align-items: center; gap: 3px; margin-top: 6px;
+  color: var(--accent); font-size: 11.5px;
+}
+.note-more:hover { text-decoration: underline; }
 
 /* ---------- AI assistant ---------- */
 .ai-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }

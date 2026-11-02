@@ -406,6 +406,8 @@ export interface ItemNote {
   id: string;
   text: string;
   date: string;
+  /** 最后一次编辑的日期（不填表示从未改过） */
+  updated?: string;
 }
 
 export interface TranslationRef {
