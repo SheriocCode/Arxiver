@@ -2089,7 +2089,7 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 
 /* ---- AI conversation history ---- */
 .ai-hist-wrap { position: relative; }
-.ai-hist-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: 260px; max-height: 320px; overflow: auto; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow); padding: 4px; }
+.ai-hist-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: 260px; max-height: 320px; overflow: auto; overscroll-behavior: contain; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow); padding: 4px; }
 .ai-hist-empty { padding: 12px; color: var(--faint); font-size: 12px; text-align: center; }
 .ai-hist-item { display: flex; align-items: center; gap: 4px; border-radius: var(--radius-sm); }
 .ai-hist-item.active { background: var(--surface-2); }
@@ -2110,7 +2110,7 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 .ai-skills-wrap { position: relative; }
 .ai-skills-pop {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 45;
-  width: 300px; max-width: calc(100vw - 32px); max-height: min(540px, 72vh); overflow: auto;
+  width: 300px; max-width: calc(100vw - 32px); max-height: min(540px, 72vh); overflow: auto; overscroll-behavior: contain;
   background: var(--surface); border: 1px solid var(--border-strong);
   border-radius: var(--radius); box-shadow: var(--shadow); padding: 8px;
 }

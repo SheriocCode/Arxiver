@@ -1137,7 +1137,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     const t = e.target as HTMLElement | null;
     const insideScroll = !!t?.closest(".ai-scroll");
     if (!insideScroll) {
-      if (t?.closest(".ai-composer")) { return; }
+      // 输入框、历史记录 / 技能 / @ 这些弹层自己有滚动条，别把滚轮转给对话区
+      if (t?.closest(".ai-composer, .ai-hist-wrap, .ai-skills-wrap, .ai-at-pop")) { return; }
       el.scrollTop += e.deltaY;
       return;
     }
