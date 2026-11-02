@@ -667,7 +667,9 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
   overflow: hidden;
 }
 .note-cm:focus-within { border-color: var(--accent); }
-.note-cm .cm-editor { flex: 1; height: 100%; background: transparent; }
+/* min-width:0 必须加：flex 子项默认 min-width:auto，会被最长的行撑开成几千像素，
+   导致编辑器永远不换行（文本被右侧裁掉）。 */
+.note-cm .cm-editor { flex: 1; min-width: 0; height: 100%; background: transparent; }
 .note-cm .cm-editor.cm-focused { outline: none; }
 .note-cm .cm-scroller {
   overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
