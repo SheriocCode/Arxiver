@@ -699,9 +699,11 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .cm-h3 { font-size: 14px; font-weight: 600; color: var(--text); }
 .cm-h4, .cm-h5, .cm-h6 { font-size: 13px; font-weight: 600; color: var(--text); }
 /* 就地渲染的公式：点一下就能回到源码 */
-.note-cm .cm-math-inline { cursor: text; padding: 0 1px; }
+.note-cm .cm-math-inline { cursor: text; }
+/* 注意：块级部件的间距必须用 padding，不能用 margin —— CodeMirror 量高度只认
+   offsetHeight（不含 margin），否则行高模型和实际显示差一截，点击会偏行。 */
 .note-cm .cm-math-block {
-  display: block; margin: 6px 0; padding: 4px 2px; cursor: text;
+  display: block; margin: 0; padding: 8px 2px; cursor: text;
   overflow-x: auto; overflow-y: hidden;
 }
 .note-cm .cm-math-block .katex-display { margin: 0; }
