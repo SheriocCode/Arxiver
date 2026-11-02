@@ -200,7 +200,16 @@ function NotesPanel({ lib, doc, onCite }: {
   const [copied, setCopied] = useState("");
   // 长笔记默认折起来，避免一条笔记把整个面板撑满
   const [openNotes, setOpenNotes] = useState<Record<string, boolean>>({});
+  const editRef = useRef<HTMLTextAreaElement>(null);
   const notes = doc.notes || [];
+
+  // 编辑框跟着内容长高（最高 420px，再多就内部滚动），否则长笔记只能看到三行
+  useEffect(() => {
+    const el = editRef.current;
+    if (!el) { return; }
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 420) + "px";
+  }, [editing?.id, editing?.text]);
 
   useEffect(() => { setInput(""); setEditing(null); setConfirmId(""); setOpenNotes({}); }, [doc.id]);
 
@@ -260,20 +269,31 @@ function NotesPanel({ lib, doc, onCite }: {
             return (
               <article className="note-card" key={n.id}>
                 <header className="note-head">
-                  <time>{n.date}{n.updated && n.updated !== n.date ? ` · 改于 ${n.updated}` : ""}</time>
-                  <span className="od-fill" />
-                  {isEditing ? null : (
-                    <span className="note-actions">
-                      <button type="button" title={copied === n.id ? "已复制" : "复制 Markdown"} onClick={() => copy(n)}>
-                        <Icon name={copied === n.id ? "check" : "copy"} small />
-                      </button>
-                      <button type="button" title="编辑" onClick={() => { setConfirmId(""); setEditing({ id: n.id, text: n.text }); }}>
-                        <Icon name="pencil" small />
-                      </button>
-                      <button type="button" title="删除" onClick={() => setConfirmId(confirmId === n.id ? "" : n.id)}>
-                        <Icon name="trash" small />
-                      </button>
-                    </span>
+                  {confirmId === n.id ? (
+                    <>
+                      <span className="note-confirm-text">删除这条笔记？</span>
+                      <span className="od-fill" />
+                      <button type="button" className="btn btn-ghost" onClick={() => setConfirmId("")}>取消</button>
+                      <button type="button" className="btn danger" onClick={() => remove(n.id)}>删除</button>
+                    </>
+                  ) : (
+                    <>
+                      <time>{n.date}{n.updated && n.updated !== n.date ? ` · 改于 ${n.updated}` : ""}</time>
+                      <span className="od-fill" />
+                      {isEditing ? null : (
+                        <span className="note-actions">
+                          <button type="button" title={copied === n.id ? "已复制" : "复制 Markdown"} onClick={() => copy(n)}>
+                            <Icon name={copied === n.id ? "check" : "copy"} small />
+                          </button>
+                          <button type="button" title="编辑" onClick={() => { setConfirmId(""); setEditing({ id: n.id, text: n.text }); }}>
+                            <Icon name="pencil" small />
+                          </button>
+                          <button type="button" title="删除" onClick={() => setConfirmId(confirmId === n.id ? "" : n.id)}>
+                            <Icon name="trash" small />
+                          </button>
+                        </span>
+                      )}
+                    </>
                   )}
                 </header>
 
@@ -281,6 +301,7 @@ function NotesPanel({ lib, doc, onCite }: {
                   <div className="note-edit">
                     <textarea
                       autoFocus
+                      ref={editRef}
                       value={editing.text}
                       onChange={(e) => setEditing({ id: n.id, text: e.target.value })}
                       onKeyDown={(e) => {
@@ -316,15 +337,6 @@ function NotesPanel({ lib, doc, onCite }: {
                     </>
                   );
                 })()}
-
-                {confirmId === n.id && !isEditing ? (
-                  <div className="note-confirm">
-                    <span>删除这条笔记？</span>
-                    <span className="od-fill" />
-                    <button type="button" className="btn btn-ghost" onClick={() => setConfirmId("")}>取消</button>
-                    <button type="button" className="btn danger" onClick={() => remove(n.id)}>删除</button>
-                  </div>
-                ) : null}
               </article>
             );
           })}
