@@ -1,42 +1,110 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { EditorState, type Extension, type Range } from "@codemirror/state";
+import {
+  Decoration, EditorView, ViewPlugin, drawSelection, keymap, placeholder as cmPlaceholder,
+  type DecorationSet, type ViewUpdate
+} from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { syntaxTree } from "@codemirror/language";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { Icon } from "./Icons";
 import { Markdown } from "../lib/markdown";
 
-// 笔记编辑器：侧栏内全屏。
-//   · 顶部格式工具条：粗体 / 斜体 / 标题 / 列表 / 引用 / 代码 / 公式 / 链接（选中即包裹）
-//   · 左侧（窄面板时改为上方）是 Markdown 源码，右侧/下方是**实时预览**，边写边看效果
-//   · 面板够宽时并排，窄的时候上下分栏（用容器查询切换）
+// 笔记编辑器：侧栏内全屏，Obsidian 式的 Live Preview（块级/行级即时渲染）。
+//   · 没有编辑的地方是渲染后的富文本（`**粗体**` 显示成粗体，标记隐藏）
+//   · 光标所在的那一行才展开原始标记，方便直接改语法
+//   · 语法不完整（比如只剩一个 *）时不会被识别成强调，自然就显示成普通文本
+//   · 公式 / 表格这种排版复杂的，右侧（窄面板时下方）有实时预览
 
-type Block = (el: HTMLTextAreaElement, text: string, setText: (v: string) => void) => void;
+const MARKER_NODES = new Set(["EmphasisMark", "CodeMark", "LinkMark", "StrikethroughMark", "HeaderMark"]);
 
-// 在选区两侧包一层（没有选中就插入占位文字）
-const wrap = (before: string, after: string, placeholder: string): Block => (el, text, setText) => {
-  const start = el.selectionStart ?? 0;
-  const end = el.selectionEnd ?? 0;
-  const selected = text.slice(start, end) || placeholder;
-  const next = text.slice(0, start) + before + selected + after + text.slice(end);
-  setText(next);
-  requestAnimationFrame(() => {
-    el.focus();
-    el.selectionStart = start + before.length;
-    el.selectionEnd = start + before.length + selected.length;
-  });
+const STYLE_NODES: Record<string, string> = {
+  StrongEmphasis: "cm-strong",
+  Emphasis: "cm-em",
+  InlineCode: "cm-code",
+  Strikethrough: "cm-strike",
+  Link: "cm-link",
+  Blockquote: "cm-quote",
+  ATXHeading1: "cm-h1",
+  ATXHeading2: "cm-h2",
+  ATXHeading3: "cm-h3",
+  ATXHeading4: "cm-h4",
+  ATXHeading5: "cm-h5",
+  ATXHeading6: "cm-h6"
 };
 
-// 在行首加前缀（标题 / 列表 / 引用）
-const prefix = (mark: string): Block => (el, text, setText) => {
-  const start = el.selectionStart ?? 0;
-  const lineStart = text.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
-  const next = text.slice(0, lineStart) + mark + text.slice(lineStart);
-  setText(next);
-  requestAnimationFrame(() => {
-    el.focus();
-    const pos = start + mark.length;
-    el.selectionStart = el.selectionEnd = pos;
+function buildDecorations(view: EditorView): DecorationSet {
+  const { state } = view;
+  const ranges: Range<Decoration>[] = [];
+  // 光标落在哪些行：这些行展开原始 Markdown 标记
+  const cursorLines = new Set<number>();
+  for (const r of state.selection.ranges) {
+    const a = state.doc.lineAt(r.from).number;
+    const b = state.doc.lineAt(r.to).number;
+    for (let n = a; n <= b; n++) { cursorLines.add(n); }
+  }
+  const onCursorLine = (pos: number): boolean => cursorLines.has(state.doc.lineAt(pos).number);
+
+  for (const { from, to } of view.visibleRanges) {
+    syntaxTree(state).iterate({
+      from, to,
+      enter: (node) => {
+        const cls = STYLE_NODES[node.name];
+        if (cls) {
+          ranges.push(Decoration.mark({ class: cls }).range(node.from, node.to));
+          return;
+        }
+        if (!onCursorLine(node.from)) {
+          // 只隐藏标记本身，内容保持原样
+          if (MARKER_NODES.has(node.name)) {
+            ranges.push(Decoration.replace({}).range(node.from, node.to));
+            return;
+          }
+          // 链接的 URL 也算标记：`[文字](链接)` 里只保留文字
+          if (node.name === "URL" && node.node.parent?.type.name === "Link") {
+            ranges.push(Decoration.replace({}).range(node.from, node.to));
+          }
+        }
+      }
+    });
+  }
+  return Decoration.set(ranges, true);
+}
+
+const livePreview = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+  constructor(view: EditorView) { this.decorations = buildDecorations(view); }
+  update(u: ViewUpdate): void {
+    if (u.docChanged || u.selectionSet || u.viewportChanged) {
+      this.decorations = buildDecorations(u.view);
+    }
+  }
+}, { decorations: (v) => v.decorations });
+
+// 工具条动作：包裹选区 / 行首加标记
+type Action = (view: EditorView) => void;
+
+const wrap = (before: string, after: string, placeholder: string): Action => (view) => {
+  const { from, to } = view.state.selection.main;
+  const selected = view.state.sliceDoc(from, to) || placeholder;
+  view.dispatch({
+    changes: { from, to, insert: before + selected + after },
+    selection: { anchor: from + before.length, head: from + before.length + selected.length }
   });
+  view.focus();
 };
 
-const TOOLS: { label: string; title: string; run: Block }[] = [
+const prefix = (mark: string): Action => (view) => {
+  const { from } = view.state.selection.main;
+  const line = view.state.doc.lineAt(from);
+  view.dispatch({
+    changes: { from: line.from, insert: mark },
+    selection: { anchor: from + mark.length }
+  });
+  view.focus();
+};
+
+const TOOLS: { label: string; title: string; run: Action }[] = [
   { label: "B", title: "粗体（Ctrl+B）", run: wrap("**", "**", "粗体") },
   { label: "I", title: "斜体（Ctrl+I）", run: wrap("*", "*", "斜体") },
   { label: "H", title: "标题", run: prefix("## ") },
@@ -56,21 +124,64 @@ export default function NoteEditor({ initial, isNew, onSave, onCancel, onCite }:
   onCancel: () => void;
   onCite?: (docId: string, page: number, quote?: string) => void;
 }): JSX.Element {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
   const [text, setText] = useState(initial);
+  // 预览单独做 150ms 防抖：长笔记（含大量公式）不至于每敲一个字就重排一次
+  const [previewText, setPreviewText] = useState(initial);
   const [preview, setPreview] = useState(true);
-  const areaRef = useRef<HTMLTextAreaElement>(null);
-
+  useEffect(() => {
+    const t = window.setTimeout(() => setPreviewText(text), 150);
+    return () => window.clearTimeout(t);
+  }, [text]);
   const canSave = useMemo(() => text.trim().length > 0, [text]);
 
-  useEffect(() => { areaRef.current?.focus(); }, []);
-
-  const save = (): void => { if (canSave) { onSave(text.trim()); } };
-
-  const run = (tool: Block): void => {
-    const el = areaRef.current;
-    if (!el) { return; }
-    tool(el, text, (v) => setText(v));
+  const save = (): void => {
+    const value = viewRef.current?.state.doc.toString() ?? text;
+    if (value.trim()) { onSave(value.trim()); }
   };
+  // Ctrl+Enter 的 keymap 需要拿到最新的 save 闭包
+  const saveRef = useRef<() => void>(save);
+  saveRef.current = save;
+
+  // 建编辑器（只建一次；内容由 CodeMirror 自己维护）
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) { return; }
+    const extensions: Extension[] = [
+      history(),
+      drawSelection(),
+      EditorView.lineWrapping,
+      markdown({ base: markdownLanguage, addKeymap: false }),
+      livePreview,
+      cmPlaceholder("在这里写笔记，支持 Markdown：## 标题、**粗体**、- 列表、$公式$"),
+      keymap.of([
+        {
+          key: "Mod-b", preventDefault: true, run: (view) => { wrap("**", "**", "粗体")(view); return true; }
+        },
+        {
+          key: "Mod-i", preventDefault: true, run: (view) => { wrap("*", "*", "斜体")(view); return true; }
+        },
+        {
+          key: "Mod-Enter", preventDefault: true, run: () => { saveRef.current?.(); return true; }
+        },
+        indentWithTab,
+        ...defaultKeymap,
+        ...historyKeymap
+      ]),
+      EditorView.updateListener.of((u) => {
+        if (u.docChanged) { setText(u.state.doc.toString()); }
+      })
+    ];
+    const view = new EditorView({
+      state: EditorState.create({ doc: initial, extensions }),
+      parent: host
+    });
+    viewRef.current = view;
+    view.focus();
+    return () => { view.destroy(); viewRef.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="note-focus">
@@ -87,44 +198,32 @@ export default function NoteEditor({ initial, isNew, onSave, onCancel, onCite }:
 
       <div className="note-format-bar" role="toolbar" aria-label="格式">
         {TOOLS.map((t) => (
-          <button key={t.label} type="button" className="note-format-btn" title={t.title} onClick={() => run(t.run)}>
+          <button
+            key={t.label}
+            type="button"
+            className="note-format-btn"
+            title={t.title}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => { const v = viewRef.current; if (v) { t.run(v); } }}
+          >
             {t.label}
           </button>
         ))}
       </div>
 
       <div className={"note-edit-area" + (preview ? " has-preview" : "")}>
-        <textarea
-          ref={areaRef}
-          className="note-source"
-          value={text}
-          spellCheck={false}
-          placeholder={"在这里写笔记，支持 Markdown：\n## 标题\n**粗体**、*斜体*、`代码`、- 列表、> 引用\n行内公式 $a^2+b^2$，块级公式用 $$ 包起来"}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") { e.preventDefault(); run(TOOLS[0].run); }
-            else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "i") { e.preventDefault(); run(TOOLS[1].run); }
-            else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
-            else if (e.key === "Tab") {
-              e.preventDefault();
-              const el = e.currentTarget;
-              const start = el.selectionStart;
-              setText(text.slice(0, start) + "  " + text.slice(el.selectionEnd));
-              requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = start + 2; });
-            }
-          }}
-        />
+        <div className="note-cm" ref={hostRef} />
         {preview ? (
           <div className="note-preview">
-            {text.trim()
-              ? <Markdown text={text} onCite={(id, page, quote) => onCite?.(id, page, quote)} />
+            {previewText.trim()
+              ? <Markdown text={previewText} onCite={(id, page, quote) => onCite?.(id, page, quote)} />
               : <div className="note-preview-empty">预览区 · 输入内容后在这里看到渲染效果</div>}
           </div>
         ) : null}
       </div>
 
       <footer className="note-focus-foot">
-        <span className="note-hint">Ctrl/⌘ + B 粗体 · Ctrl/⌘ + I 斜体 · Tab 缩进</span>
+        <span className="note-hint">光标所在行会显示 Markdown 标记，其它位置按富文本渲染</span>
         <span className="od-fill" />
         <span className="note-hint">Ctrl / ⌘ + Enter 保存</span>
       </footer>
