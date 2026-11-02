@@ -5,6 +5,8 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { zoomImage } from "./lightbox";
+import { rehypeBtwMarks, type QuoteMark } from "./btwMarks";
+import { normalizeMath } from "./math";
 
 // [[cite:docId#page]] 或 [[cite:docId#page|原文片段]]（片段用于在 PDF 文本层里定位并高亮）
 // 片段是原文照抄，可能自带参考文献角标（如 [31]），所以不能用 [^\]]* 把它截断；
@@ -39,12 +41,14 @@ function parseCiteHref(href: string | undefined): { docId: string; page: number;
   return { docId, page: parseInt(m[1], 10), quote: quote.replace(/\s+/g, " ").trim() };
 }
 
-export function Markdown({ text, onCite, onCard }: {
+export function Markdown({ text, onCite, onCard, quotes, onQuote }: {
   text: string;
   onCite: (docId: string, page: number, quote?: string) => void;
   onCard?: (n: number) => void;
+  quotes?: QuoteMark[];
+  onQuote?: (id: string) => void;
 }): JSX.Element {
-  const prepared = String(text || "")
+  const prepared = normalizeMath(String(text || ""))
     .replace(CITE, (_m, id: string, page: string, raw?: string) => {
       const q = String(raw || "").replace(/^\s*[|\]]/, "").replace(/\s+/g, " ").trim();
       const href = `cite:${id}#${page}${q ? "|" + encodeQuote(q) : ""}`;
@@ -99,13 +103,27 @@ export function Markdown({ text, onCite, onCard }: {
   };
 
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[rehypeKatex]}
-      components={components}
-      urlTransform={(url) => (url.startsWith("cite:") || url.startsWith("card:") ? url : defaultUrlTransform(url))}
+    <div
+      className="ai-md-body"
+      onClick={(e) => {
+        const hit = (e.target as HTMLElement | null)?.closest?.("[data-btw]");
+        const id = hit?.getAttribute("data-btw");
+        if (id && onQuote) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.getSelection()?.removeAllRanges();
+          onQuote(id);
+        }
+      }}
     >
-      {prepared}
-    </ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={quotes && quotes.length && onQuote ? [rehypeKatex, [rehypeBtwMarks, quotes]] : [rehypeKatex]}
+        components={components}
+        urlTransform={(url) => (url.startsWith("cite:") || url.startsWith("card:") ? url : defaultUrlTransform(url))}
+      >
+        {prepared}
+      </ReactMarkdown>
+    </div>
   );
 }

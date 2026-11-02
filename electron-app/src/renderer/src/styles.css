@@ -810,6 +810,26 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .lg-filters button[aria-pressed="true"] { color: var(--text); }
 .lg-filters button[aria-pressed="true"]::after { content: ""; position: absolute; left: 9px; right: 9px; bottom: -11px; height: 2px; border-radius: 2px; background: var(--accent); }
 .lg-count { margin-left: auto; font-size: 11px; color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* 日志列表的关键字搜索：主进程里过滤，翻页/级别切换都沿用同一个关键字 */
+.lg-search {
+  display: inline-flex; align-items: center; gap: 5px; flex: none; width: min(240px, 32vw);
+  height: 30px; margin-right: 4px; padding: 0 5px 0 9px; color: var(--faint);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--pill);
+  transition: border-color var(--dur) var(--ease);
+}
+.lg-search:focus-within { border-color: var(--accent); }
+.lg-search .icon { width: 12px; height: 12px; flex: none; }
+.lg-search input {
+  flex: 1 1 auto; width: 0; min-width: 52px; background: transparent; border: 0; outline: none;
+  color: var(--text); font-size: 12px;
+}
+.lg-search input::placeholder { color: var(--faint); }
+.lg-search-x {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 18px; height: 18px; border-radius: 999px; background: transparent; border: 0;
+  color: var(--faint); cursor: pointer;
+}
+.lg-search-x:hover { background: var(--hover); color: var(--text); }
 .lg-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 14px 20px; }
 .lg-group { display: flex; align-items: baseline; justify-content: space-between; padding: 14px 8px 6px; font-size: 10.5px; letter-spacing: 0.07em; color: var(--faint); }
 .lg-group span:first-child { font-weight: 600; }
@@ -857,6 +877,8 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .lg-conv-title { font-size: 12.5px; color: var(--text-2); }
 .lg-conv.is-selected .lg-conv-title { color: var(--text); }
 .lg-conv-meta { font-size: 10.5px; color: var(--faint); }
+/* 全文搜索命中的上下文片段 */
+.lg-conv-snippet { font-size: 11px; color: var(--muted); line-height: 1.5; }
 .lg-trace-head { padding: 18px 24px 12px; border-bottom: 1px solid var(--border); }
 .lg-trace-head h2 { margin: 0; font-size: 15px; font-weight: 600; color: var(--text); }
 .lg-trace-head p { margin: 4px 0 0; font-size: 11.5px; color: var(--faint); }
@@ -2187,14 +2209,17 @@ textarea.ai-confirm-args { width: 100%; min-height: 96px; border: 0; outline: no
 .ai-jump:hover { background: var(--hover-strong); }
 
 /* ---------- 顺便问一下（/btw）小窗 ---------- */
-.btw-layer { position: fixed; inset: 0; z-index: 160; }
+/* 非模态：点别处不再关闭，面板以外的事件穿透给下层界面 */
+.btw-layer { position: fixed; inset: 0; z-index: 160; pointer-events: none; }
 .btw-panel {
   position: absolute; right: 20px; bottom: 20px;
   width: min(440px, calc(100vw - 32px)); height: min(560px, calc(100vh - 40px));
-  display: flex; flex-direction: column; overflow: hidden;
+  display: flex; flex-direction: column; overflow: hidden; pointer-events: auto;
   background: var(--bg-panel); border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg); box-shadow: var(--shadow);
 }
+.btw-head { cursor: grab; }
+.btw-head:active { cursor: grabbing; }
 .btw-head {
   display: flex; align-items: center; gap: 8px; flex: none;
   padding: 10px 12px; border-bottom: 1px solid var(--border);
@@ -2219,6 +2244,27 @@ textarea.ai-confirm-args { width: 100%; min-height: 96px; border: 0; outline: no
   color: var(--muted); font-size: 12px; overflow-wrap: anywhere;
 }
 .btw-running { display: flex; align-items: center; gap: 6px; margin: 6px 0; color: var(--muted); font-size: 11.5px; }
+
+/* 「顺便问」锚点：正文里被问过的原文画虚线下划线，点了重开那条子对话 */
+.ai-md-body { display: contents; }
+.ai-md-body > :first-child { margin-top: 0; }
+.btw-anchor {
+  cursor: pointer; border-bottom: 1px dashed var(--accent);
+  transition: background var(--dur) var(--ease);
+}
+.btw-anchor:hover { background: var(--accent-soft); }
+.btw-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+.btw-chip {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
+  padding: 3px 9px; border-radius: var(--pill);
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--muted); font-size: 11.5px; cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.btw-chip:hover { background: var(--hover); border-color: var(--border-strong); color: var(--text); }
+.btw-chip .icon { color: var(--accent); flex: none; }
+.btw-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btw-chip-count { flex: none; color: var(--faint); }
 .btw-sel-ask {
   position: fixed; z-index: 170; transform: translateX(-50%);
   display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px;

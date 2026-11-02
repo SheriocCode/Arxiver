@@ -262,8 +262,6 @@ export class ViewerEngine {
   private renderTimer = 0;
   private selRaf = 0;
   private settling = false;
-  private inkCtx: CanvasRenderingContext2D | null = null;
-  private inkCache = new WeakMap<HTMLElement, { lead: number; width: number }>();
   private spanCache = new WeakMap<HTMLElement, HTMLElement[]>();
   private sizeCache = new WeakMap<HTMLElement, number>();
   private bodyCache = new WeakMap<HTMLElement, number>();
@@ -550,67 +548,107 @@ export class ViewerEngine {
     const node = sel.anchorNode;
     const anchor = node ? (node.nodeType === 1 ? (node as Element) : node.parentElement) : null;
     if (!anchor || !this.root.contains(anchor)) { return []; }
+    const range = sel.getRangeAt(0);
+    const rb = range.getBoundingClientRect();
+    if (!rb.width && !rb.height) { return []; }
     // 起点落在哪一类文字里（正文 / 小字）：高亮只画同类，跨图/跨页时不会把脚注、图注、
     // 图表里的标签、页码一起点亮（用户要选它们时会从它们里面起手）。
     const anchorSpan = this.spanOf(sel.anchorNode);
     const anchorSmall = anchorSpan ? this.isSmallText(anchorSpan) : false;
-    const rects = Array.from(sel.getRangeAt(0).getClientRects()).filter((r) => r.width > 1 && r.height > 1);
-    if (!rects.length) { return []; }
     const text = sel.toString().replace(/\s+/g, " ").trim();
-    let minY = Infinity; let maxY = -Infinity;
-    for (const r of rects) { minY = Math.min(minY, r.top); maxY = Math.max(maxY, r.bottom); }
     const out: SelSegment[] = [];
     this.root.querySelectorAll<HTMLElement>(".page-wrap").forEach((wrap) => {
-      const textLayer = wrap.querySelector<HTMLElement>(".text-layer");
-      if (!textLayer) { return; }
       const wr = wrap.getBoundingClientRect();
-      if (wr.width <= 0 || wr.height <= 0 || wr.bottom < minY || wr.top > maxY) { return; }
-      const lines: { top: number; height: number; left: number; width: number; el: HTMLElement; small: boolean }[] = [];
-      this.textSpans(textLayer).forEach((span) => {
-        const b = span.getBoundingClientRect();
-        if (b.width <= 0 || b.height <= 0) { return; }
-        lines.push({ top: b.top, height: b.height, left: b.left, width: b.width, el: span, small: this.isSmallText(span) });
-      });
-      if (!lines.length) { return; }
-      const seen = new Set<string>();
-      const segRects: SelSegment["rects"] = [];
-      for (const r of rects) {
-        if (r.right < wr.left || r.left > wr.right) { continue; }
-        // 找"和这个矩形最贴的那一行"：
-        //   ① 高度最接近（正常文字行 ≈ 1em；旋转的水印/容器整行框会差很多）
-        //   ② 纵向重叠最多   ③ 横向重叠最多（同一行会被拆成多个 span，如 "1" + " " + "Introduction"，
-        //   跨页/跨图选择时浏览器还可能多报一个"整行宽"的容器矩形，靠横向重叠才能落到真正被选中的那段）
-        let line: typeof lines[number] | null = null;
-        let bestScore = Infinity;
-        for (const ln of lines) {
-          if (ln.small !== anchorSmall) { continue; }
-          const o = Math.min(r.bottom, ln.top + ln.height) - Math.max(r.top, ln.top);
-          if (o <= 0) { continue; }
-          const ox = Math.min(r.right, ln.left + ln.width) - Math.max(r.left, ln.left);
-          if (ox <= 0) { continue; }
-          // 高度差太多的不算
-          if (ln.height < r.height * 0.45 || ln.height > r.height * 1.8) { continue; }
-          const score = Math.abs(ln.height - r.height) - o * 1e-3 - ox * 1e-6;
-          if (score < bestScore) { bestScore = score; line = ln; }
-        }
-        if (!line) { continue; }
-        // 浏览器有时会给出"整行宽"的矩形（跨页 / 跨图时），而文字只占其中一段：
-        // 用这一行自己的"有墨范围"（去掉首尾空白）收窄，别让高亮横跨整页。
-        const ink = this.inkRatio(line.el);
-        const inkWidth = line.width * ink.width;
-        if (inkWidth < 1) { continue; }
-        let left = r.left;
-        let width = r.width;
-        if (width > inkWidth + 1) { left = line.left + line.width * ink.lead; width = inkWidth; }
-        // 同一行会给出多个矩形（原生多报一个"字体内容区"的矩形），按最终画出来的位置去重
-        const key = Math.round(left) + ":" + Math.round(line.top) + ":" + Math.round(width);
-        if (seen.has(key)) { continue; }
-        seen.add(key);
-        segRects.push({ left, top: line.top, width, height: line.height });
-      }
-      if (segRects.length) { out.push({ page: Number(wrap.dataset.page || 0), text, rects: segRects }); }
+      if (wr.width <= 0 || wr.height <= 0 || wr.bottom < rb.top || wr.top > rb.bottom) { return; }
+      const rects = this.pageSelectionRects(wrap, range, (span) => this.isSmallText(span) === anchorSmall);
+      if (rects.length) { out.push({ page: Number(wrap.dataset.page || 0), text, rects }); }
     });
     return out;
+  }
+
+  // 选区落在某一段文字（span）上的矩形：逐个文本节点求交，拿到的就是真正被选中的那几个字。
+  // 比"拿浏览器给的整行矩形去猜是哪一行"可靠：跨行选择时不会把高亮跑到相邻行上。
+  private spanSelectionRects(range: Range, span: HTMLElement): DOMRect[] {
+    const out: DOMRect[] = [];
+    const nodes: Text[] = [];
+    const stack: Node[] = [span];
+    while (stack.length) {
+      const cur = stack.pop() as Node;
+      if (cur.nodeType === Node.TEXT_NODE) { nodes.push(cur as Text); continue; }
+      for (let i = cur.childNodes.length - 1; i >= 0; i--) { stack.push(cur.childNodes[i]); }
+    }
+    for (const n of nodes) {
+      const len = n.data.length;
+      if (!len) { continue; }
+      const pStart = range.comparePoint(n, 0);
+      const pEnd = range.comparePoint(n, len);
+      if (pStart > 0 || pEnd < 0) { continue; }  // 整段都在选区之外
+      const start = pStart < 0 ? (n === range.startContainer ? range.startOffset : 0) : 0;
+      const end = pEnd > 0 ? (n === range.endContainer ? range.endOffset : len) : len;
+      if (end <= start) { continue; }
+      const sub = document.createRange();
+      sub.setStart(n, start);
+      sub.setEnd(n, end);
+      out.push(...Array.from(sub.getClientRects()));
+    }
+    return out;
+  }
+
+  // 一页里的选中矩形：逐个文字 span 求交拿到真正选中的那一段，纵向用该 span 的行框
+  // （和字贴得紧），行与行之间的缝隙在 alignLineBands 里合上。
+  private pageSelectionRects(
+    wrap: HTMLElement, range: Range, filter?: (span: HTMLElement) => boolean
+  ): { left: number; top: number; width: number; height: number }[] {
+    const textLayer = wrap.querySelector<HTMLElement>(".text-layer");
+    if (!textLayer) { return []; }
+    const rb = range.getBoundingClientRect();
+    const out: { left: number; top: number; width: number; height: number }[] = [];
+    const seen = new Set<string>();
+    for (const span of this.textSpans(textLayer)) {
+      const b = span.getBoundingClientRect();
+      if (b.width <= 0 || b.height <= 0) { continue; }
+      if (b.bottom < rb.top || b.top > rb.bottom || b.right < rb.left - 1 || b.left > rb.right + 1) { continue; }
+      if (filter && !filter(span)) { continue; }
+      for (const r of this.spanSelectionRects(range, span)) {
+        if (r.width <= 0.5 || r.height <= 0.5) { continue; }
+        const key = Math.round(r.left) + ":" + Math.round(b.top) + ":" + Math.round(r.width);
+        if (seen.has(key)) { continue; }
+        seen.add(key);
+        out.push({ left: r.left, top: b.top, width: r.width, height: b.height });
+      }
+    }
+    this.alignLineBands(out);
+    return out;
+  }
+
+  // 同一行的矩形先并成一条"行带"，相邻两行之间：缝隙按中点合上、重叠也按中点切开。
+  // 这样行距松的 PDF 不会露缝，行距紧的也不会因为半透明叠加发黑；段落之间的大空档保持空白。
+  private alignLineBands(rects: { left: number; top: number; width: number; height: number }[]): void {
+    if (rects.length < 2) { return; }
+    const bands: { top: number; bottom: number; items: typeof rects }[] = [];
+    for (const r of [...rects].sort((a, b) => a.top - b.top)) {
+      const last = bands[bands.length - 1];
+      if (last && Math.abs(r.top - last.top) <= 2) {
+        last.bottom = Math.max(last.bottom, r.top + r.height);
+        last.items.push(r);
+      } else {
+        bands.push({ top: r.top, bottom: r.top + r.height, items: [r] });
+      }
+    }
+    for (let i = 0; i < bands.length - 1; i++) {
+      const cur = bands[i];
+      const next = bands[i + 1];
+      const h = Math.max(cur.bottom - cur.top, next.bottom - next.top);
+      const gap = next.top - cur.bottom;
+      if (Math.abs(gap) <= Math.max(2, h * 0.8)) {
+        const mid = (cur.bottom + next.top) / 2;
+        cur.bottom = mid;
+        next.top = mid;
+      }
+    }
+    for (const band of bands) {
+      for (const r of band.items) { r.top = band.top; r.height = band.bottom - band.top; }
+    }
   }
 
   private paintSelection(): void {
@@ -632,33 +670,6 @@ export class ViewerEngine {
         selLayer.appendChild(el);
       }
     }
-  }
-
-  // 一段文字里"真正有墨"的那部分（去掉首尾空白），用 canvas 按它自己的字体量出比例。
-  // 结果与缩放无关（比例只跟字体/文本有关），所以按 span 缓存。
-  private inkRatio(span: HTMLElement): { lead: number; width: number } {
-    const cached = this.inkCache.get(span);
-    if (cached) { return cached; }
-    let ratio = { lead: 0, width: 1 };
-    const text = span.textContent || "";
-    if (text) {
-      const cs = window.getComputedStyle(span);
-      if (!this.inkCtx) { this.inkCtx = document.createElement("canvas").getContext("2d"); }
-      const ctx = this.inkCtx;
-      if (ctx) {
-        ctx.font = cs.fontSize + " " + cs.fontFamily;
-        const full = ctx.measureText(text).width;
-        if (full > 0) {
-          const lead = text.length - text.trimStart().length;
-          const leadW = lead > 0 ? ctx.measureText(text.slice(0, lead)).width : 0;
-          const trimmed = text.trim();
-          const inkW = trimmed ? ctx.measureText(trimmed).width : 0;
-          ratio = { lead: leadW / full, width: inkW / full };
-        }
-      }
-    }
-    this.inkCache.set(span, ratio);
-    return ratio;
   }
 
   private clearSelection(): void {
@@ -1955,51 +1966,21 @@ export class ViewerEngine {
 
   private paintQuoteRects(wrap: HTMLElement, range: Range): number {
     const layer = wrap.querySelector<HTMLElement>(".cite-layer");
-    const textLayer = wrap.querySelector<HTMLElement>(".text-layer");
-    if (!layer || !textLayer) { return 0; }
+    if (!layer) { return 0; }
     const wr = wrap.getBoundingClientRect();
-    const rects = Array.from(range.getClientRects()).filter((r) => r.width > 1 && r.height > 1);
+    // 和选区高亮同一套矩形（逐 span 求交、贴行框画），不会串到相邻行
+    const rects = this.pageSelectionRects(wrap, range);
     if (!rects.length) { return 0; }
-    // 和选区高亮一样：原生 Range 矩形比行距高，按"最贴的那一行文字"的行框来画，避免糊成一大条
-    const lines: { top: number; height: number; left: number; width: number; el: HTMLElement }[] = [];
-    this.textSpans(textLayer).forEach((span) => {
-      const b = span.getBoundingClientRect();
-      if (b.width > 1 && b.height > 1) { lines.push({ top: b.top, height: b.height, left: b.left, width: b.width, el: span }); }
-    });
-    if (!lines.length) { return 0; }
-    const seen = new Set<string>();
     let top = Infinity;
     for (const r of rects) {
-      let line: typeof lines[number] | null = null;
-      let bestScore = Infinity;
-      for (const ln of lines) {
-        const o = Math.min(r.bottom, ln.top + ln.height) - Math.max(r.top, ln.top);
-        if (o <= 0) { continue; }
-        const ox = Math.min(r.right, ln.left + ln.width) - Math.max(r.left, ln.left);
-        if (ox <= 0) { continue; }
-        if (ln.height < r.height * 0.45 || ln.height > r.height * 1.8) { continue; }
-        const score = Math.abs(ln.height - r.height) - o * 1e-3 - ox * 1e-6;
-        if (score < bestScore) { bestScore = score; line = ln; }
-      }
-      if (!line) { continue; }
-      // 浏览器有时给出"整行宽"的矩形：用这一行自己的有墨范围收窄
-      const ink = this.inkRatio(line.el);
-      const inkWidth = line.width * ink.width;
-      if (inkWidth < 1) { continue; }
-      let left = r.left;
-      let width = r.width;
-      if (width > inkWidth + 1) { left = line.left + line.width * ink.lead; width = inkWidth; }
-      const key = Math.round(left) + ":" + Math.round(line.top) + ":" + Math.round(width);
-      if (seen.has(key)) { continue; }
-      seen.add(key);
       const el = document.createElement("div");
       el.className = "cite-highlight";
-      el.style.left = (left - wr.left) + "px";
-      el.style.top = (line.top - wr.top) + "px";
-      el.style.width = width + "px";
-      el.style.height = line.height + "px";
+      el.style.left = (r.left - wr.left) + "px";
+      el.style.top = (r.top - wr.top) + "px";
+      el.style.width = r.width + "px";
+      el.style.height = r.height + "px";
       layer.appendChild(el);
-      top = Math.min(top, line.top - wr.top);
+      top = Math.min(top, r.top - wr.top);
     }
     return isFinite(top) ? top : 0;
   }

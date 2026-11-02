@@ -265,6 +265,24 @@ export interface UpdateStatus {
   notes?: string;
 }
 
+export interface BtwMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+// 「顺便问」子对话：挂在主对话某条回答的某段文字上，随主对话一起持久化。
+// 正文里按 quote 画虚线下划线，点开能看到完整问答记录。
+export interface BtwThread {
+  id: string;
+  // 锚点：主对话 messages/turns 里那条 assistant 回答的下标
+  turn: number;
+  // 选中的原文片段（用于在正文里定位并画下划线；被 /btw 直接提问时可能为空）
+  quote: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: BtwMessage[];
+}
+
 export interface Conversation {
   id: string;
   scope: "paper" | "library";
@@ -273,6 +291,8 @@ export interface Conversation {
   title: string;
   updated_at: number;
   messages: ConvMessage[];
+  // 这条主对话里所有的「顺便问」子对话
+  btw?: BtwThread[];
 }
 export interface ConversationSummary {
   id: string;
@@ -282,6 +302,12 @@ export interface ConversationSummary {
   title: string;
   updated_at: number;
   count: number;
+}
+
+/** 对话全文搜索的命中结果：会话摘要 + 命中次数 + 一处上下文片段 */
+export interface ConversationHit extends ConversationSummary {
+  hits: number;
+  snippet: string;
 }
 
 // 用户自定义的 AI 技能：一套可复用的提示词 / 工作流程，启用后随提问注入上下文
@@ -358,6 +384,8 @@ export interface SystemLogQuery {
   level?: "all" | LogLevel;
   offset?: number;
   limit?: number;
+  /** 关键字：在消息与模块名里做不区分大小写的子串匹配 */
+  q?: string;
 }
 
 /** 按标识符（arXiv / DOI）取回的元信息 */
@@ -713,6 +741,7 @@ export interface Api {
   agentConfirm(confirmId: string, decision: { approved: boolean; args?: string }): Promise<void>;
   onAgentEvent(cb: (event: AgentEvent) => void): () => void;
   agentConversations(filter: { scope: "paper" | "library"; docId?: string }): Promise<ConversationSummary[]>;
+  agentSearchConversations(query: string): Promise<ConversationHit[]>;
   agentConversation(id: string): Promise<Conversation | null>;
   agentSaveConversation(conv: Conversation): Promise<void>;
   agentRenameConversation(id: string, title: string): Promise<boolean>;

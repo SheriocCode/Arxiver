@@ -665,12 +665,13 @@ function registerIpc(): void {
   ipcMain.handle("agent:conversationSave", (_event, conv) => conversations.save(conv));
   ipcMain.handle("agent:conversationRename", (_event, id: string, title: string) => conversations.rename(id, title));
   ipcMain.handle("agent:conversationDelete", (_event, id: string) => conversations.remove(id));
+  ipcMain.handle("agent:conversationSearch", (_event, query: string) => conversations.search(query));
   ipcMain.handle("skills:list", () => skills.list());
   ipcMain.handle("skills:save", (_event, input: { id?: string; name: string; description?: string; instructions: string }) => skills.save(input));
   ipcMain.handle("skills:remove", (_event, id: string) => skills.remove(id));
 
   ipcMain.handle("storage:list", () => library.listTranslations());
-  ipcMain.handle("logs:system", (_event, query?: { level?: string; offset?: number; limit?: number }) => ({ ...logger.page(query), file: logger.logFile() }));
+  ipcMain.handle("logs:system", (_event, query?: { level?: string; offset?: number; limit?: number; q?: string }) => ({ ...logger.page(query), file: logger.logFile() }));
   ipcMain.handle("app:metrics", (_event, opts?: { os?: boolean }): AppMetrics => {
     const procs = collectProcs();
     const kids = childProcs();

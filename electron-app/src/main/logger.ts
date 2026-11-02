@@ -105,11 +105,15 @@ export interface SystemLogPage {
   stats: { total: number; error: number; warn: number; scopes: number; days: number[] };
 }
 
-/** 分页读日志：按级别过滤后再分页，避免把整份文件塞给界面 */
-export function page(query: { level?: string; offset?: number; limit?: number } = {}): SystemLogPage {
+/** 分页读日志：先按级别 / 关键字过滤再分页，避免把整份文件塞给界面 */
+export function page(query: { level?: string; offset?: number; limit?: number; q?: string } = {}): SystemLogPage {
   const all = readAll();
   const level = query.level === "info" || query.level === "warn" || query.level === "error" ? query.level : null;
-  const matched = level ? all.filter((e) => e.level === level) : all;
+  const q = String(query.q || "").trim().toLowerCase();
+  const matched = all.filter((e) =>
+    (!level || e.level === level)
+    && (!q || e.message.toLowerCase().includes(q) || e.scope.toLowerCase().includes(q))
+  );
   const offset = Math.max(0, Math.floor(query.offset ?? 0));
   const limit = Math.min(MAX_PAGE, Math.max(1, Math.floor(query.limit ?? DEFAULT_PAGE)));
   return {

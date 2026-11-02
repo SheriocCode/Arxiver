@@ -2,7 +2,8 @@ import { EventEmitter } from "node:events";
 import crypto from "node:crypto";
 import type { AgentEvent, AgentChatRequest, Skill } from "../../shared/types";
 import * as library from "../library";
-import { runChat, modelConfigured, type ChatMessage, type ChatContentPart } from "./model";
+import * as logger from "../logger";
+import { runChat, modelConfigured, clipText, type ChatMessage, type ChatContentPart } from "./model";
 import { toolDefs, runTool, isWriteTool, webSearchState, type ToolContext } from "./tools";
 import * as skills from "./skills";
 
@@ -45,7 +46,7 @@ const SYSTEM_PROMPT = [
   "  · 用户给出的**分类名 / 标签名对不上**时（拼写差一点、记错了），先自己查：list_collections / list_library 看现有分类与标签，然后把最接近的候选直接摆出来让用户确认（如「库里没有 123124，最接近的是 124124，要删它吗？」）。**不要反过来要求用户去核对拼写**，也不要说「分类列表我这边没列出来」——你有 list_collections 工具。",
   "  · 指令有歧义或缺少信息时：先把**能确定的部分做完**（例如先把论文导入、先归类），再针对不确定的部分给出 A/B/C 这样的**具体可选项**并标明你的推荐（如「我建议 A：给这篇文献打标签 floorplan、reconstruction」）。不要只抛一个问题就停下，也不要臆测用户的意思。",
   "引用要求：每当陈述来自某段文献时，必须用 [[cite:文献id#页码|原文片段]] 标注来源（页码为 1 起）。片段是你所引用位置的一小段原文（约 10~60 字/词，从工具结果里**原样照抄**，不要改写、不要加省略号），前端会据此在 PDF 里定位并高亮该段；工具结果里已经给好的引用标记可直接复用，但若你引用的是同一段里的另一句，就把片段换成你实际引用的那句（仍从原文照抄）。确实无法摘出原文片段时才退回 [[cite:文献id#页码]]。",
-  "回答语言跟随用户提问语言（默认中文）。可以适度使用 Markdown。"
+  "回答语言跟随用户提问语言（默认中文）。可以适度使用 Markdown；公式用 LaTeX：行内写 $…$，块级写 $$…$$ 且两端的 $$ 各自独占一行（写成一行会被当成行内公式，公式可能渲染失败）。"
 ].join("\n");
 
 export class AgentService extends EventEmitter {
@@ -135,7 +136,7 @@ export class AgentService extends EventEmitter {
           ? `，页面纵向约 ${Math.round(Math.max(0, Math.min(1, img.anchor)) * 100)}%`
           : "";
         const t = String(img.text || "").trim();
-        return `- 图 ${i + 1}：${where}${pos}${t ? `\n  区域内文字（自动提取，可能有误差）：${t.slice(0, 600)}` : ""}`;
+        return `- 图 ${i + 1}：${where}${pos}${t ? `\n  区域内文字（自动提取，可能有误差）：${clipText(t, 600)}` : ""}`;
       });
       ctx.push(`【附加图片】用户附上了 ${images.length} 张图片，是 PDF 页面局部截图或用户粘贴的图片，可能包含公式、图表、表格：\n${lines.join("\n")}\n` +
         "优先依据图片本身回答；需要精确定位或核对小字时，用上面的页码 / 纵向位置 / 区域文字去对照（必要时 read_document 读该页上下文）。" +
@@ -163,50 +164,60 @@ export class AgentService extends EventEmitter {
       });
       if (result.usage) { this.emitEvent({ turnId, type: "usage", usage: result.usage }); }
 
-      if (result.toolCalls.length) {
-        messages.push({
-          role: "assistant",
-          content: result.content || null,
-          tool_calls: result.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: c.arguments } }))
-        });
-        for (const call of result.toolCalls) {
-          this.emitEvent({ turnId, type: "tool_call", name: call.name, args: call.arguments });
-          const ctx: ToolContext = {
-            cardBase,
-            emit: (e) => {
-              if (e.type === "papers") { cardBase += e.papers.length; }
-              this.emitEvent({ turnId, ...e });
-            },
-            progress: (text) => this.emitEvent({ turnId, type: "progress", name: call.name, text })
-          };
-          let output: string;
-          if (isWriteTool(call.name)) {
-            const confirmId = crypto.randomBytes(6).toString("hex");
-            this.emitEvent({ turnId, type: "confirmation", confirmId, name: call.name, args: call.arguments });
-            const decision = await new Promise<{ approved: boolean; args?: string }>((resolve) => { this.confirmations.set(confirmId, resolve); });
-            this.confirmations.delete(confirmId);
-            if (signal.aborted) { throw new Error("已取消"); }
-            if (decision.approved) {
-              output = await runTool(call.name, decision.args || call.arguments, ctx);
-              if (call.name === "save_skill" || call.name === "delete_skill") {
-                this.emitEvent({ turnId, type: "skills_changed" });
-              } else {
-                this.emitEvent({ turnId, type: "library_changed" });
-              }
-            } else {
-              output = "用户拒绝执行该操作，请勿重复尝试；如需可询问用户希望的修改。";
-            }
-          } else {
-            output = await runTool(call.name, call.arguments, ctx);
-          }
-          this.emitEvent({ turnId, type: "tool_result", name: call.name, content: output.slice(0, 4000) });
-          messages.push({ role: "tool", tool_call_id: call.id, content: output.slice(0, 16000) });
+      if (!result.toolCalls.length) {
+        if (!result.content.trim()) {
+          throw new Error("模型没有返回任何内容：可能是请求被中断或触发了内容限制，请重试。");
         }
-        continue;
+        // 收尾检查：回答被"输出长度上限"或内容过滤截断时，明确告诉用户，否则看起来就是莫名断了
+        if (result.finishReason === "length") {
+          this.emitEvent({ turnId, type: "delta", text: "\n\n（已到模型的输出长度上限，回答被截断。回复「继续」我就接着写。）" });
+          logger.warn("ai", "回答因 max_tokens 截断（finish_reason=length）");
+        } else if (result.finishReason && result.finishReason !== "stop" && result.finishReason !== "end_turn") {
+          this.emitEvent({ turnId, type: "delta", text: `\n\n（本次回答提前结束：${result.finishReason}）` });
+          logger.warn("ai", `回答异常结束：finish_reason=${result.finishReason}`);
+        }
+        this.emitEvent({ turnId, type: "done" });
+        return;
       }
 
-      this.emitEvent({ turnId, type: "done" });
-      return;
+      messages.push({
+        role: "assistant",
+        content: result.content || null,
+        tool_calls: result.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: c.arguments } }))
+      });
+      for (const call of result.toolCalls) {
+        this.emitEvent({ turnId, type: "tool_call", name: call.name, args: call.arguments });
+        const ctx: ToolContext = {
+          cardBase,
+          emit: (e) => {
+            if (e.type === "papers") { cardBase += e.papers.length; }
+            this.emitEvent({ turnId, ...e });
+          },
+          progress: (text) => this.emitEvent({ turnId, type: "progress", name: call.name, text })
+        };
+        let output: string;
+        if (isWriteTool(call.name)) {
+          const confirmId = crypto.randomBytes(6).toString("hex");
+          this.emitEvent({ turnId, type: "confirmation", confirmId, name: call.name, args: call.arguments });
+          const decision = await new Promise<{ approved: boolean; args?: string }>((resolve) => { this.confirmations.set(confirmId, resolve); });
+          this.confirmations.delete(confirmId);
+          if (signal.aborted) { throw new Error("已取消"); }
+          if (decision.approved) {
+            output = await runTool(call.name, decision.args || call.arguments, ctx);
+            if (call.name === "save_skill" || call.name === "delete_skill") {
+              this.emitEvent({ turnId, type: "skills_changed" });
+            } else {
+              this.emitEvent({ turnId, type: "library_changed" });
+            }
+          } else {
+            output = "用户拒绝执行该操作，请勿重复尝试；如需可询问用户希望的修改。";
+          }
+        } else {
+          output = await runTool(call.name, call.arguments, ctx);
+        }
+        this.emitEvent({ turnId, type: "tool_result", name: call.name, content: clipText(output, 4000) });
+        messages.push({ role: "tool", tool_call_id: call.id, content: clipText(output, 16000) });
+        }
     }
     this.emitEvent({ turnId, type: "delta", text: "\n\n（已达到最大工具调用轮数，回答可能不完整。）" });
     this.emitEvent({ turnId, type: "done" });

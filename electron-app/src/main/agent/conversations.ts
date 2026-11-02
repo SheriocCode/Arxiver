@@ -46,6 +46,50 @@ export function get(id: string): Conversation | null {
   }
 }
 
+// 对话全文搜索：标题 + 每条消息正文（含工具调用结果摘要太长就不搜了），
+// 返回命中的会话和一处上下文片段，日志页的搜索框直接用。
+export interface ConversationHit extends ConversationSummary {
+  hits: number;
+  snippet: string;
+}
+
+export function search(query: string): ConversationHit[] {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) { return []; }
+  const out: ConversationHit[] = [];
+  let names: string[] = [];
+  try { names = fs.readdirSync(dir()); } catch { return out; }
+  for (const name of names) {
+    if (!name.endsWith(".json")) { continue; }
+    try {
+      const conv = JSON.parse(fs.readFileSync(path.join(dir(), name), "utf8")) as Conversation;
+      if (!conv || !conv.id) { continue; }
+      const title = conv.title || "新对话";
+      const text = `${title}\n${(conv.messages || []).map((m) => `${m.role === "user" ? "我" : "Arxiver"}：${m.text || ""}`).join("\n")}`;
+      const hay = text.toLowerCase();
+      const at = hay.indexOf(q);
+      if (at < 0) { continue; }
+      let hits = 0;
+      for (let i = hay.indexOf(q); i >= 0 && hits < 99; i = hay.indexOf(q, i + q.length)) { hits++; }
+      const from = Math.max(0, at - 24);
+      const snippet = text.slice(from, at + q.length + 60).replace(/\s+/g, " ").trim();
+      out.push({
+        id: conv.id,
+        scope: conv.scope,
+        docId: conv.docId,
+        docIds: Array.isArray(conv.docIds) ? conv.docIds : [],
+        title,
+        updated_at: conv.updated_at || 0,
+        count: (conv.messages || []).filter((m) => m.role === "user").length,
+        hits,
+        snippet: (from > 0 ? "…" : "") + snippet + (at + q.length + 60 < hay.length ? "…" : "")
+      });
+    } catch { /* skip corrupt */ }
+  }
+  out.sort((a, b) => b.updated_at - a.updated_at);
+  return out;
+}
+
 export function save(conv: Conversation): void {
   write({ ...conv, updated_at: Date.now() / 1000 });
 }

@@ -4,10 +4,15 @@ import { Markdown } from "../lib/markdown";
 
 export interface BtwSeed {
   id: string;
+  // 锚点：主对话里那条 assistant 回答的下标（用于把这条子对话挂回原文）
+  turn: number;
   question: string;
   quote: string;
-  history: { role: "user" | "assistant"; content: string }[];
+  // 每次发问时现取主对话最近的内容（含打开小窗之后新产生的回答），只作为只读背景
+  history: () => { role: "user" | "assistant"; content: string }[];
   cardBase: number;
+  // 再次打开时恢复的历史问答
+  turns?: BtwTurn[];
 }
 
 interface BtwTurn {
@@ -27,17 +32,22 @@ interface Props {
   docTitle: string;
   aiReady: boolean;
   onClose: () => void;
+  // 每轮答完就把这条子对话存回主对话，关掉窗口也不会丢
+  onSave: (thread: { id: string; turn: number; quote: string; messages: { role: "user" | "assistant"; text: string }[] }) => void;
   onCite: (docId: string, page: number, quote?: string) => void;
   onCard?: (n: number) => void;
   onOpenSettings: () => void;
 }
 
-// 「顺便问一下」：独立小窗，不写入主对话。带上主对话最近的内容作为只读背景，
-// 回答里的引用仍然可点击跳回 PDF。
+// 「顺便问一下」：挂在某段原文上的独立小对话。带主对话最近的内容作为只读背景，
+// 但不写入主对话；答完的内容会作为子对话存进主会话（正文里那段文字会画虚线下划线）。
 export default function BtwPanel({
-  seed, docId, docTitle, aiReady, onClose, onCite, onCard, onOpenSettings
+  seed, docId, docTitle, aiReady, onClose, onSave, onCite, onCard, onOpenSettings
 }: Props): JSX.Element {
-  const [turns, setTurns] = useState<BtwTurn[]>([]);
+  const [turns, setTurns] = useState<BtwTurn[]>(seed.turns || []);
+  // 非模态小窗：可以拖到别处，边看正文边问
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const [input, setInput] = useState(seed.question);
   const [quote, setQuote] = useState(seed.quote);
   const [sending, setSending] = useState(false);
@@ -67,6 +77,11 @@ export default function BtwPanel({
     atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
   }
 
+  // 往上滚就立刻停止自动跟随，别等离开底部 60px 才停（否则生成中往前翻会被一次次拽回底部）
+  function onWheel(e: React.WheelEvent): void {
+    if (e.deltaY < 0) { atBottomRef.current = false; }
+  }
+
   function cancel(): void {
     if (turnRef.current) { void window.api.agentCancel(turnRef.current); }
   }
@@ -89,8 +104,20 @@ export default function BtwPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 窗口被卸载（切文献 / 关面板）时取消还在跑的请求，别让它在后台空转
-  useEffect(() => () => { if (turnRef.current) { void window.api.agentCancel(turnRef.current); } }, []);
+  // 窗口被卸载（切文献 / 关面板）时取消还在跑的请求，别让它在后台空转；
+  // 已经生成的部分也存下来，下次点那段文字还能接上
+  useEffect(() => () => {
+    if (turnRef.current) { void window.api.agentCancel(turnRef.current); }
+    const list = turnsRef.current;
+    if (list.some((t) => t.text.trim())) {
+      onSave({
+        id: seed.id,
+        turn: seed.turn,
+        quote: seed.quote,
+        messages: list.map((t) => ({ role: t.role, text: t.text }))
+      });
+    }
+  }, []);
 
   useEffect(() => {
     const off = window.api.onAgentEvent((e) => {
@@ -141,9 +168,9 @@ export default function BtwPanel({
       ]);
       return;
     }
-    // 主对话（只读快照）+ 这个小窗里已经进行过的问答，一起作为背景
+    // 主对话（每次现取，含打开小窗之后的新内容）+ 这个小窗里已经进行过的问答，一起作为背景
     const history = [
-      ...seed.history,
+      ...seed.history(),
       ...turnsRef.current
         .filter((t) => t.text.trim())
         .map((t) => ({ role: t.role, content: t.quote ? `【选中内容】${t.quote}\n\n${t.text}` : t.text }))
@@ -179,24 +206,68 @@ export default function BtwPanel({
     });
   }
 
-  // 从 `/btw 问题` 打开时直接发问；只带选中内容打开时把光标放进输入框
+  // 从 `/btw 问题` 打开时直接发问（已有记录时继续追问）；只带选中内容打开时把光标放进输入框
   useEffect(() => {
     if (seed.question.trim()) { send(seed.question); }
     else { inputRef.current?.focus(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 每轮答完（或出错）就把这条子对话回存到主会话：窗口关掉 / 切文献也不会丢
+  const savedRef = useRef("");
+  useEffect(() => {
+    if (!turns.length || turns.some((t) => t.streaming)) { return; }
+    const last = turns[turns.length - 1];
+    const key = `${turns.length}:${last.text.length}:${last.error ? 1 : 0}`;
+    if (key === savedRef.current) { return; }
+    savedRef.current = key;
+    onSave({
+      id: seed.id,
+      turn: seed.turn,
+      quote: seed.quote,
+      messages: turns.map((t) => ({ role: t.role, text: t.text }))
+    });
+  }, [turns]);
+
+  // 拖标题栏移动窗口（非模态，常驻在界面上；位置不持久化，重新打开回到右下角）
+  const startDrag = (e: React.PointerEvent): void => {
+    const el = panelRef.current;
+    if (!el || (e.target as HTMLElement).closest("button")) { return; }
+    e.preventDefault();
+    const r = el.getBoundingClientRect();
+    const dx = e.clientX - r.left;
+    const dy = e.clientY - r.top;
+    const move = (ev: PointerEvent): void => {
+      setPos({
+        left: Math.min(Math.max(8, ev.clientX - dx), window.innerWidth - r.width - 8),
+        top: Math.min(Math.max(8, ev.clientY - dy), window.innerHeight - r.height - 8)
+      });
+    };
+    const up = (): void => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
   return (
-    <div className="btw-layer" onMouseDown={(e) => { if (e.target === e.currentTarget) { close(); } }}>
-      <div className="btw-panel" role="dialog" aria-label="顺便问一下">
-        <div className="btw-head">
+    <div className="btw-layer">
+      <div
+        className="btw-panel"
+        ref={panelRef}
+        style={pos ? { left: pos.left, top: pos.top, right: "auto", bottom: "auto" } : undefined}
+        role="dialog"
+        aria-label="顺便问一下"
+      >
+        <div className="btw-head" onPointerDown={startDrag} title="拖动可移动窗口">
           <Icon name="message" small />
           <span className="btw-title">顺便问一下</span>
-          <span className="btw-badge">不写入主对话</span>
+          <span className="btw-badge">独立小窗 · 自动保存</span>
           <span className="od-fill" />
           <button type="button" className="icon-btn" title="关闭" onClick={close}><Icon name="x" small /></button>
         </div>
-        <div className="ai-scroll btw-scroll" ref={scrollRef} onScroll={onScroll}>
+        <div className="ai-scroll btw-scroll" ref={scrollRef} onScroll={onScroll} onWheel={onWheel}>
           {turns.length === 0 ? (
             <div className="btw-empty">
               <p>问一个小问题，不会打断或改动主对话。回答仍以《{docTitle}》为默认上下文。</p>
@@ -227,6 +298,10 @@ export default function BtwPanel({
                         <span>正在读取 {t.tools[t.tools.length - 1]}…</span>
                       </div>
                     ) : null}
+                    {t.streaming && t.text && !(t.tools && t.tools.length) ? (
+                      // 多轮之间（工具跑完、下一轮还在等模型）也要有提示，否则看起来像已经答完
+                      <div className="btw-running"><span className="spinner" /><span>正在生成…</span></div>
+                    ) : null}
                     {t.streaming && !t.text ? <span className="typing"><i /><i /><i /></span> : null}
                   </>
                 )}
@@ -253,7 +328,7 @@ export default function BtwPanel({
               }}
             />
             <div className="composer-row">
-              <span className="btw-composer-hint">不保存到主对话</span>
+              <span className="btw-composer-hint" title="每次发问都会把主对话最近的内容作为只读背景，包括打开小窗之后新生成的部分">不写入主对话 · 带最新上下文</span>
               <span className="od-fill" />
               {sending
                 ? <button type="button" className="send-btn" title="停止" onClick={(e) => { e.preventDefault(); stop(); }}><Icon name="x" small /></button>

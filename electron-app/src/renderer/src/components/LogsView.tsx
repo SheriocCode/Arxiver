@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from "react";
-import type { Conversation, ConversationSummary, SystemLogEntry, TranslationLogEntry } from "../../../shared/types";
+import type { Conversation, ConversationHit, ConversationSummary, SystemLogEntry, TranslationLogEntry } from "../../../shared/types";
 import { Icon } from "./Icons";
 
 const LOG_TABS: { id: string; name: string }[] = [
@@ -159,11 +159,18 @@ function Overview({ stats, times, dayCounts }: { stats: Stat[]; times?: number[]
   );
 }
 
-function Header({ logKey, onKey, onClose, right }: {
+interface LogSearch {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+}
+
+function Header({ logKey, onKey, onClose, right, search }: {
   logKey: string;
   onKey: (k: string) => void;
   onClose: () => void;
   right: JSX.Element;
+  search?: LogSearch;
 }): JSX.Element {
   return (
     <header className="lg-head">
@@ -177,6 +184,21 @@ function Header({ logKey, onKey, onClose, right }: {
         ))}
       </nav>
       <div className="lg-actions">
+        {search ? (
+          <label className="lg-search">
+            <Icon name="search" small />
+            <input
+              value={search.value}
+              placeholder={search.placeholder}
+              spellCheck={false}
+              onChange={(e) => search.onChange(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") { search.onChange(""); e.currentTarget.blur(); } }}
+            />
+            {search.value ? (
+              <button type="button" className="lg-search-x" title="清空搜索" onClick={() => search.onChange("")}><Icon name="x" small /></button>
+            ) : null}
+          </label>
+        ) : null}
         {right}
         <button type="button" className="lg-action" onClick={onClose}>关闭</button>
       </div>
@@ -245,12 +267,14 @@ const T_STATUS: Record<string, { label: string; tone: string }> = {
   failed: { label: "失败", tone: "is-bad" }
 };
 
-function TranslationLog({ logStatus, setLogStatus, setLogKey, onClose, active }: {
+function TranslationLog({ logStatus, setLogStatus, setLogKey, onClose, active, query, search }: {
   logStatus: string;
   setLogStatus: (v: string) => void;
   setLogKey: (k: string) => void;
   onClose: () => void;
   active: boolean;
+  query: string;
+  search: LogSearch;
 }): JSX.Element {
   const [entries, setEntries] = useState<TranslationLogEntry[]>([]);
   const [selId, setSelId] = useState("");
@@ -263,13 +287,17 @@ function TranslationLog({ logStatus, setLogStatus, setLogKey, onClose, active }:
   }, []);
   useEffect(load, [load]);
 
-  const filtered = useMemo(() => entries
-    .filter((e) => {
-      if (logStatus === "all") { return true; }
-      if (logStatus === "running") { return e.status === "running" || e.status === "queued"; }
-      return e.status === logStatus;
-    })
-    .sort((a, b) => b.created_at - a.created_at), [entries, logStatus]);
+  const filtered = useMemo(() => {
+    const k = query.trim().toLowerCase();
+    return entries
+      .filter((e) => {
+        if (logStatus === "all") { return true; }
+        if (logStatus === "running") { return e.status === "running" || e.status === "queued"; }
+        return e.status === logStatus;
+      })
+      .filter((e) => !k || [e.name, e.sourceName, e.service, e.targetLang, e.message].filter(Boolean).join(" ").toLowerCase().includes(k))
+      .sort((a, b) => b.created_at - a.created_at);
+  }, [entries, logStatus, query]);
 
   const sel = filtered.find((x) => x.id === selId) || filtered[0];
   const selStatus = sel ? (T_STATUS[sel.status] || T_STATUS.done) : T_STATUS.done;
@@ -296,6 +324,7 @@ function TranslationLog({ logStatus, setLogStatus, setLogKey, onClose, active }:
           logKey="tlog"
           onKey={setLogKey}
           onClose={onClose}
+          search={search}
           right={<button type="button" className="lg-action" onClick={load}>刷新</button>}
         />
         <Overview stats={stats} times={times} />
@@ -303,7 +332,7 @@ function TranslationLog({ logStatus, setLogStatus, setLogKey, onClose, active }:
           <section className="lg-list">
             <ListHead filters={FILTERS.tlog} status={logStatus} onStatus={setLogStatus} count={filtered.length} />
             <div className="lg-scroll">
-              {filtered.length === 0 ? <div className="lg-empty">没有匹配的翻译记录</div> : (
+              {filtered.length === 0 ? <div className="lg-empty">{entries.length ? "没有匹配的翻译记录" : "还没有翻译记录"}</div> : (
                 <Timeline
                   groups={grouped}
                   render={(e) => {
@@ -376,12 +405,14 @@ const LEVELS: Record<string, { label: string; tone: string }> = {
 
 const SYS_PAGE = 200;
 
-function SystemLog({ logStatus, setLogStatus, setLogKey, onClose, active }: {
+function SystemLog({ logStatus, setLogStatus, setLogKey, onClose, active, query, search }: {
   logStatus: string;
   setLogStatus: (v: string) => void;
   setLogKey: (k: string) => void;
   onClose: () => void;
   active: boolean;
+  query: string;
+  search: LogSearch;
 }): JSX.Element {
   const [entries, setEntries] = useState<SystemLogEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -391,11 +422,11 @@ function SystemLog({ logStatus, setLogStatus, setLogKey, onClose, active }: {
   const [selIdx, setSelIdx] = useState(0);
   const seq = useRef(0);
 
-  // 分页加载：只取当前过滤条件下的前 N 条；切级别 / 刷新都从第 0 条重新取
+  // 分页加载：只取当前过滤条件下的前 N 条；切级别 / 改关键字 / 刷新都从第 0 条重新取
   const loadPage = useCallback((offset: number, append: boolean): void => {
     const ticket = ++seq.current;
     setLoading(true);
-    void window.api.logsSystem({ level: logStatus as "all" | "info" | "warn" | "error", offset, limit: SYS_PAGE })
+    void window.api.logsSystem({ level: logStatus as "all" | "info" | "warn" | "error", offset, limit: SYS_PAGE, q: query })
       .then((d) => {
         if (ticket !== seq.current) { return; }
         setEntries((cur) => (append ? [...cur, ...d.entries] : d.entries));
@@ -405,7 +436,7 @@ function SystemLog({ logStatus, setLogStatus, setLogKey, onClose, active }: {
         if (!append) { setSelIdx(0); }
       })
       .finally(() => { if (ticket === seq.current) { setLoading(false); } });
-  }, [logStatus]);
+  }, [logStatus, query]);
 
   useEffect(() => { loadPage(0, false); }, [loadPage]);
 
@@ -428,6 +459,7 @@ function SystemLog({ logStatus, setLogStatus, setLogKey, onClose, active }: {
           logKey="syslog"
           onKey={setLogKey}
           onClose={onClose}
+          search={search}
           right={
             <>
               <button type="button" className="lg-action" onClick={() => { if (file) { void window.api.openPath(file); } }}>打开日志文件</button>
@@ -518,14 +550,18 @@ function toSteps(conv: Conversation): Step[] {
   return out;
 }
 
-function AiLog({ setLogKey, onClose, active }: {
+function AiLog({ setLogKey, onClose, active, query, search }: {
   setLogKey: (k: string) => void;
   onClose: () => void;
   active: boolean;
+  query: string;
+  search: LogSearch;
 }): JSX.Element {
   const [convs, setConvs] = useState<ConversationSummary[]>([]);
   const [conv, setConv] = useState<Conversation | null>(null);
   const [selConvId, setSelConvId] = useState("");
+  const [hits, setHits] = useState<ConversationHit[]>([]);
+  const [searching, setSearching] = useState(false);
   const traceRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback((): void => {
@@ -540,7 +576,26 @@ function AiLog({ setLogKey, onClose, active }: {
   }, []);
   useEffect(load, [load]);
 
+  // 全文搜索：标题 + 每条消息正文（主进程里扫会话文件），命中处给一段上下文
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) { setHits([]); setSearching(false); return; }
+    let cancelled = false;
+    setSearching(true);
+    void window.api.agentSearchConversations(q)
+      .then((list) => { if (!cancelled) { setHits(list); } })
+      .finally(() => { if (!cancelled) { setSearching(false); } });
+    return () => { cancelled = true; };
+  }, [query]);
+
   const cur = convs.find((c) => c.id === selConvId) || convs[0];
+  const shown: ConversationHit[] | ConversationSummary[] = query.trim() ? hits : convs;
+
+  // 搜到结果但当前选中的不在其中时，自动跳到第一条命中
+  useEffect(() => {
+    if (!query.trim() || !hits.length) { return; }
+    if (!hits.some((h) => h.id === selConvId)) { setSelConvId(hits[0].id); }
+  }, [hits, query, selConvId]);
 
   useEffect(() => {
     if (!cur) { setConv(null); return; }
@@ -573,22 +628,29 @@ function AiLog({ setLogKey, onClose, active }: {
           logKey="ailog"
           onKey={setLogKey}
           onClose={onClose}
+          search={search}
           right={<button type="button" className="lg-action" onClick={load}>刷新</button>}
         />
         <Overview stats={stats} times={times} />
         <div className="lg-body lg-body-ai">
           <section className="lg-list">
             <div className="lg-list-head">
-              <span className="lg-list-title">全部对话</span>
-              <span className="lg-count">{convs.length} 个</span>
+              <span className="lg-list-title">{query.trim() ? "搜索结果" : "全部对话"}</span>
+              <span className="lg-count">{searching ? "搜索中…" : `${shown.length} 个`}</span>
             </div>
             <div className="lg-convs">
-              {convs.length === 0 ? <div className="lg-empty">暂无对话记录</div> : convs.map((c) => (
-                <button key={c.id} type="button" className={"lg-conv" + (c.id === cur?.id ? " is-selected" : "")} onClick={() => setSelConvId(c.id)}>
-                  <span className="lg-conv-title od-truncate">{c.title || "新对话"}</span>
-                  <span className="lg-conv-meta">{c.count} 轮 · {fmtWhen(c.updated_at * 1000)}</span>
-                </button>
-              ))}
+              {shown.length === 0 ? (
+                <div className="lg-empty">{query.trim() ? (searching ? "正在搜索…" : "没有匹配的对话内容") : "暂无对话记录"}</div>
+              ) : shown.map((c) => {
+                const hit = c as ConversationHit;
+                return (
+                  <button key={c.id} type="button" className={"lg-conv" + (c.id === cur?.id ? " is-selected" : "")} onClick={() => setSelConvId(c.id)}>
+                    <span className="lg-conv-title od-truncate">{c.title || "新对话"}</span>
+                    {hit.snippet ? <span className="lg-conv-snippet od-clamp-2">{hit.snippet}</span> : null}
+                    <span className="lg-conv-meta">{c.count} 轮 · {fmtWhen(c.updated_at * 1000)}{hit.hits ? ` · 命中 ${hit.hits} 处` : ""}</span>
+                  </button>
+                );
+              })}
             </div>
           </section>
           <section className="lg-detail">
@@ -643,13 +705,26 @@ export default function LogsView({ logKey, setLogKey, logStatus, setLogStatus, o
   setLogStatus: (v: string) => void;
   onClose: () => void;
 }): JSX.Element {
+  // 搜索框在页头，三个页签共用一份输入；切页签清空（各页签搜的内容不一样）
+  const [draft, setDraft] = useState("");
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    const t = window.setTimeout(() => setQuery(draft.trim()), 220);
+    return () => window.clearTimeout(t);
+  }, [draft]);
+  const resetSearch = (): void => { setDraft(""); setQuery(""); };
   // 三个视图常驻挂载，只切换显示：否则每次切分类都要重新拉数据，右侧会先闪一下"暂无记录"
-  const switchKey = (k: string): void => { setLogKey(k); setLogStatus("all"); };
+  const switchKey = (k: string): void => {
+    if (k !== logKey) { resetSearch(); }
+    setLogKey(k);
+    setLogStatus("all");
+  };
+  const searchFor = (placeholder: string): LogSearch => ({ value: draft, onChange: setDraft, placeholder });
   return (
     <>
-      <TranslationLog logStatus={logStatus} setLogStatus={setLogStatus} setLogKey={switchKey} onClose={onClose} active={logKey === "tlog"} />
-      <AiLog setLogKey={switchKey} onClose={onClose} active={logKey === "ailog"} />
-      <SystemLog logStatus={logStatus} setLogStatus={setLogStatus} setLogKey={switchKey} onClose={onClose} active={logKey === "syslog"} />
+      <TranslationLog logStatus={logStatus} setLogStatus={setLogStatus} setLogKey={switchKey} onClose={onClose} active={logKey === "tlog"} query={query} search={searchFor("搜索任务 / 文件名")} />
+      <AiLog setLogKey={switchKey} onClose={onClose} active={logKey === "ailog"} query={query} search={searchFor("搜索对话内容")} />
+      <SystemLog logStatus={logStatus} setLogStatus={setLogStatus} setLogKey={switchKey} onClose={onClose} active={logKey === "syslog"} query={query} search={searchFor("搜索日志内容 / 模块")} />
     </>
   );
 }

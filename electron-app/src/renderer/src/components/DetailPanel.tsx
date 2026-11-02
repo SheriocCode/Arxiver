@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type JSX, type MutableRefObject } from "react";
 import { createPortal } from "react-dom";
-import type { LibraryDoc, Conversation, ConversationSummary, PaperHit, ConvBlock, AppConfig, Skill } from "../../../shared/types";
+import type { LibraryDoc, Conversation, ConversationSummary, PaperHit, ConvBlock, AppConfig, Skill, BtwThread } from "../../../shared/types";
 import { chatTarget } from "../../../shared/ai";
 import { Icon } from "./Icons";
 import { formatDate } from "../lib/format";
@@ -339,6 +339,8 @@ interface AiTurn {
   // 用户主动暂停：保留已生成内容，并给一个「重新编辑问题」入口
   stopped?: boolean;
   streaming?: boolean;
+  // 这一轮开始的时间：生成中在消息末尾显示「正在生成… 已 Ns」，否则界面看起来像已经结束了
+  at?: number;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
@@ -346,6 +348,14 @@ const textOf = (blocks: AiBlock[] | undefined): string =>
   (blocks || []).filter((b): b is { kind: "text"; text: string } => b.kind === "text").map((b) => b.text).join("");
 const toolsOf = (blocks: AiBlock[]): AiToolTrace[] => blocks.flatMap((b) => (b.kind === "tools" ? b.items : []));
 const papersOf = (blocks: AiBlock[]): PaperHit[] => blocks.flatMap((b) => (b.kind === "papers" ? b.items : []));
+
+// 「顺便问」子对话的文本工具：正文里定位、胶囊上的摘要
+const normText = (s: string): string => String(s || "").replace(/\s+/g, " ").trim();
+const btwPreview = (s: string, max = 18): string => {
+  const t = normText(s);
+  return t.length > max ? t.slice(0, max) + "…" : t;
+};
+const btwQuestionOf = (x: BtwThread): string => x.messages.find((m) => m.role === "user")?.text || "（未提问）";
 
 // 旧会话（没有 blocks）按"推理 → 工具 → 卡片 → 文本"补一个块序列
 function blocksOf(m: { text?: string; reasoning?: string; tools?: AiToolTrace[]; papers?: PaperHit[]; blocks?: ConvBlock[] }): AiBlock[] {
@@ -784,8 +794,12 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   const [atOpen, setAtOpen] = useState(false);
   // 「顺便问一下」小窗：btwSeed 变化即换一个新窗口（key 随之重挂载）
   const [btwSeed, setBtwSeed] = useState<BtwSeed | null>(null);
+  // 这条主对话里所有的「顺便问」子对话（挂在某条回答的某段文字上），随会话一起存
+  const [btwThreads, setBtwThreads] = useState<BtwThread[]>([]);
+  const btwThreadsRef = useRef<BtwThread[]>([]);
+  btwThreadsRef.current = btwThreads;
   // 选中 AI 回答后出现的浮动入口（fixed 定位，不占正文空间）
-  const [selAsk, setSelAsk] = useState<{ left: number; top: number; text: string } | null>(null);
+  const [selAsk, setSelAsk] = useState<{ left: number; top: number; text: string; turn: number } | null>(null);
   const [histQuery, setHistQuery] = useState("");
   // 历史对话重命名：只作用于列表里的标题，不改动对话内容与排序
   const [renamingId, setRenamingId] = useState("");
@@ -870,10 +884,11 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   try { chatHost = new URL(chat.baseUrl).hostname; } catch { /* 非标准地址交给服务端判断 */ }
   const visionBlocked = /(^|\.)deepseek\.com$/i.test(chatHost) && /^deepseek-(chat|reasoner|coder)/i.test(chat.model);
   const openAiSettings = (): void => onOpenSettings?.("ai");
-  // 长耗时工具运行时每秒推进一次，让"已 Ns"和进度看起来是活的
+  // 长耗时工具运行时每秒推进一次，让"已 Ns"和进度看起来是活的；生成中同理
   const [, setTick] = useState(0);
   useEffect(() => {
-    if (!turns.some((t) => toolsOf(t.blocks || []).some((x) => x.content === undefined))) { return; }
+    const busy = turns.some((t) => t.streaming || toolsOf(t.blocks || []).some((x) => x.content === undefined));
+    if (!busy) { return; }
     const id = window.setInterval(() => setTick((v) => v + 1), 1000);
     return () => window.clearInterval(id);
   }, [turns]);
@@ -892,18 +907,52 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     setPendingJump(n);
   };
 
-  // 打开「顺便问一下」小窗：把主对话最近的内容作为只读背景，不写入主会话
-  const openBtw = (question: string, quote: string): void => {
-    const history = turnsRef.current
+  // 打开「顺便问一下」：带主对话最近的内容作为只读背景，不写入主对话。
+  // threadId 给了就打开已有的子对话（恢复历史）；否则新建一条挂在 turn 上。
+  const openBtw = (question: string, quote: string, turn?: number, threadId?: string): void => {
+    // 每次发问时现取（不是打开小窗时定死的快照）：这样后面新产生的回答也能作为背景
+    const history = (): { role: "user" | "assistant"; content: string }[] => turnsRef.current
       .filter((t) => t.text.trim())
       .slice(-12)
       .map((t) => ({ role: t.role, content: t.text.slice(0, 4000) }));
     const cardBase = turnsRef.current.reduce((n, t) => n + papersOf(t.blocks || []).length, 0);
+    let anchor = turn;
+    if (anchor === undefined) {
+      anchor = -1;
+      for (let i = turnsRef.current.length - 1; i >= 0; i--) {
+        if (turnsRef.current[i].role === "assistant") { anchor = i; break; }
+      }
+    }
+    // 指到同一条回答里同一段文字时复用它，别在同一句下面重复建对话
+    const existing = threadId
+      ? btwThreadsRef.current.find((x) => x.id === threadId)
+      : (quote.trim()
+        ? btwThreadsRef.current.find((x) => x.turn === Math.max(0, anchor!) && normText(x.quote) === normText(quote))
+        : undefined);
     setSelAsk(null);
     setBtwSeed({
-      id: "btw" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-      question, quote, history, cardBase
+      id: existing?.id || "btw" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      turn: existing ? existing.turn : Math.max(0, anchor),
+      // 已有子对话也把这次输入带进去（追问同一条），没有就直接开新对话
+      question,
+      quote: existing ? existing.quote : quote,
+      history, cardBase,
+      turns: existing ? existing.messages.map((m) => ({ role: m.role, text: m.text })) : []
     });
+  };
+
+  // 子对话每答完一轮就回存：关掉小窗也不会丢，正文里那段文字的下划线也随之出现
+  const saveBtw = (thread: { id: string; turn: number; quote: string; messages: { role: "user" | "assistant"; text: string }[] }): void => {
+    if (!thread.messages.length) { return; }
+    const prev = btwThreadsRef.current;
+    const now = Date.now();
+    const at = prev.findIndex((x) => x.id === thread.id);
+    const next = at >= 0
+      ? prev.map((x, i) => (i === at ? { ...x, messages: thread.messages, updatedAt: now } : x))
+      : [...prev, { id: thread.id, turn: thread.turn, quote: thread.quote, createdAt: now, updatedAt: now, messages: thread.messages }];
+    btwThreadsRef.current = next;
+    setBtwThreads(next);
+    persist(turnsRef.current, next);
   };
 
   // 在 AI 回答里选中文字 → 在选区下方浮出「顺便问」入口
@@ -918,10 +967,14 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     const range = sel.rangeCount ? sel.getRangeAt(0) : null;
     const rect = range?.getBoundingClientRect();
     if (!rect || (!rect.width && !rect.height)) { return; }
+    // 记住选中的是哪一轮回答，子对话才能挂回同一段文字
+    const msgEl = el.closest(".msg");
+    const turn = msgEl ? msgRefs.current.findIndex((x) => x === msgEl) : -1;
     setSelAsk({
       left: Math.max(90, Math.min(rect.left + rect.width / 2, window.innerWidth - 90)),
       top: Math.min(rect.bottom + 8, window.innerHeight - 40),
-      text
+      text,
+      turn
     });
   };
 
@@ -993,7 +1046,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   turnsRef.current = turns;
   convIdRef.current = convId;
 
-  const persist = (messages: AiTurn[]): void => {
+  const persist = (messages: AiTurn[], btw: BtwThread[] = btwThreadsRef.current): void => {
     const id = convIdRef.current;
     if (!id) { return; }
     const firstUser = messages.find((m) => m.role === "user");
@@ -1027,7 +1080,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
         papers: papersOf(m.blocks || []),
         error: m.error,
         usage: m.usage
-      }))
+      })),
+      btw
     });
   };
 
@@ -1041,6 +1095,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
         const conv = await window.api.agentConversation(list[0].id);
         if (!cancelled && conv) {
           setTurns(conv.messages.map((m) => ({ ...m, blocks: blocksOf(m) })));
+          setBtwThreads(conv.btw || []);
           setConvId(conv.id);
           convIdRef.current = conv.id;
           const last = [...conv.messages].reverse().find((m) => m.role === "user" && m.skills && m.skills.length);
@@ -1054,7 +1109,12 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el && atBottomRef.current) { el.scrollTop = el.scrollHeight; }
+    if (!el) { return; }
+    if (atBottomRef.current) { el.scrollTop = el.scrollHeight; }
+    // 内容高度变化后（生成中 / 图片加载完 / 折叠块展开）重新判定是否在底部，
+    // 免得「回到底部」按钮的状态停留在旧值
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    if (near !== atBottomRef.current) { atBottomRef.current = near; setShowJump(!near); }
   }, [turns]);
 
   const onScroll = (): void => {
@@ -1063,6 +1123,19 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     const near = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
     if (near !== atBottomRef.current) { atBottomRef.current = near; setShowJump(!near); }
     if (selAsk) { setSelAsk(null); }
+  };
+  // 在正文里往上滚：立刻停止自动跟随。否则边生成边往前翻，每来一个 token 就被拽回底部，
+  // 看起来就是「划不动」。
+  const holdScroll = (e: React.WheelEvent): void => {
+    if (e.deltaY < 0) { atBottomRef.current = false; }
+  };
+  // 右侧对话导航 / 回到底部按钮浮在滚动容器外面：指针停在它们上面滚滚轮时，事件到不了
+  // .ai-scroll，浏览器就不会滚动面板（表现为「偶尔划不动」）。面板上统一把这类滚轮转发给正文。
+  const paneWheel = (e: React.WheelEvent): void => {
+    const el = scrollRef.current;
+    const t = e.target as HTMLElement | null;
+    if (!el || (t && t.closest(".ai-scroll, .ai-composer"))) { return; }
+    el.scrollTop += e.deltaY;
   };
   const jumpToBottom = (): void => {
     const el = scrollRef.current;
@@ -1233,7 +1306,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
         }
         return { role: t.role, content: `${base}\n\n[本轮外部检索结果卡片，编号即 [[card:N]] 里的 N：\n${digest}]`, ...withImages };
       });
-    setTurns((prev) => [...prev, { role: "user", text: q, images: imgs.map((i) => i.dataUrl), skills: skillIds }, { role: "assistant", text: "", streaming: true }]);
+    setTurns((prev) => [...prev, { role: "user", text: q, images: imgs.map((i) => i.dataUrl), skills: skillIds }, { role: "assistant", text: "", streaming: true, at: Date.now() }]);
     setSending(true);
     const sel = selection ? selection : undefined;
     const refIds = refs.map((r) => r.id);
@@ -1280,7 +1353,15 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     const list = turnsRef.current;
     const q = list[i - 1];
     const text = q && q.role === "user" ? q.text : "";
-    setTurns(list.slice(0, Math.max(0, i - 1)));
+    const keep = Math.max(0, i - 1);
+    setTurns(list.slice(0, keep));
+    // 被撤掉的回答上挂的「顺便问」也一起删掉，否则子对话会指向不存在的轮次
+    const keptThreads = btwThreadsRef.current.filter((x) => x.turn < keep);
+    if (keptThreads.length !== btwThreadsRef.current.length) {
+      btwThreadsRef.current = keptThreads;
+      setBtwThreads(keptThreads);
+      persist(list.slice(0, keep), keptThreads);
+    }
     if (text) { setInput(text); }
     if (q && q.role === "user" && q.skills && q.skills.length) { setAttached([...q.skills]); }
     if (q && q.role === "user" && q.images && q.images.length) {
@@ -1317,13 +1398,15 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     void window.api.agentConfirm(confirmId, { approved, args });
   };
 
-  const newConv = (): void => { setTurns([]); setConvId(""); convIdRef.current = ""; setShowHistory(false); setImages([]); setAttached([]); setShowSkills(false); };
+  const newConv = (): void => { setTurns([]); setBtwThreads([]); setBtwSeed(null); setConvId(""); convIdRef.current = ""; setShowHistory(false); setImages([]); setAttached([]); setShowSkills(false); };
   const openConv = async (id: string): Promise<void> => {
     const conv = await window.api.agentConversation(id);
-    // 切到别的会话时，没发出去的图片不该跟过去
+    // 切到别的会话时，没发出去的图片 / 打开着的顺便问都不该跟过去
     setImages([]);
+    setBtwSeed(null);
     if (conv) {
       setTurns(conv.messages.map((m) => ({ ...m, blocks: blocksOf(m) })));
+      setBtwThreads(conv.btw || []);
       setConvId(conv.id);
       convIdRef.current = conv.id;
       // 恢复这个会话最后一次启用的技能（已删除的会查不到名字，不会显示）
@@ -1352,7 +1435,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   };
 
   return (
-    <div className="ai-panel">
+    <div className="ai-panel" onWheel={paneWheel}>
       <div className="ai-head">
         <span className="ai-badge"><Icon name="arxiver" small /></span>
         <span className="ai-brand">Arxiver</span>
@@ -1431,7 +1514,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
           )}
         </div>
       </div>
-      <div className={"ai-scroll" + (anchors.length >= 2 ? " has-qnav" : "")} ref={scrollRef} onScroll={onScroll} onMouseUp={onAnswerMouseUp}>
+      <div className={"ai-scroll" + (anchors.length >= 2 ? " has-qnav" : "")} ref={scrollRef} onScroll={onScroll} onWheel={holdScroll} onMouseUp={onAnswerMouseUp}>
         {turns.length === 0 ? (
           <div className="ai-intro">
             <div className="ai-intro-head">
@@ -1520,6 +1603,16 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
                       const blocks = t.blocks || [];
                       const lastPapers = blocks.reduce((acc, b, i) => (b.kind === "papers" ? i : acc), -1);
                       const hasText = blocks.some((b) => b.kind === "text");
+                      // 这一轮回答上挂的「顺便问」子对话：能在正文里定位的走虚线下划线，定位不到的在末尾给胶囊
+                      const threads = btwThreads.filter((x) => x.turn === i);
+                      const sourceText = normText(textOf(blocks));
+                      // 含 Markdown 标记 / LaTeX 的选段在正文里常常跨节点，标不中就给末尾胶囊，别让入口丢失
+                      const anchored = (x: BtwThread): boolean => {
+                        const q = normText(x.quote);
+                        if (!q || /[*_~`[\]$\\#|]/.test(x.quote)) { return false; }
+                        return sourceText.includes(q);
+                      };
+                      const marks = threads.filter(anchored).map((x) => ({ id: x.id, text: x.quote, title: `顺便问过：${btwPreview(btwQuestionOf(x), 40)}` }));
                       return blocks.map((b, bi) => {
                         if (b.kind === "reasoning") {
                           return (
@@ -1586,8 +1679,45 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
                             />
                           );
                         }
-                        return <div key={bi} className="msg-content ai-md"><Markdown text={b.text} onCite={onCite} onCard={jumpToCard} /></div>;
+                        return (
+                          <div key={bi} className="msg-content ai-md">
+                            <Markdown
+                              text={b.text}
+                              onCite={onCite}
+                              onCard={jumpToCard}
+                              quotes={marks}
+                              onQuote={(id) => openBtw("", "", i, id)}
+                            />
+                          </div>
+                        );
                       });
+                    })()}
+                    {(() => {
+                      // 定位不到原文的子对话（例如 /btw 直接提问、或那段文字被改写掉了）：在回答末尾给胶囊
+                      const lose = btwThreads.filter((x) => {
+                        if (x.turn !== i) { return false; }
+                        const q = normText(x.quote);
+                        if (!q || /[*_~`[\]$\\#|]/.test(x.quote)) { return true; }
+                        return !normText(textOf(t.blocks || [])).includes(q);
+                      });
+                      if (!lose.length) { return null; }
+                      return (
+                        <div className="btw-chips">
+                          {lose.map((x) => (
+                            <button
+                              key={x.id}
+                              type="button"
+                              className="btw-chip"
+                              title={normText(x.quote) || btwQuestionOf(x)}
+                              onClick={() => openBtw("", "", i, x.id)}
+                            >
+                              <Icon name="message" small />
+                              <span className="btw-chip-text">{x.quote ? `“${btwPreview(x.quote, 16)}”` : btwPreview(btwQuestionOf(x), 20)}</span>
+                              <span className="btw-chip-count">{x.messages.length}</span>
+                            </button>
+                          ))}
+                        </div>
+                      );
                     })()}
                     {t.error ? <div className="ai-error">{t.error}</div> : null}
                     {t.stopped ? (
@@ -1616,8 +1746,24 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
                         </div>
                       );
                     })()}
+                    {t.streaming && (() => {
+                      // 只要有内容在跑就必须有「还在干活」的提示：多轮之间（上一轮工具已跑完、
+                      // 下一轮还在等模型）界面会静默几十秒，不给提示看起来就像已经结束了。
+                      const pending = toolsOf(t.blocks || []).some((x) => x.content === undefined);
+                      if (pending || !t.text) { return null; }  // 工具在跑有它自己的行；还没出字时有下面的输入中动画
+                      const secs = Math.max(0, Math.round((Date.now() - (t.at || Date.now())) / 1000));
+                      return (
+                        <div className="ai-running">
+                          <span className="spinner" />
+                          <span className="ai-running-name">正在生成…</span>
+                          <div className="od-fill" />
+                          <span className="ai-running-time">已 {secs}s</span>
+                        </div>
+                      );
+                    })()}
                     {t.streaming && !t.text ? <span className="typing"><i /><i /><i /></span> : null}
-                    {t.usage ? <div className="ai-usage">tokens: {t.usage.prompt_tokens}+{t.usage.completion_tokens}</div> : null}
+                    {/* 生成中不显示 token 统计：它每轮都会来一次，挂在末尾像「回答已结束」 */}
+                    {t.usage && !t.streaming ? <div className="ai-usage">tokens: {t.usage.prompt_tokens}+{t.usage.completion_tokens}</div> : null}
                   </>
                 )}
               </div>
@@ -1634,8 +1780,9 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => {
             const text = selAsk.text;
+            const turn = selAsk.turn;
             window.getSelection()?.removeAllRanges();
-            openBtw("", text);
+            openBtw("", text, turn >= 0 ? turn : undefined);
           }}
         >
           <Icon name="message" small /> 顺便问
@@ -1768,6 +1915,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
           docTitle={doc.title}
           aiReady={aiReady}
           onClose={() => setBtwSeed(null)}
+          onSave={saveBtw}
           onCite={onCite}
           onCard={jumpToCard}
           onOpenSettings={openAiSettings}

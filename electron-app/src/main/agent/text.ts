@@ -53,15 +53,20 @@ export async function loadPages(docId: string): Promise<PageText[]> {
 function chunkPages(docId: string, pages: PageText[]): Chunk[] {
   const chunks: Chunk[] = [];
   let index = 0;
+  const highSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff;
+  const lowSurrogate = (code: number): boolean => code >= 0xdc00 && code <= 0xdfff;
   for (const { page, text } of pages) {
     const clean = (text || "").replace(/\s+/g, " ").trim();
     if (!clean) { continue; }
     let start = 0;
     while (start < clean.length) {
-      const slice = clean.slice(start, start + CHUNK_SIZE);
-      chunks.push({ docId, page, index: index++, text: slice });
-      if (start + CHUNK_SIZE >= clean.length) { break; }
-      start += CHUNK_SIZE - CHUNK_OVERLAP;
+      // 切分点别落在代理对（emoji / 生僻字）中间，否则片段里会留下孤立的半个字符
+      if (lowSurrogate(clean.charCodeAt(start))) { start += 1; }
+      let end = Math.min(start + CHUNK_SIZE, clean.length);
+      if (highSurrogate(clean.charCodeAt(end - 1))) { end -= 1; }
+      chunks.push({ docId, page, index: index++, text: clean.slice(start, end) });
+      if (end >= clean.length) { break; }
+      start = end - CHUNK_OVERLAP;
     }
   }
   return chunks;
