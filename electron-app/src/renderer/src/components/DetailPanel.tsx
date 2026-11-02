@@ -297,7 +297,6 @@ function NotesPanel({ lib, doc, onCite }: {
           isNew={editing.isNew}
           onSave={save}
           onCancel={() => setEditing(null)}
-          onCite={onCite}
         />
       ) : null}
     </>

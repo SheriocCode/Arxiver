@@ -600,35 +600,35 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .note-hint { font-size: 11px; color: var(--faint); }
 
 /* 笔记正文（预览和编辑器里的块共用一套排版） */
-:is(.note-body, .note-preview) {
+:is(.note-body) {
   font-size: 13px; line-height: 1.72; color: var(--text-2); overflow-wrap: anywhere;
   -webkit-user-select: text; user-select: text;
 }
-:is(.note-body, .note-preview) > :first-child { margin-top: 2px; }
-:is(.note-body, .note-preview) > :last-child { margin-bottom: 0; }
-:is(.note-body, .note-preview) p { margin: 6px 0; }
-:is(.note-body, .note-preview) ul, :is(.note-body, .note-preview) ol { margin: 6px 0; padding-left: 20px; }
-:is(.note-body, .note-preview) li { margin: 2px 0; }
-:is(.note-body, .note-preview) h1, :is(.note-body, .note-preview) h2, :is(.note-body, .note-preview) h3,
-:is(.note-body, .note-preview) h4, :is(.note-body, .note-preview) h5, :is(.note-body, .note-preview) h6 {
+:is(.note-body) > :first-child { margin-top: 2px; }
+:is(.note-body) > :last-child { margin-bottom: 0; }
+:is(.note-body) p { margin: 6px 0; }
+:is(.note-body) ul, :is(.note-body) ol { margin: 6px 0; padding-left: 20px; }
+:is(.note-body) li { margin: 2px 0; }
+:is(.note-body) h1, :is(.note-body) h2, :is(.note-body) h3,
+:is(.note-body) h4, :is(.note-body) h5, :is(.note-body) h6 {
   margin: 10px 0 4px; font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.45;
 }
-:is(.note-body, .note-preview) strong { color: var(--text); font-weight: 600; }
-:is(.note-body, .note-preview) a { color: var(--accent); text-decoration: none; }
-:is(.note-body, .note-preview) a:hover { text-decoration: underline; }
-:is(.note-body, .note-preview) code {
+:is(.note-body) strong { color: var(--text); font-weight: 600; }
+:is(.note-body) a { color: var(--accent); text-decoration: none; }
+:is(.note-body) a:hover { text-decoration: underline; }
+:is(.note-body) code {
   background: var(--surface-2); padding: 1px 5px; border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
 }
-:is(.note-body, .note-preview) pre { margin: 8px 0; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); overflow: auto; }
-:is(.note-body, .note-preview) pre code { background: none; padding: 0; }
-:is(.note-body, .note-preview) blockquote { margin: 6px 0; padding-left: 10px; border-left: 2px solid var(--border-strong); color: var(--muted); }
-:is(.note-body, .note-preview) hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
-:is(.note-body, .note-preview) table { border-collapse: collapse; margin: 8px 0; font-size: 12px; display: block; overflow: auto; }
-:is(.note-body, .note-preview) th, :is(.note-body, .note-preview) td { border: 1px solid var(--border-strong); padding: 3px 8px; text-align: left; }
-:is(.note-body, .note-preview) th { background: var(--surface-2); font-weight: 600; }
-:is(.note-body, .note-preview) .katex { font-size: 1.02em; }
-:is(.note-body, .note-preview) .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
+:is(.note-body) pre { margin: 8px 0; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); overflow: auto; }
+:is(.note-body) pre code { background: none; padding: 0; }
+:is(.note-body) blockquote { margin: 6px 0; padding-left: 10px; border-left: 2px solid var(--border-strong); color: var(--muted); }
+:is(.note-body) hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
+:is(.note-body) table { border-collapse: collapse; margin: 8px 0; font-size: 12px; display: block; overflow: auto; }
+:is(.note-body) th, :is(.note-body) td { border: 1px solid var(--border-strong); padding: 3px 8px; text-align: left; }
+:is(.note-body) th { background: var(--surface-2); font-weight: 600; }
+:is(.note-body) .katex { font-size: 1.02em; }
+:is(.note-body) .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
 
 /* 全屏笔记编辑器：铺满整个详情面板 */
 .note-focus {
@@ -655,18 +655,8 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .note-format-btn:hover { background: var(--hover); color: var(--text); }
 
 /* 编辑区：宽面板并排（源码 | 实时预览），窄面板上下分栏 */
-.note-edit-area { flex: 1; min-height: 0; display: flex; gap: 0; padding: 10px 12px; }
-.note-edit-area > .note-cm { flex: 1 1 50%; min-width: 0; display: flex; }
-.note-preview {
-  flex: 1 1 50%; min-width: 0; overflow-y: auto;
-  padding: 2px 0 2px 12px; border-left: 1px solid var(--border);
-}
-.note-preview-empty { font-size: 12.5px; color: var(--faint); }
-@container (max-width: 560px) {
-  .note-edit-area { flex-direction: column; gap: 8px; }
-  .note-edit-area > .note-cm { flex: 0 0 45%; min-height: 120px; }
-  .note-preview { flex: 1 1 auto; padding: 8px 0 0; border-left: 0; border-top: 1px solid var(--border); }
-}
+.note-edit-area { flex: 1; min-height: 0; display: flex; padding: 10px 12px; }
+.note-edit-area > .note-cm { flex: 1 1 auto; min-width: 0; display: flex; }
 .note-focus-foot {
   display: flex; align-items: center; gap: 8px; flex: none;
   padding: 8px 14px; border-top: 1px solid var(--border);
@@ -701,6 +691,14 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .cm-h2 { font-size: 15.5px; font-weight: 700; color: var(--text); line-height: 1.55; }
 .cm-h3 { font-size: 14px; font-weight: 600; color: var(--text); }
 .cm-h4, .cm-h5, .cm-h6 { font-size: 13px; font-weight: 600; color: var(--text); }
+/* 就地渲染的公式：点一下就能回到源码 */
+.note-cm .cm-math-inline { cursor: text; padding: 0 1px; }
+.note-cm .cm-math-block {
+  display: block; margin: 6px 0; padding: 4px 2px; cursor: text;
+  overflow-x: auto; overflow-y: hidden;
+}
+.note-cm .cm-math-block .katex-display { margin: 0; }
+.note-cm .cm-math-inline .katex { font-size: 1.02em; }
 
 /* ---------- AI assistant ---------- */
 .ai-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }

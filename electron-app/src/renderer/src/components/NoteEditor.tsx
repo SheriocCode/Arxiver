@@ -1,20 +1,19 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX } from "react";
 import { EditorState, type Extension, type Range } from "@codemirror/state";
 import {
   Decoration, EditorView, ViewPlugin, drawSelection, keymap, placeholder as cmPlaceholder,
-  type DecorationSet, type ViewUpdate
+  WidgetType, type DecorationSet, type ViewUpdate
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { syntaxTree } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import katex from "katex";
 import { Icon } from "./Icons";
-import { Markdown } from "../lib/markdown";
 
-// 笔记编辑器：侧栏内全屏，Obsidian 式的 Live Preview（块级/行级即时渲染）。
-//   · 没有编辑的地方是渲染后的富文本（`**粗体**` 显示成粗体，标记隐藏）
-//   · 光标所在的那一行才展开原始标记，方便直接改语法
-//   · 语法不完整（比如只剩一个 *）时不会被识别成强调，自然就显示成普通文本
-//   · 公式 / 表格这种排版复杂的，右侧（窄面板时下方）有实时预览
+// 笔记编辑器：侧栏内全屏，Obsidian 式的 Live Preview。
+//   · 没在编辑的地方按富文本渲染（标记隐藏），光标所在行才展开 Markdown 标记
+//   · 公式（$…$ / $$…$$）就地渲染成 KaTeX；光标进入该公式时恢复源码
+//   · 语法不完整时解析不出强调/公式，原样显示，不会被"渲染"成别的东西
 
 const MARKER_NODES = new Set(["EmphasisMark", "CodeMark", "LinkMark", "StrikethroughMark", "HeaderMark"]);
 
@@ -33,12 +32,81 @@ const STYLE_NODES: Record<string, string> = {
   ATXHeading6: "cm-h6"
 };
 
+interface MathSpan { from: number; to: number; tex: string; display: boolean }
+
+class MathWidget extends WidgetType {
+  constructor(readonly tex: string, readonly display: boolean) { super(); }
+  eq(other: MathWidget): boolean { return other.tex === this.tex && other.display === this.display; }
+  toDOM(): HTMLElement {
+    const el = document.createElement(this.display ? "div" : "span");
+    el.className = this.display ? "cm-math-block" : "cm-math-inline";
+    try {
+      katex.render(this.tex, el, { displayMode: this.display, throwOnError: false });
+    } catch {
+      el.textContent = this.tex;
+    }
+    return el;
+  }
+  ignoreEvent(): boolean { return false; }
+}
+
+// 扫出正文里的公式（代码块/行内代码里的不算）
+function collectMath(state: EditorState): MathSpan[] {
+  const out: MathSpan[] = [];
+  const doc = state.doc;
+  const tree = syntaxTree(state);
+  const inCode = (pos: number): boolean => {
+    for (let n: any = tree.resolveInner(pos, 1); n; n = n.parent) {
+      if (n.name === "InlineCode" || n.name === "FencedCode" || n.name === "CodeBlock" || n.name === "CodeText") { return true; }
+    }
+    return false;
+  };
+
+  let i = 1;
+  while (i <= doc.lines) {
+    const line = doc.line(i);
+    if (!inCode(line.from)) {
+      // 单行 $$…$$
+      const single = /^\s*\$\$(.+?)\$\$\s*$/.exec(line.text);
+      if (single) {
+        out.push({ from: line.from, to: line.to, tex: single[1].trim(), display: true });
+        i++;
+        continue;
+      }
+      // 多行 $$ … $$
+      if (/^\s*\$\$\s*$/.test(line.text)) {
+        let j = i + 1;
+        while (j <= doc.lines && !/^\s*\$\$\s*$/.test(doc.line(j).text)) { j++; }
+        if (j <= doc.lines) {
+          const tex = [];
+          for (let k = i + 1; k < j; k++) { tex.push(doc.line(k).text); }
+          out.push({ from: line.from, to: doc.line(j).to, tex: tex.join("\n"), display: true });
+          i = j + 1;
+          continue;
+        }
+      }
+      // 行内 $…$（不跨行、不匹配 $$）
+      const re = /(?<![\\$])\$([^$\n]+?)\$(?!\$)/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(line.text)) !== null) {
+        const from = line.from + m.index;
+        out.push({ from, to: from + m[0].length, tex: m[1], display: false });
+      }
+    }
+    i++;
+  }
+  return out;
+}
+
 function buildDecorations(view: EditorView): DecorationSet {
   const { state } = view;
   const ranges: Range<Decoration>[] = [];
+  const sel = state.selection.ranges;
+  const touches = (from: number, to: number): boolean => sel.some((r) => r.from <= to && r.to >= from);
+
   // 光标落在哪些行：这些行展开原始 Markdown 标记
   const cursorLines = new Set<number>();
-  for (const r of state.selection.ranges) {
+  for (const r of sel) {
     const a = state.doc.lineAt(r.from).number;
     const b = state.doc.lineAt(r.to).number;
     for (let n = a; n <= b; n++) { cursorLines.add(n); }
@@ -55,12 +123,11 @@ function buildDecorations(view: EditorView): DecorationSet {
           return;
         }
         if (!onCursorLine(node.from)) {
-          // 只隐藏标记本身，内容保持原样
           if (MARKER_NODES.has(node.name)) {
             ranges.push(Decoration.replace({}).range(node.from, node.to));
             return;
           }
-          // 链接的 URL 也算标记：`[文字](链接)` 里只保留文字
+          // 链接只显示文字：隐藏 `[`、`](`、`)` 和 URL
           if (node.name === "URL" && node.node.parent?.type.name === "Link") {
             ranges.push(Decoration.replace({}).range(node.from, node.to));
           }
@@ -68,6 +135,16 @@ function buildDecorations(view: EditorView): DecorationSet {
       }
     });
   }
+
+  // 公式：光标不在里面时渲染成 KaTeX
+  for (const span of collectMath(state)) {
+    if (touches(span.from, span.to)) { continue; }
+    ranges.push(Decoration.replace({
+      widget: new MathWidget(span.tex, span.display),
+      block: span.display
+    }).range(span.from, span.to));
+  }
+
   return Decoration.set(ranges, true);
 }
 
@@ -81,7 +158,7 @@ const livePreview = ViewPlugin.fromClass(class {
   }
 }, { decorations: (v) => v.decorations });
 
-// 工具条动作：包裹选区 / 行首加标记
+// 工具条动作
 type Action = (view: EditorView) => void;
 
 const wrap = (before: string, after: string, placeholder: string): Action => (view) => {
@@ -117,34 +194,24 @@ const TOOLS: { label: string; title: string; run: Action }[] = [
   { label: "🔗", title: "链接", run: wrap("[", "](https://)", "链接文字") }
 ];
 
-export default function NoteEditor({ initial, isNew, onSave, onCancel, onCite }: {
+export default function NoteEditor({ initial, isNew, onSave, onCancel }: {
   initial: string;
   isNew: boolean;
   onSave: (text: string) => void;
   onCancel: () => void;
-  onCite?: (docId: string, page: number, quote?: string) => void;
 }): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [text, setText] = useState(initial);
-  // 预览单独做 150ms 防抖：长笔记（含大量公式）不至于每敲一个字就重排一次
-  const [previewText, setPreviewText] = useState(initial);
-  const [preview, setPreview] = useState(true);
-  useEffect(() => {
-    const t = window.setTimeout(() => setPreviewText(text), 150);
-    return () => window.clearTimeout(t);
-  }, [text]);
-  const canSave = useMemo(() => text.trim().length > 0, [text]);
+  const canSave = text.trim().length > 0;
 
   const save = (): void => {
     const value = viewRef.current?.state.doc.toString() ?? text;
     if (value.trim()) { onSave(value.trim()); }
   };
-  // Ctrl+Enter 的 keymap 需要拿到最新的 save 闭包
   const saveRef = useRef<() => void>(save);
   saveRef.current = save;
 
-  // 建编辑器（只建一次；内容由 CodeMirror 自己维护）
   useEffect(() => {
     const host = hostRef.current;
     if (!host) { return; }
@@ -156,15 +223,9 @@ export default function NoteEditor({ initial, isNew, onSave, onCancel, onCite }:
       livePreview,
       cmPlaceholder("在这里写笔记，支持 Markdown：## 标题、**粗体**、- 列表、$公式$"),
       keymap.of([
-        {
-          key: "Mod-b", preventDefault: true, run: (view) => { wrap("**", "**", "粗体")(view); return true; }
-        },
-        {
-          key: "Mod-i", preventDefault: true, run: (view) => { wrap("*", "*", "斜体")(view); return true; }
-        },
-        {
-          key: "Mod-Enter", preventDefault: true, run: () => { saveRef.current?.(); return true; }
-        },
+        { key: "Mod-b", preventDefault: true, run: (view) => { wrap("**", "**", "粗体")(view); return true; } },
+        { key: "Mod-i", preventDefault: true, run: (view) => { wrap("*", "*", "斜体")(view); return true; } },
+        { key: "Mod-Enter", preventDefault: true, run: () => { saveRef.current(); return true; } },
         indentWithTab,
         ...defaultKeymap,
         ...historyKeymap
@@ -189,9 +250,6 @@ export default function NoteEditor({ initial, isNew, onSave, onCancel, onCite }:
         <Icon name="note" small />
         <span className="note-focus-title">{isNew ? "新建笔记" : "编辑笔记"}</span>
         <span className="od-fill" />
-        <button type="button" className="btn btn-ghost" aria-pressed={preview} onClick={() => setPreview((v) => !v)}>
-          {preview ? "隐藏预览" : "显示预览"}
-        </button>
         <button type="button" className="btn btn-ghost" onClick={onCancel}>取消</button>
         <button type="button" className="btn btn-primary" disabled={!canSave} onClick={save}>保存</button>
       </header>
@@ -211,19 +269,12 @@ export default function NoteEditor({ initial, isNew, onSave, onCancel, onCite }:
         ))}
       </div>
 
-      <div className={"note-edit-area" + (preview ? " has-preview" : "")}>
+      <div className="note-edit-area">
         <div className="note-cm" ref={hostRef} />
-        {preview ? (
-          <div className="note-preview">
-            {previewText.trim()
-              ? <Markdown text={previewText} onCite={(id, page, quote) => onCite?.(id, page, quote)} />
-              : <div className="note-preview-empty">预览区 · 输入内容后在这里看到渲染效果</div>}
-          </div>
-        ) : null}
       </div>
 
       <footer className="note-focus-foot">
-        <span className="note-hint">光标所在行会显示 Markdown 标记，其它位置按富文本渲染</span>
+        <span className="note-hint">光标所在行展开 Markdown 标记；公式会就地渲染，点进去可改源码</span>
         <span className="od-fill" />
         <span className="note-hint">Ctrl / ⌘ + Enter 保存</span>
       </footer>
