@@ -678,6 +678,7 @@ export interface Api {
   libraryState(): Promise<LibraryState>;
   libraryAdd(payload: SourcePayload & { type?: string; collections?: string[] }): Promise<LibraryDoc>;
   libraryImportByIdentifier(input: string, collections: string[]): Promise<{ ok: boolean; doc?: LibraryDoc; error?: string }>;
+  libraryCancelImport(): Promise<boolean>;
   libraryEnrichMetadata(id: string): Promise<LibraryDoc | null>;
   // 导入 / 补全元数据期间的阶段提示（下载、解析、查询接口…）
   onLibraryProgress(cb: (progress: { text: string; done?: boolean }) => void): () => void;

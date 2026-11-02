@@ -508,7 +508,7 @@ function ConfirmCard({ item, onDecide }: { item: AiConfirm; onDecide: (confirmId
 
 // 一批检索结果：过程性的那几批默认**折叠成一行**（图标 + 数量 + 站点），最后一批展开成卡片。
 // 展开状态由父组件控制，这样 [[card:N]] 跳转时能把目标那一批展开并高亮。
-function PaperBlock({ papers, open, onToggle, onJumped, state, progress, inLibrary, onImport, onOpen }: {
+function PaperBlock({ papers, open, onToggle, onJumped, state, progress, inLibrary, onImport, onCancel, onOpen }: {
   papers: PaperHit[];
   open: boolean;
   onToggle: () => void;
@@ -517,6 +517,7 @@ function PaperBlock({ papers, open, onToggle, onJumped, state, progress, inLibra
   progress: string;
   inLibrary: (p: PaperHit) => string;
   onImport: (p: PaperHit) => void;
+  onCancel: (p: PaperHit) => void;
   onOpen: (url: string) => void;
 }): JSX.Element {
   const sites = Array.from(new Set(papers.map((p) => p.venue || p.source).filter(Boolean))).slice(0, 3).join(" / ");
@@ -530,20 +531,21 @@ function PaperBlock({ papers, open, onToggle, onJumped, state, progress, inLibra
         <Icon name={open ? "chev-down" : "chev-right"} small />
       </button>
       {open ? (
-        <PaperCards papers={papers} jumped={onJumped} state={state} progress={progress} inLibrary={inLibrary} onImport={onImport} onOpen={onOpen} />
+        <PaperCards papers={papers} jumped={onJumped} state={state} progress={progress} inLibrary={inLibrary} onImport={onImport} onCancel={onCancel} onOpen={onOpen} />
       ) : null}
     </div>
   );
 }
 
 // 外部检索结果卡片：可一键导入文库，或打开链接 / PDF；带本轮对话里的编号（[[card:N]] 用）
-function PaperCards({ papers, jumped, state, progress, inLibrary, onImport, onOpen }: {
+function PaperCards({ papers, jumped, state, progress, inLibrary, onImport, onCancel, onOpen }: {
   papers: PaperHit[];
   jumped?: string;
   state: Record<string, "busy" | "ok" | "err">;
   progress: string;
   inLibrary: (p: PaperHit) => string;
   onImport: (p: PaperHit) => void;
+  onCancel: (p: PaperHit) => void;
   onOpen: (url: string) => void;
 }): JSX.Element {
   // 列表高度受限（CSS max-height + 内部滚动），所以一次性渲染全部卡片：
@@ -581,8 +583,12 @@ function PaperCards({ papers, jumped, state, progress, inLibrary, onImport, onOp
               {p.url ? <button type="button" className="btn btn-ghost" onClick={() => onOpen(p.url)}><Icon name="external" small /> 打开链接</button> : null}
               {p.pdfUrl ? <button type="button" className="btn btn-ghost" onClick={() => onOpen(p.pdfUrl)}><Icon name="file" small /> PDF</button> : null}
             </div>
-            {state[p.key] === "busy" && progress ? (
-              <div className="import-note"><span className="spinner" />{progress}</div>
+            {state[p.key] === "busy" ? (
+              <div className="import-note">
+                <span className="spinner" />
+                <span className="import-note-text">{progress || "正在导入…"}</span>
+                <button type="button" className="import-cancel" title="取消这次导入（不会留下半个条目）" onClick={() => onCancel(p)}>取消</button>
+              </div>
             ) : null}
           </div>
         );
@@ -1024,12 +1030,16 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     }
     return "";
   };
+  // 用户手动取消过的导入：结果回来时别再标成"失败"，直接回到未导入状态
+  const cancelledImports = useRef<Set<string>>(new Set());
   const importPaper = (p: PaperHit): void => {
     const id = p.arxivId || p.doi || p.url;
     if (!id) { return; }
+    cancelledImports.current.delete(p.key);
     setImp((s) => ({ ...s, [p.key]: "busy" }));
     void window.api.libraryImportByIdentifier(id, [])
       .then(async (r) => {
+        if (cancelledImports.current.has(p.key)) { return; }  // 已手动取消
         if (r && (r as { ok?: boolean }).ok) {
           setImp((s) => ({ ...s, [p.key]: "ok" }));
           await lib.refresh();
@@ -1037,7 +1047,13 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
           setImp((s) => ({ ...s, [p.key]: "err" }));
         }
       })
-      .catch(() => setImp((s) => ({ ...s, [p.key]: "err" })));
+      .catch(() => { if (!cancelledImports.current.has(p.key)) { setImp((s) => ({ ...s, [p.key]: "err" })); } });
+  };
+  // 取消：中止下载（主进程会回滚，不留半个条目），卡片恢复成可再次导入
+  const cancelImport = (p: PaperHit): void => {
+    cancelledImports.current.add(p.key);
+    void window.api.libraryCancelImport();
+    setImp((s) => { const next = { ...s }; delete next[p.key]; return next; });
   };
   const msgRefs = useRef<(HTMLDivElement | null)[]>([]);
   const atBottomRef = useRef(true);
@@ -1691,6 +1707,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
                               progress={libProgress}
                               inLibrary={docIdOfPaper}
                               onImport={importPaper}
+                              onCancel={cancelImport}
                               onOpen={(u) => { void window.api.openExternal(u); }}
                             />
                           );

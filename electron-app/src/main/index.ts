@@ -769,13 +769,25 @@ function registerIpc(): void {
   });
 
   // 按标识符导入（粘贴 arXiv 链接/编号或 DOI）：逻辑在 importPaper.ts（agent 的 import_paper 工具共用）
+  // 当前正在跑的"按标识符导入"：卡片上的取消按钮 / 换一篇导入都会先中止它
+  let activeImport: AbortController | null = null;
   ipcMain.handle("library:importByIdentifier", async (_event, input: string, collections: string[]) => {
+    activeImport?.abort();
+    const ctrl = new AbortController();
+    activeImport = ctrl;
     try {
-      return await importPaper({ identifier: input, collections, onProgress: (t) => reportLibraryProgress(t) });
+      return await importPaper({
+        identifier: input,
+        collections,
+        onProgress: (t) => reportLibraryProgress(t),
+        signal: ctrl.signal
+      });
     } finally {
+      if (activeImport === ctrl) { activeImport = null; }
       reportLibraryProgress("", true);
     }
   });
+  ipcMain.handle("library:cancelImport", () => { activeImport?.abort(); return true; });
   ipcMain.handle("library:update", (_event, id: string, patch) => library.updateDocument(id, patch));
   ipcMain.handle("library:setTrash", (_event, id: string, trashed: boolean) => library.setTrash(id, trashed));
   ipcMain.handle("library:purge", (_event, id: string) => library.purge(id));

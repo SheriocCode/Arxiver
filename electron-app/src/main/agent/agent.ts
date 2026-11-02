@@ -189,6 +189,7 @@ export class AgentService extends EventEmitter {
         this.emitEvent({ turnId, type: "tool_call", name: call.name, args: call.arguments });
         const ctx: ToolContext = {
           cardBase,
+          signal,
           emit: (e) => {
             if (e.type === "papers") { cardBase += e.papers.length; }
             this.emitEvent({ turnId, ...e });

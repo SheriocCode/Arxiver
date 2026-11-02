@@ -19,6 +19,8 @@ export interface ToolContext {
   cardBase?: number;
   // 长耗时工具（如 import_paper）用它在界面上报进度，避免看起来像卡死
   progress?: (text: string) => void;
+  // 本轮请求的取消信号：停止生成时，正在下载的 PDF 也要跟着中断
+  signal?: AbortSignal;
 }
 
 // 「联网搜索」总开关（读正文只需开关，不必有 Search Key）/ 有当前服务商的 Key 才可用搜索
@@ -368,7 +370,8 @@ export const TOOLS: ToolImpl[] = [
         identifier: args.identifier ? String(args.identifier) : "",
         url: args.url ? String(args.url) : "",
         collections: Array.isArray(args.collections) ? (args.collections as unknown[]).map(String) : [],
-        onProgress: (t) => ctx?.progress?.(t)
+        onProgress: (t) => ctx?.progress?.(t),
+        signal: ctx?.signal
       });
       if (!res.ok || !res.doc) { return `导入失败：${res.error || "未知原因"}`; }
       const d = res.doc;
