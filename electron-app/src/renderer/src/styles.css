@@ -428,6 +428,7 @@ html.kb-focus :focus-visible { outline: 2px solid var(--accent); outline-offset:
   background: var(--bg-panel);
   border-left: 1px solid var(--border);
   display: flex; flex-direction: column; min-width: 0;
+  position: relative;  /* 笔记编辑器的全屏浮层以它为定位基准 */
 }
 .tabs {
   display: flex; align-items: stretch; gap: 2px;
@@ -559,19 +560,17 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 }
 .tag-add:hover { color: var(--text); border-color: var(--accent); }
 
-/* ---- 笔记：Markdown 渲染 + 就地编辑 ---- */
-.note-editor { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
-.note-editor textarea, .note-edit textarea {
-  width: 100%; min-height: 84px; resize: vertical;
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 10px; outline: none; color: var(--text); line-height: 1.65; font-size: 13px;
+/* ---- 笔记：Markdown 渲染 + 侧栏全屏的块级编辑器 ---- */
+.note-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.note-new {
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 11px;
+  border-radius: var(--pill); background: var(--accent-soft); color: var(--accent);
+  font-size: 12.5px; border: 1px solid transparent;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
-.note-editor textarea:focus { border-color: var(--accent); }
-.note-editor textarea::placeholder { color: var(--faint); }
-.note-edit { display: flex; flex-direction: column; gap: 8px; }
-.note-edit textarea { background: var(--surface-2); border-color: var(--accent); }
-.note-editor-foot { display: flex; align-items: center; gap: 6px; }
-.note-hint { font-size: 11px; color: var(--faint); }
+.note-new:hover { background: var(--accent-soft-2); border-color: var(--accent); }
+.note-count { font-size: 11.5px; color: var(--faint); }
+
 .note-list { display: flex; flex-direction: column; gap: 10px; }
 .note-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
@@ -592,38 +591,81 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .note-empty { display: flex; align-items: flex-start; gap: 8px; padding: 18px 2px; color: var(--faint); font-size: 12.5px; }
 .note-empty .icon { margin-top: 2px; flex: none; }
 .note-empty p { margin: 0; line-height: 1.65; }
-/* 笔记正文按 Markdown 渲染（紧凑一档，和侧栏字号一致） */
-.note-body { font-size: 13px; line-height: 1.72; color: var(--text-2); overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
-.note-body > :first-child { margin-top: 2px; }
-.note-body > :last-child { margin-bottom: 0; }
-.note-body p { margin: 6px 0; }
-.note-body ul, .note-body ol { margin: 6px 0; padding-left: 20px; }
-.note-body li { margin: 2px 0; }
-.note-body h1, .note-body h2, .note-body h3, .note-body h4, .note-body h5, .note-body h6 {
-  margin: 10px 0 4px; font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.45;
-}
-.note-body strong { color: var(--text); font-weight: 600; }
-.note-body a { color: var(--accent); text-decoration: none; }
-.note-body a:hover { text-decoration: underline; }
-.note-body code {
-  background: var(--surface-2); padding: 1px 5px; border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
-}
-.note-body pre { margin: 8px 0; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); overflow: auto; }
-.note-body pre code { background: none; padding: 0; }
-.note-body blockquote { margin: 6px 0; padding-left: 10px; border-left: 2px solid var(--border-strong); color: var(--muted); }
-.note-body hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
-.note-body table { border-collapse: collapse; margin: 8px 0; font-size: 12px; display: block; overflow: auto; }
-.note-body th, .note-body td { border: 1px solid var(--border-strong); padding: 3px 8px; text-align: left; }
-.note-body th { background: var(--surface-2); font-weight: 600; }
-.note-body .katex { font-size: 1.02em; }
-.note-body .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
 .note-body.is-clamped { max-height: 300px; overflow: hidden; }
 .note-more {
   display: inline-flex; align-items: center; gap: 3px; margin-top: 6px;
   color: var(--accent); font-size: 11.5px;
 }
 .note-more:hover { text-decoration: underline; }
+.note-hint { font-size: 11px; color: var(--faint); }
+
+/* 笔记正文（预览和编辑器里的块共用一套排版） */
+:is(.note-body, .note-block) {
+  font-size: 13px; line-height: 1.72; color: var(--text-2); overflow-wrap: anywhere;
+  -webkit-user-select: text; user-select: text;
+}
+:is(.note-body, .note-block) > :first-child { margin-top: 2px; }
+:is(.note-body, .note-block) > :last-child { margin-bottom: 0; }
+:is(.note-body, .note-block) p { margin: 6px 0; }
+:is(.note-body, .note-block) ul, :is(.note-body, .note-block) ol { margin: 6px 0; padding-left: 20px; }
+:is(.note-body, .note-block) li { margin: 2px 0; }
+:is(.note-body, .note-block) h1, :is(.note-body, .note-block) h2, :is(.note-body, .note-block) h3,
+:is(.note-body, .note-block) h4, :is(.note-body, .note-block) h5, :is(.note-body, .note-block) h6 {
+  margin: 10px 0 4px; font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.45;
+}
+:is(.note-body, .note-block) strong { color: var(--text); font-weight: 600; }
+:is(.note-body, .note-block) a { color: var(--accent); text-decoration: none; }
+:is(.note-body, .note-block) a:hover { text-decoration: underline; }
+:is(.note-body, .note-block) code {
+  background: var(--surface-2); padding: 1px 5px; border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+}
+:is(.note-body, .note-block) pre { margin: 8px 0; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); overflow: auto; }
+:is(.note-body, .note-block) pre code { background: none; padding: 0; }
+:is(.note-body, .note-block) blockquote { margin: 6px 0; padding-left: 10px; border-left: 2px solid var(--border-strong); color: var(--muted); }
+:is(.note-body, .note-block) hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
+:is(.note-body, .note-block) table { border-collapse: collapse; margin: 8px 0; font-size: 12px; display: block; overflow: auto; }
+:is(.note-body, .note-block) th, :is(.note-body, .note-block) td { border: 1px solid var(--border-strong); padding: 3px 8px; text-align: left; }
+:is(.note-body, .note-block) th { background: var(--surface-2); font-weight: 600; }
+:is(.note-body, .note-block) .katex { font-size: 1.02em; }
+:is(.note-body, .note-block) .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
+
+/* 全屏笔记编辑器：铺满整个详情面板 */
+.note-focus {
+  position: absolute; inset: 0; z-index: 8;
+  display: flex; flex-direction: column;
+  background: var(--bg-panel);
+}
+.note-focus-head {
+  display: flex; align-items: center; gap: 6px; flex: none;
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+}
+.note-focus-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.note-focus-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 28px; display: flex; flex-direction: column; gap: 2px; }
+.note-focus-foot {
+  display: flex; align-items: center; gap: 8px; flex: none;
+  padding: 8px 14px; border-top: 1px solid var(--border);
+}
+.note-block { padding: 4px 6px; margin: 0 -6px; border-radius: var(--radius-sm); cursor: text; }
+.note-block:hover { background: var(--hover); }
+.note-block.is-blank { color: var(--faint); }
+.note-block-hint { font-size: 12.5px; color: var(--faint); }
+.note-block-edit, .note-source {
+  width: 100%; box-sizing: border-box; resize: none; overflow: hidden;
+  background: var(--surface-2); border: 1px solid var(--accent); border-radius: var(--radius-sm);
+  padding: 8px 10px; color: var(--text); font-size: 13px; line-height: 1.7; outline: none;
+  font-family: inherit;
+}
+.note-source {
+  flex: 1; min-height: 220px; resize: vertical; overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+}
+.note-add-block {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 8px; padding: 4px 9px; border-radius: var(--pill);
+  color: var(--faint); font-size: 12px;
+}
+.note-add-block:hover { background: var(--hover); color: var(--text); }
 
 /* ---------- AI assistant ---------- */
 .ai-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }

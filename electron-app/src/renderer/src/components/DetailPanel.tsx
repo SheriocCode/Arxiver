@@ -12,6 +12,7 @@ import { Markdown } from "../lib/markdown";
 import { normalizeImage, readImageFile } from "../lib/images";
 import { zoomImage } from "../lib/lightbox";
 import BtwPanel, { type BtwSeed } from "./BtwPanel";
+import NoteEditor from "./NoteEditor";
 
 function arxivId(url: string): string {
   const match = /arxiv\.org\/(?:abs|pdf)\/([^?#\s]+?)(?:v\d+)?(?:\.pdf)?$/i.exec(String(url || ""));
@@ -194,33 +195,24 @@ function NotesPanel({ lib, doc, onCite }: {
   doc: LibraryDoc;
   onCite?: (docId: string, page: number, quote?: string) => void;
 }): JSX.Element {
-  const [input, setInput] = useState("");
-  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const [editing, setEditing] = useState<{ id: string; text: string; isNew: boolean } | null>(null);
   const [confirmId, setConfirmId] = useState("");
   const [copied, setCopied] = useState("");
   // 长笔记默认折起来，避免一条笔记把整个面板撑满
   const [openNotes, setOpenNotes] = useState<Record<string, boolean>>({});
-  const editRef = useRef<HTMLTextAreaElement>(null);
   const notes = doc.notes || [];
 
-  // 编辑框跟着内容长高（最高 420px，再多就内部滚动），否则长笔记只能看到三行
-  useEffect(() => {
-    const el = editRef.current;
-    if (!el) { return; }
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 420) + "px";
-  }, [editing?.id, editing?.text]);
+  useEffect(() => { setEditing(null); setConfirmId(""); setOpenNotes({}); }, [doc.id]);
 
-  useEffect(() => { setInput(""); setEditing(null); setConfirmId(""); setOpenNotes({}); }, [doc.id]);
-
-  const save = (text: string, note?: ItemNote): void => {
+  const save = (text: string): void => {
     const body = text.trim();
     if (!body) { return; }
     const today = new Date().toISOString().slice(0, 10);
-    const next = note
-      ? notes.map((n) => (n.id === note.id ? { ...n, text: body, updated: today } : n))
+    const next = editing && !editing.isNew
+      ? notes.map((n) => (n.id === editing.id ? { ...n, text: body, updated: today } : n))
       : [{ id: "n" + Date.now(), text: body, date: today }, ...notes];
     void lib.update(doc.id, { notes: next });
+    setEditing(null);
   };
 
   const remove = (id: string): void => {
@@ -237,35 +229,24 @@ function NotesPanel({ lib, doc, onCite }: {
 
   return (
     <>
-      <div className="note-editor">
-        <textarea
-          value={input}
-          placeholder={`为《${doc.title}》添加一条笔记…
-支持 Markdown：**粗体**、- 列表、> 引用、$公式$、\`\`\`代码\`\`\``}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(input); setInput(""); }
-          }}
-        />
-        <div className="note-editor-foot">
-          <span className="note-hint">支持 Markdown · Ctrl / ⌘ + Enter 保存</span>
-          <span className="od-fill" />
-          {input.trim() ? <button type="button" className="btn btn-ghost" onClick={() => setInput("")}>清空</button> : null}
-          <button type="button" className="btn btn-primary" disabled={!input.trim()} onClick={() => { save(input); setInput(""); }}>
-            <Icon name="plus" small /> 保存笔记
-          </button>
-        </div>
+      <div className="note-tools">
+        <button type="button" className="note-new" onClick={() => setEditing({ id: "", text: "", isNew: true })}>
+          <Icon name="plus" small /> 新建笔记
+        </button>
+        <span className="od-fill" />
+        <span className="note-count">{notes.length ? `${notes.length} 条` : "还没有笔记"}</span>
       </div>
 
       {notes.length === 0 ? (
         <div className="note-empty">
           <Icon name="note" small />
-          <p>还没有笔记。可以记录阅读要点、公式推导或待读问题，支持 Markdown 与公式渲染。</p>
+          <p>笔记支持 Markdown 与公式：点「新建笔记」后可以按段落撰写，点任意段落即可继续编辑。</p>
         </div>
       ) : (
         <div className="note-list">
           {notes.map((n) => {
-            const isEditing = editing?.id === n.id;
+            const long = n.text.length > 700;
+            const opened = !long || !!openNotes[n.id];
             return (
               <article className="note-card" key={n.id}>
                 <header className="note-head">
@@ -280,68 +261,45 @@ function NotesPanel({ lib, doc, onCite }: {
                     <>
                       <time>{n.date}{n.updated && n.updated !== n.date ? ` · 改于 ${n.updated}` : ""}</time>
                       <span className="od-fill" />
-                      {isEditing ? null : (
-                        <span className="note-actions">
-                          <button type="button" title={copied === n.id ? "已复制" : "复制 Markdown"} onClick={() => copy(n)}>
-                            <Icon name={copied === n.id ? "check" : "copy"} small />
-                          </button>
-                          <button type="button" title="编辑" onClick={() => { setConfirmId(""); setEditing({ id: n.id, text: n.text }); }}>
-                            <Icon name="pencil" small />
-                          </button>
-                          <button type="button" title="删除" onClick={() => setConfirmId(confirmId === n.id ? "" : n.id)}>
-                            <Icon name="trash" small />
-                          </button>
-                        </span>
-                      )}
+                      <span className="note-actions">
+                        <button type="button" title={copied === n.id ? "已复制" : "复制 Markdown"} onClick={() => copy(n)}>
+                          <Icon name={copied === n.id ? "check" : "copy"} small />
+                        </button>
+                        <button type="button" title="编辑" onClick={() => { setConfirmId(""); setEditing({ id: n.id, text: n.text, isNew: false }); }}>
+                          <Icon name="pencil" small />
+                        </button>
+                        <button type="button" title="删除" onClick={() => setConfirmId(confirmId === n.id ? "" : n.id)}>
+                          <Icon name="trash" small />
+                        </button>
+                      </span>
                     </>
                   )}
                 </header>
 
-                {isEditing ? (
-                  <div className="note-edit">
-                    <textarea
-                      autoFocus
-                      ref={editRef}
-                      value={editing.text}
-                      onChange={(e) => setEditing({ id: n.id, text: e.target.value })}
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") { setEditing(null); }
-                        else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(editing.text, n); setEditing(null); }
-                      }}
-                    />
-                    <div className="note-editor-foot">
-                      <span className="note-hint">Ctrl / ⌘ + Enter 保存 · Esc 取消</span>
-                      <span className="od-fill" />
-                      <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)}>取消</button>
-                      <button type="button" className="btn btn-primary" disabled={!editing.text.trim()} onClick={() => { save(editing.text, n); setEditing(null); }}>保存</button>
-                    </div>
-                  </div>
-                ) : (() => {
-                  const long = n.text.length > 700;
-                  const opened = !long || !!openNotes[n.id];
-                  return (
-                    <>
-                      <div className={"note-body" + (opened ? "" : " is-clamped")}>
-                        <Markdown text={n.text} onCite={(id, page, quote) => onCite?.(id, page, quote)} />
-                      </div>
-                      {long ? (
-                        <button
-                          type="button"
-                          className="note-more"
-                          onClick={() => setOpenNotes((s) => ({ ...s, [n.id]: !opened }))}
-                        >
-                          {opened ? "收起" : "展开全文"}
-                          <Icon name={opened ? "chev-down" : "chev-right"} small />
-                        </button>
-                      ) : null}
-                    </>
-                  );
-                })()}
+                <div className={"note-body" + (opened ? "" : " is-clamped")}>
+                  <Markdown text={n.text} onCite={(id, page, quote) => onCite?.(id, page, quote)} />
+                </div>
+                {long ? (
+                  <button type="button" className="note-more" onClick={() => setOpenNotes((s) => ({ ...s, [n.id]: !opened }))}>
+                    {opened ? "收起" : "展开全文"}
+                    <Icon name={opened ? "chev-down" : "chev-right"} small />
+                  </button>
+                ) : null}
               </article>
             );
           })}
         </div>
       )}
+
+      {editing ? (
+        <NoteEditor
+          initial={editing.text}
+          isNew={editing.isNew}
+          onSave={save}
+          onCancel={() => setEditing(null)}
+          onCite={onCite}
+        />
+      ) : null}
     </>
   );
 }
