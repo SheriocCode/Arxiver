@@ -641,7 +641,12 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
   padding: 10px 14px; border-bottom: 1px solid var(--border);
 }
 .note-focus-title { font-size: 13px; font-weight: 600; color: var(--text); }
-.note-focus-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 28px; display: flex; flex-direction: column; gap: 2px; }
+.note-focus-body {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 28px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+/* 关键：内容是纵向 flex，超长时必须由容器滚动，而不是把段落 / 编辑框压扁（编辑框会被压成一行） */
+.note-focus-body > * { flex: none; }
 .note-focus-foot {
   display: flex; align-items: center; gap: 8px; flex: none;
   padding: 8px 14px; border-top: 1px solid var(--border);
