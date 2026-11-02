@@ -664,18 +664,23 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 /* CodeMirror 编辑器：Live Preview（未编辑处按富文本渲染，光标行展开标记） */
 .note-cm {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
-  overflow: hidden;
+  overflow: hidden; min-width: 0; max-width: 100%;
 }
 .note-cm:focus-within { border-color: var(--accent); }
 /* min-width:0 必须加：flex 子项默认 min-width:auto，会被最长的行撑开成几千像素，
    导致编辑器永远不换行（文本被右侧裁掉）。 */
-.note-cm .cm-editor { flex: 1; min-width: 0; height: 100%; background: transparent; }
+.note-cm .cm-editor { flex: 1 1 auto; min-width: 0; max-width: 100%; height: 100%; background: transparent; }
 .note-cm .cm-editor.cm-focused { outline: none; }
 .note-cm .cm-scroller {
-  overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-x: hidden; overflow-y: auto; min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12.5px; line-height: 1.78; padding: 8px 0;
 }
-.note-cm .cm-content { padding: 0 12px; color: var(--text-2); caret-color: var(--accent); }
+.note-cm .cm-content {
+  padding: 0 12px; min-width: 0; color: var(--text-2); caret-color: var(--accent);
+  /* 兜底：即便 cm-lineWrapping 的样式没生效，也按容器宽度折行 */
+  white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+}
 .note-cm .cm-line { padding: 0; }
 .note-cm .cm-cursor { border-left: 1.5px solid var(--accent); }
 .note-cm .cm-selectionBackground,
@@ -706,7 +711,7 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
    offsetHeight（不含 margin），否则行高模型和实际显示差一截，点击会偏行。 */
 .note-cm .cm-math-block {
   display: block; margin: 0; padding: 8px 2px; cursor: text;
-  overflow-x: auto; overflow-y: hidden;
+  max-width: 100%; overflow-x: auto; overflow-y: hidden;
 }
 .note-cm .cm-math-block .katex-display { margin: 0; }
 .note-cm .cm-math-inline .katex { font-size: 1.02em; }
