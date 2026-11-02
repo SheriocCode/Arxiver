@@ -32,6 +32,8 @@ export interface ViewerStatus {
   blockIndex: number;
   blockTotal: number;
   logTail: string;
+  // 这次翻译任务的开始时间（秒），用来显示「已等待 Ns」
+  startedAt: number;
   view: View;
   layout: Layout;
   numPages: number;
@@ -323,7 +325,7 @@ export class ViewerEngine {
       title: "未命名", phase: "idle", hasSource: false, hasTranslation: false, running: false,
       message: "", error: null, cached: false, progress: null,
       donePages: 0, totalPages: 0, currentPage: 0, pageDone: 0, pageTotal: 0,
-      blockPage: 0, blockIndex: 0, blockTotal: 0, logTail: "",
+      blockPage: 0, blockIndex: 0, blockTotal: 0, logTail: "", startedAt: 0,
       view: this.view, layout: this.layout,
       numPages: 0, displayPage: 1, scrollFraction: 0, zoom: 1, sourceUrl: "", docId: "", jobId: null, cacheKey: null, resultName: "",
       targetLang: "", pages: ""
@@ -2669,7 +2671,7 @@ export class ViewerEngine {
       donePages: j?.done_pages || 0, totalPages: j?.total_pages || 0,
       currentPage: j?.current_page || 0, pageDone: j?.page_done || 0, pageTotal: j?.page_total || 0,
       blockPage: j?.block_page || 0, blockIndex: j?.block_index || 0, blockTotal: j?.block_total || 0,
-      logTail: j?.log_tail || "", cached: j?.cached || false,
+      logTail: j?.log_tail || "", startedAt: j?.created_at || 0, cached: j?.cached || false,
       cacheKey: s.cacheKey, jobId: s.jobId, resultName: s.resultName,
       hasTranslation: !!(s.result || s.partial),
       targetLang: (s.params.target_lang as string) || "", pages: (s.params.pages as string) || ""
@@ -2717,7 +2719,7 @@ export class ViewerEngine {
       sourceUrl: this.sourceUrl, docId: this.docId, phase: "loading", running: false, error: null, message: "",
       view: this.view, layout: this.layout, jobId: s?.jobId ?? null, cacheKey: s?.cacheKey ?? null,
       progress: null, donePages: 0, totalPages: 0, currentPage: 0, pageDone: 0, pageTotal: 0,
-      blockPage: 0, blockIndex: 0, blockTotal: 0, logTail: "", cached: false, resultName: "", targetLang: "", pages: ""
+      blockPage: 0, blockIndex: 0, blockTotal: 0, logTail: "", startedAt: 0, cached: false, resultName: "", targetLang: "", pages: ""
     });
     await this.build();
     this.emitFromActive();

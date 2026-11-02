@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type JSX } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type JSX } from "react";
 import type { AppConfig, PdfAnnotation, PdfAnnotKind, TransParams, TranslationRef } from "../../../shared/types";
 import { ViewerEngine, type ViewerStatus, type TranslationDoneInfo, type RegionCapture } from "../viewer/engine";
 import { Icon } from "./Icons";
@@ -113,6 +113,9 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   captureRef.current = onCaptureImage;
   const menuRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<ViewerStatus | null>(null);
+  // 翻译中把引擎输出露出来：默认收起只显示最后一行，点开看完整日志
+  const [logOpen, setLogOpen] = useState(false);
+  const logRef = useRef<HTMLPreElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
@@ -494,6 +497,15 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
   const hasTranslation = !!s?.hasTranslation;
   const running = !!s?.running;
   const numPages = s?.numPages || 0;
+  // 翻译中每秒刷新一次，用来显示"已经等了多久"（引擎加载版面模型时可能几十秒没有新输出）
+  const [, setWaitTick] = useState(0);
+  useEffect(() => {
+    if (!running) { return; }
+    const id = window.setInterval(() => setWaitTick((v) => v + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [running]);
+  const waitedSec = running && s?.startedAt ? Math.max(0, Math.round(Date.now() / 1000 - s.startedAt)) : 0;
+  const waitedText = waitedSec >= 60 ? `${Math.floor(waitedSec / 60)} 分 ${waitedSec % 60} 秒` : `${waitedSec} 秒`;
   const curTocPage = s?.displayPage ?? -1;
   const curTocFrac = s?.scrollFraction ?? 0;
   // active = the entry closest before the viewport, by (page, anchor); outline order
@@ -513,6 +525,15 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
     }
   }
   // 进度条按"页"算：引擎自报的 tqdm 百分比只在单页内走动，页数才是整体进度
+  const logText = useMemo(() => {
+    const lines = String(s?.logTail || "").replace(/\r/g, "").split("\n").filter((l) => l.trim());
+    return lines.slice(-400).join("\n");
+  }, [s?.logTail]);
+  const lastLogLine = logText ? (logText.split("\n").pop() || "") : "";
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) { el.scrollTop = el.scrollHeight; }
+  }, [logText, logOpen]);
   const pct = s?.phase === "done"
     ? 100
     : (s && s.totalPages > 0 ? Math.min(100, Math.round(((s.donePages || 0) / s.totalPages) * 100)) : (s?.progress || 0));
@@ -790,9 +811,24 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
             <span className="spinner" />
             <span className="run-bar-phase">{s?.message || "翻译中"}</span>
             <span className="run-bar-pct">{Math.round(pct)}%</span>
+            {waitedSec > 2 && <span>已等待 {waitedText}</span>}
             {(s?.totalPages || 0) > 0 && <span>已完成 {s?.donePages || 0}/{s?.totalPages} 页</span>}
             {(s?.blockTotal || 0) > 0 && <span>第 {s?.blockPage || s?.currentPage || "-"} 页 · 块 {s?.blockIndex || 0}/{s?.blockTotal}</span>}
           </div>
+        </div>
+      )}
+      {running && (
+        <div className={"run-log" + (logOpen ? " is-open" : "")}>
+          <div className="run-log-head">
+            <button type="button" className="run-log-toggle" aria-expanded={logOpen} onClick={() => setLogOpen((v) => !v)}>
+              <Icon name="chev-down" small />
+              <span>引擎日志</span>
+            </button>
+            {!logOpen && <span className="run-log-last od-truncate" title={lastLogLine}>{lastLogLine || "等待引擎输出…"}</span>}
+          </div>
+          {logOpen && (
+            <pre className="run-log-body" ref={logRef}>{logText || "等待引擎输出…"}</pre>
+          )}
         </div>
       )}
 
@@ -982,6 +1018,9 @@ const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(
             {onOpenModels && /(版面识别模型|本地翻译模型|本地模型|HY-MT)/.test(s?.error || "") && (
               <button className="btn btn-primary" onClick={onOpenModels}>去下载模型</button>
             )}
+            {logText ? (
+              <pre className="run-log-body status-log" title="引擎最后 40 行输出">{logText.split("\n").slice(-40).join("\n")}</pre>
+            ) : null}
           </div>
         )}
       </div>
