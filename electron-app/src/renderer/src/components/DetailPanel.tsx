@@ -1133,9 +1133,24 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   // .ai-scroll，浏览器就不会滚动面板（表现为「偶尔划不动」）。面板上统一把这类滚轮转发给正文。
   const paneWheel = (e: React.WheelEvent): void => {
     const el = scrollRef.current;
+    if (!el) { return; }
     const t = e.target as HTMLElement | null;
-    if (!el || (t && t.closest(".ai-scroll, .ai-composer"))) { return; }
-    el.scrollTop += e.deltaY;
+    const insideScroll = !!t?.closest(".ai-scroll");
+    if (!insideScroll) {
+      if (t?.closest(".ai-composer")) { return; }
+      el.scrollTop += e.deltaY;
+      return;
+    }
+    // 指针在正文里：正常由浏览器自己滚。万一内容高度刚变过、滚动范围还没刷新（表现为
+    // 「滚动条卡住，怎么滚都不动」），下一帧发现真的没动就手动补一次。
+    const before = el.scrollTop;
+    const dy = e.deltaY;
+    requestAnimationFrame(() => {
+      if (!dy || el.scrollTop !== before) { return; }
+      const max = el.scrollHeight - el.clientHeight;
+      if (max <= 0) { return; }
+      el.scrollTop = Math.min(max, Math.max(0, before + dy));
+    });
   };
   const jumpToBottom = (): void => {
     const el = scrollRef.current;

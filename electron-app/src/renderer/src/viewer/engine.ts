@@ -259,6 +259,8 @@ export class ViewerEngine {
   private renderSeq = 0;
   private linksLoading = new Set<number>();
   private resizeObs: ResizeObserver | null = null;
+  // 宽度变化的重排防抖：拖动详情面板时 ResizeObserver 每帧都在触发
+  private resizeTimer = 0;
   private renderTimer = 0;
   private selRaf = 0;
   private settling = false;
@@ -300,12 +302,17 @@ export class ViewerEngine {
         if (!this.leftDoc) { return; }
         const cw = this.root.clientWidth;
         if (cw <= 0) { return; }
-        const w = this.computeFitWidth();
-        if (Math.abs(w - this.basePageW) > 1) {
-          this.basePageW = w;
-          this.applyPageWidth();
-          this.scheduleRender(60);
-        }
+        // 拖详情面板宽度时这里每帧都会触发，而重排要改版面宽度 + 重渲染页面，很贵：
+        // 先攒着，等宽度稳定 140ms 再做，否则拖拽会一卡一卡的。
+        window.clearTimeout(this.resizeTimer);
+        this.resizeTimer = window.setTimeout(() => {
+          const w = this.computeFitWidth();
+          if (Math.abs(w - this.basePageW) > 1) {
+            this.basePageW = w;
+            this.applyPageWidth();
+            this.scheduleRender(60);
+          }
+        }, 140);
       });
       this.resizeObs.observe(this.root);
     }
@@ -2970,6 +2977,7 @@ export class ViewerEngine {
     // 不 disconnect 的话 observer 会一直握着 engine 和整个 root（关闭标签后内存不释放）
     this.resizeObs?.disconnect();
     this.resizeObs = null;
+    window.clearTimeout(this.resizeTimer);
     // 卸载前把没保存的笔记落盘；此时不再回调 React（组件正在卸载）
     this.onAnnotations = null;
     this.onDone = null;

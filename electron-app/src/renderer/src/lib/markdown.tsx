@@ -1,4 +1,4 @@
-import type { JSX } from "react";
+import { memo, useMemo, useRef, type JSX, type MutableRefObject } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -41,23 +41,24 @@ function parseCiteHref(href: string | undefined): { docId: string; page: number;
   return { docId, page: parseInt(m[1], 10), quote: quote.replace(/\s+/g, " ").trim() };
 }
 
-export function Markdown({ text, onCite, onCard, quotes, onQuote }: {
-  text: string;
+interface MdApi {
   onCite: (docId: string, page: number, quote?: string) => void;
   onCard?: (n: number) => void;
-  quotes?: QuoteMark[];
   onQuote?: (id: string) => void;
-}): JSX.Element {
-  const prepared = normalizeMath(String(text || ""))
-    .replace(CITE, (_m, id: string, page: string, raw?: string) => {
-      const q = String(raw || "").replace(/^\s*[|\]]/, "").replace(/\s+/g, " ").trim();
-      const href = `cite:${id}#${page}${q ? "|" + encodeQuote(q) : ""}`;
-      return `[第 ${page} 页](${href})`;
-    })
-    // 外部检索结果的卡片引用（[[card:N]]）→ 可点击的胶囊，点了跳到那张卡片
-    .replace(CARD, (_m, n: string) => `[卡片 ${n}](card:${n})`);
+}
 
-  const components: Components = {
+const quoteSig = (q?: QuoteMark[]): string => (q && q.length ? JSON.stringify(q.map((x) => [x.id, x.text])) : "");
+
+// 已预处理的 Markdown 源码 + 回调（回调走 ref，避免每次渲染产生新的 props 让 memo 失效）。
+// 这一层是性能关键：流式输出时每个 token 都会重渲染整段对话，如果每条消息都重新解析
+// Markdown / 跑一遍 KaTeX，长对话下会明显卡顿（滚动、拖宽都会「粘住」）。
+const MdBody = memo(function MdBody({ source, quotes, hasAnchors, api }: {
+  source: string;
+  quotes?: QuoteMark[];
+  hasAnchors: boolean;
+  api: MutableRefObject<MdApi>;
+}): JSX.Element {
+  const components = useMemo<Components>(() => ({
     img({ src, alt }) {
       const url = typeof src === "string" ? src : "";
       if (!url) { return <img src={src} alt={alt || ""} />; }
@@ -76,14 +77,14 @@ export function Markdown({ text, onCite, onCard, quotes, onQuote }: {
       if (cite) {
         const { docId, page, quote } = cite;
         if (!quote) {
-          return <button type="button" className="cite-chip" title={`跳到第 ${page} 页`} onClick={() => onCite(docId, page)}>{children}</button>;
+          return <button type="button" className="cite-chip" title={`跳到第 ${page} 页`} onClick={() => api.current.onCite(docId, page)}>{children}</button>;
         }
         return (
           <button
             type="button"
             className="cite-chip has-quote"
             title={`跳到第 ${page} 页并高亮：${quote}`}
-            onClick={() => onCite(docId, page, quote)}
+            onClick={() => api.current.onCite(docId, page, quote)}
           >
             <span className="cite-page">第 {page} 页</span>
             <span className="cite-quote">“{quotePreview(quote)}”</span>
@@ -92,7 +93,7 @@ export function Markdown({ text, onCite, onCard, quotes, onQuote }: {
       }
       const c = href ? /^card:(\d+)$/.exec(href) : null;
       if (c) {
-        return <button type="button" className="cite-chip card-chip" title="跳到这张检索卡片" onClick={() => onCard?.(parseInt(c[1], 10))}>{children}</button>;
+        return <button type="button" className="cite-chip card-chip" title="跳到这张检索卡片" onClick={() => api.current.onCard?.(parseInt(c[1], 10))}>{children}</button>;
       }
       // 内部链接解析失败时也不能交给系统打开（会弹「无法打开此 cite 链接」）
       if (href && (href.startsWith("cite:") || href.startsWith("card:"))) {
@@ -100,7 +101,7 @@ export function Markdown({ text, onCite, onCard, quotes, onQuote }: {
       }
       return <a href={href} onClick={(e) => { e.preventDefault(); if (href) { void window.api.openExternal(href); } }}>{children}</a>;
     }
-  };
+  }), [api]);
 
   return (
     <div
@@ -108,22 +109,49 @@ export function Markdown({ text, onCite, onCard, quotes, onQuote }: {
       onClick={(e) => {
         const hit = (e.target as HTMLElement | null)?.closest?.("[data-btw]");
         const id = hit?.getAttribute("data-btw");
-        if (id && onQuote) {
+        if (id && api.current.onQuote) {
           e.preventDefault();
           e.stopPropagation();
           window.getSelection()?.removeAllRanges();
-          onQuote(id);
+          api.current.onQuote(id);
         }
       }}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={quotes && quotes.length && onQuote ? [rehypeKatex, [rehypeBtwMarks, quotes]] : [rehypeKatex]}
+        rehypePlugins={hasAnchors && quotes ? [rehypeKatex, [rehypeBtwMarks, quotes]] : [rehypeKatex]}
         components={components}
         urlTransform={(url) => (url.startsWith("cite:") || url.startsWith("card:") ? url : defaultUrlTransform(url))}
       >
-        {prepared}
+        {source}
       </ReactMarkdown>
     </div>
+  );
+}, (a, b) => a.source === b.source && a.hasAnchors === b.hasAnchors && quoteSig(a.quotes) === quoteSig(b.quotes));
+
+export function Markdown({ text, onCite, onCard, quotes, onQuote }: {
+  text: string;
+  onCite: (docId: string, page: number, quote?: string) => void;
+  onCard?: (n: number) => void;
+  quotes?: QuoteMark[];
+  onQuote?: (id: string) => void;
+}): JSX.Element {
+  const api = useRef<MdApi>({ onCite, onCard, onQuote });
+  api.current = { onCite, onCard, onQuote };
+  const source = useMemo(() => normalizeMath(String(text || ""))
+    .replace(CITE, (_m, id: string, page: string, raw?: string) => {
+      const q = String(raw || "").replace(/^\s*[|\]]/, "").replace(/\s+/g, " ").trim();
+      const href = `cite:${id}#${page}${q ? "|" + encodeQuote(q) : ""}`;
+      return `[第 ${page} 页](${href})`;
+    })
+    // 外部检索结果的卡片引用（[[card:N]]）→ 可点击的胶囊，点了跳到那张卡片
+    .replace(CARD, (_m, n: string) => `[卡片 ${n}](card:${n})`), [text]);
+  return (
+    <MdBody
+      source={source}
+      quotes={quotes}
+      hasAnchors={!!(quotes && quotes.length && onQuote)}
+      api={api}
+    />
   );
 }
