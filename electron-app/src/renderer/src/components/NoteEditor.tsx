@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type JSX } from "react";
-import { EditorState, type Extension, type Range } from "@codemirror/state";
+import { EditorState, StateField, type Extension, type Range } from "@codemirror/state";
 import {
-  Decoration, EditorView, ViewPlugin, drawSelection, keymap, placeholder as cmPlaceholder,
-  WidgetType, type DecorationSet, type ViewUpdate
+  Decoration, EditorView, drawSelection, keymap, placeholder as cmPlaceholder,
+  WidgetType, type DecorationSet
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { syntaxTree } from "@codemirror/language";
@@ -98,8 +98,7 @@ function collectMath(state: EditorState): MathSpan[] {
   return out;
 }
 
-function buildDecorations(view: EditorView): DecorationSet {
-  const { state } = view;
+function buildDecorations(state: EditorState): DecorationSet {
   const ranges: Range<Decoration>[] = [];
   const sel = state.selection.ranges;
   const touches = (from: number, to: number): boolean => sel.some((r) => r.from <= to && r.to >= from);
@@ -113,9 +112,8 @@ function buildDecorations(view: EditorView): DecorationSet {
   }
   const onCursorLine = (pos: number): boolean => cursorLines.has(state.doc.lineAt(pos).number);
 
-  for (const { from, to } of view.visibleRanges) {
+  {
     syntaxTree(state).iterate({
-      from, to,
       enter: (node) => {
         const cls = STYLE_NODES[node.name];
         if (cls) {
@@ -148,15 +146,13 @@ function buildDecorations(view: EditorView): DecorationSet {
   return Decoration.set(ranges, true);
 }
 
-const livePreview = ViewPlugin.fromClass(class {
-  decorations: DecorationSet;
-  constructor(view: EditorView) { this.decorations = buildDecorations(view); }
-  update(u: ViewUpdate): void {
-    if (u.docChanged || u.selectionSet || u.viewportChanged) {
-      this.decorations = buildDecorations(u.view);
-    }
-  }
-}, { decorations: (v) => v.decorations });
+// 注意：块级装饰（block 公式）只能由 StateField 提供，ViewPlugin 会直接抛
+// "Block decorations may not be specified via plugins"。
+const livePreview = StateField.define<DecorationSet>({
+  create: (state) => buildDecorations(state),
+  update: (deco, tr) => (tr.docChanged || tr.selection ? buildDecorations(tr.state) : deco.map(tr.changes)),
+  provide: (field) => EditorView.decorations.from(field)
+});
 
 // 工具条动作
 type Action = (view: EditorView) => void;
@@ -203,6 +199,8 @@ export default function NoteEditor({ initial, isNew, onSave, onCancel }: {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [text, setText] = useState(initial);
+  // 万一编辑器初始化失败，退化成普通 textarea，而不是整个界面黑掉
+  const [failed, setFailed] = useState(false);
   const canSave = text.trim().length > 0;
 
   const save = (): void => {
@@ -234,13 +232,18 @@ export default function NoteEditor({ initial, isNew, onSave, onCancel }: {
         if (u.docChanged) { setText(u.state.doc.toString()); }
       })
     ];
-    const view = new EditorView({
-      state: EditorState.create({ doc: initial, extensions }),
-      parent: host
-    });
-    viewRef.current = view;
-    view.focus();
-    return () => { view.destroy(); viewRef.current = null; };
+    try {
+      const view = new EditorView({
+        state: EditorState.create({ doc: initial, extensions }),
+        parent: host
+      });
+      viewRef.current = view;
+      view.focus();
+    } catch (err) {
+      console.error("note editor init failed", err);
+      setFailed(true);
+    }
+    return () => { viewRef.current?.destroy(); viewRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -270,7 +273,14 @@ export default function NoteEditor({ initial, isNew, onSave, onCancel }: {
       </div>
 
       <div className="note-edit-area">
-        <div className="note-cm" ref={hostRef} />
+        {failed ? (
+          <textarea
+            className="note-cm-fallback"
+            value={text}
+            spellCheck={false}
+            onChange={(e) => setText(e.target.value)}
+          />
+        ) : <div className="note-cm" ref={hostRef} />}
       </div>
 
       <footer className="note-focus-foot">

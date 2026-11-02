@@ -680,6 +680,13 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
 .note-cm .cm-focused .cm-selectionBackground { background: var(--accent-soft) !important; }
 .note-cm .cm-activeLine { background: transparent; }
 .note-cm .cm-placeholder { color: var(--faint); }
+/* 编辑器初始化失败时的兜底输入框 */
+.note-cm-fallback {
+  flex: 1; width: 100%; box-sizing: border-box; resize: none;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 10px 12px; color: var(--text); outline: none; line-height: 1.75;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+}
 /* Live Preview 里隐藏标记后的排版 */
 .cm-strong { font-weight: 700; color: var(--text); }
 .cm-em { font-style: italic; }
