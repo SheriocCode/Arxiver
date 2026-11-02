@@ -2,28 +2,52 @@ import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { Icon } from "./Icons";
 import { Markdown } from "../lib/markdown";
 
-// 笔记编辑器：侧栏内全屏 + 块级"即时渲染"。
-// 正文按空行切块，每块先用 Markdown 渲染；点某一块就把它变成可编辑的文本框，
-// 失焦后又渲染回去——比直接编辑 Markdown 源码直观，也不用引入富文本引擎
-// （公式、表格、代码仍然按原样保存成 Markdown）。
+// 笔记编辑器：侧栏内全屏。
+//   · 顶部格式工具条：粗体 / 斜体 / 标题 / 列表 / 引用 / 代码 / 公式 / 链接（选中即包裹）
+//   · 左侧（窄面板时改为上方）是 Markdown 源码，右侧/下方是**实时预览**，边写边看效果
+//   · 面板够宽时并排，窄的时候上下分栏（用容器查询切换）
 
-function splitBlocks(md: string): string[] {
-  const text = String(md || "").replace(/\r\n/g, "\n");
-  if (!text.trim()) { return [""]; }
-  const out: string[] = [];
-  let cur: string[] = [];
-  let fence = false;
-  for (const line of text.split("\n")) {
-    if (/^\s*(```|~~~)/.test(line)) { fence = !fence; }
-    if (!fence && !line.trim()) {
-      if (cur.length) { out.push(cur.join("\n")); cur = []; }
-      continue;
-    }
-    cur.push(line);
-  }
-  if (cur.length) { out.push(cur.join("\n")); }
-  return out.length ? out : [""];
-}
+type Block = (el: HTMLTextAreaElement, text: string, setText: (v: string) => void) => void;
+
+// 在选区两侧包一层（没有选中就插入占位文字）
+const wrap = (before: string, after: string, placeholder: string): Block => (el, text, setText) => {
+  const start = el.selectionStart ?? 0;
+  const end = el.selectionEnd ?? 0;
+  const selected = text.slice(start, end) || placeholder;
+  const next = text.slice(0, start) + before + selected + after + text.slice(end);
+  setText(next);
+  requestAnimationFrame(() => {
+    el.focus();
+    el.selectionStart = start + before.length;
+    el.selectionEnd = start + before.length + selected.length;
+  });
+};
+
+// 在行首加前缀（标题 / 列表 / 引用）
+const prefix = (mark: string): Block => (el, text, setText) => {
+  const start = el.selectionStart ?? 0;
+  const lineStart = text.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+  const next = text.slice(0, lineStart) + mark + text.slice(lineStart);
+  setText(next);
+  requestAnimationFrame(() => {
+    el.focus();
+    const pos = start + mark.length;
+    el.selectionStart = el.selectionEnd = pos;
+  });
+};
+
+const TOOLS: { label: string; title: string; run: Block }[] = [
+  { label: "B", title: "粗体（Ctrl+B）", run: wrap("**", "**", "粗体") },
+  { label: "I", title: "斜体（Ctrl+I）", run: wrap("*", "*", "斜体") },
+  { label: "H", title: "标题", run: prefix("## ") },
+  { label: "•", title: "无序列表", run: prefix("- ") },
+  { label: "1.", title: "有序列表", run: prefix("1. ") },
+  { label: "❝", title: "引用", run: prefix("> ") },
+  { label: "</>", title: "行内代码", run: wrap("`", "`", "code") },
+  { label: "∑", title: "行内公式", run: wrap("$", "$", "E=mc^2") },
+  { label: "∑∑", title: "块级公式", run: wrap("\n$$\n", "\n$$\n", "a^2+b^2=c^2") },
+  { label: "🔗", title: "链接", run: wrap("[", "](https://)", "链接文字") }
+];
 
 export default function NoteEditor({ initial, isNew, onSave, onCancel, onCite }: {
   initial: string;
@@ -32,58 +56,20 @@ export default function NoteEditor({ initial, isNew, onSave, onCancel, onCite }:
   onCancel: () => void;
   onCite?: (docId: string, page: number, quote?: string) => void;
 }): JSX.Element {
-  const initialBlocks = useMemo(() => splitBlocks(initial), [initial]);
-  const [blocks, setBlocks] = useState<string[]>(initialBlocks);
-  const [active, setActive] = useState<number>(isNew ? 0 : -1);
-  // 「继续写」要落到最后一块：等 blocks 更新完再按最终长度定位（失焦时可能刚拆过块）
-  const [wantLast, setWantLast] = useState(false);
-  const [mode, setMode] = useState<"live" | "source">("live");
-  // 源码模式单独存一份原文，避免来回切模式把空行/缩进改写掉
-  const [source, setSource] = useState(initial);
+  const [text, setText] = useState(initial);
+  const [preview, setPreview] = useState(true);
   const areaRef = useRef<HTMLTextAreaElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
 
-  const text = useMemo(
-    () => (mode === "source" ? source : blocks.filter((b) => b.trim()).join("\n\n")),
-    [mode, source, blocks]
-  );
+  const canSave = useMemo(() => text.trim().length > 0, [text]);
 
-  // 编辑框跟着内容长高
-  useEffect(() => {
+  useEffect(() => { areaRef.current?.focus(); }, []);
+
+  const save = (): void => { if (canSave) { onSave(text.trim()); } };
+
+  const run = (tool: Block): void => {
     const el = areaRef.current;
     if (!el) { return; }
-    el.style.height = "auto";
-    el.style.height = Math.max(56, Math.min(el.scrollHeight, 460)) + "px";
-  }, [active, blocks, mode]);
-
-  useEffect(() => { if (active >= 0) { areaRef.current?.focus(); } }, [active]);
-
-  const setBlock = (i: number, value: string): void => {
-    setBlocks((prev) => {
-      const next = prev.slice();
-      next[i] = value;
-      return next;
-    });
-  };
-
-  useEffect(() => {
-    if (!wantLast) { return; }
-    setActive(blocks.length - 1);
-    setWantLast(false);
-    window.setTimeout(() => {
-      const el = bodyRef.current;
-      if (el) { el.scrollTop = el.scrollHeight; }
-    }, 30);
-  }, [wantLast, blocks.length]);
-
-  const addBlock = (): void => {
-    setBlocks((prev) => [...prev, ""]);
-    setWantLast(true);
-  };
-
-  const save = (): void => {
-    if (!text.trim()) { return; }
-    onSave(text.trim());
+    tool(el, text, (v) => setText(v));
   };
 
   return (
@@ -92,82 +78,53 @@ export default function NoteEditor({ initial, isNew, onSave, onCancel, onCite }:
         <Icon name="note" small />
         <span className="note-focus-title">{isNew ? "新建笔记" : "编辑笔记"}</span>
         <span className="od-fill" />
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => {
-            if (mode === "live") { setSource(text); setActive(-1); setMode("source"); }
-            else { setBlocks(splitBlocks(source)); setActive(-1); setMode("live"); }
-          }}
-        >
-          {mode === "live" ? "Markdown 源码" : "即时渲染"}
+        <button type="button" className="btn btn-ghost" aria-pressed={preview} onClick={() => setPreview((v) => !v)}>
+          {preview ? "隐藏预览" : "显示预览"}
         </button>
         <button type="button" className="btn btn-ghost" onClick={onCancel}>取消</button>
-        <button type="button" className="btn btn-primary" disabled={!text.trim()} onClick={save}>保存</button>
+        <button type="button" className="btn btn-primary" disabled={!canSave} onClick={save}>保存</button>
       </header>
 
-      <div
-        className="note-focus-body"
-        ref={bodyRef}
-        onKeyDown={(e) => {
-          if (e.key === "Escape" && active >= 0) { e.stopPropagation(); setActive(-1); }
-          else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
-        }}
-      >
-        {mode === "source" ? (
-          <textarea
-            ref={areaRef}
-            className="note-source"
-            value={blocks.join("\n\n")}
-            spellCheck={false}
-            placeholder="用 Markdown 写笔记…"
-            onChange={(e) => setBlocks(splitBlocks(e.target.value))}
-          />
-        ) : (
-          <>
-            {blocks.map((b, i) => (
-              i === active ? (
-                <textarea
-                  key={i}
-                  ref={areaRef}
-                  className="note-block-edit"
-                  value={b}
-                  spellCheck={false}
-                  placeholder="写点什么…（支持 Markdown 与 $公式$）"
-                  onChange={(e) => setBlock(i, e.target.value)}
-                  onBlur={() => {
-                    // 空行分隔的多段在失焦时拆成独立的块，下次就能逐段点击编辑
-                    setBlocks((prev) => {
-                      const parts = (prev[i] || "").split(/\n\s*\n/);
-                      if (parts.length <= 1) { return prev; }
-                      const next = prev.slice();
-                      next.splice(i, 1, ...parts.map((p) => p.replace(/\s+$/, "")));
-                      return next;
-                    });
-                    setActive((cur) => (cur === i ? -1 : cur));
-                  }}
-                />
-              ) : (
-                <div
-                  key={i}
-                  className={"note-block" + (b.trim() ? "" : " is-blank")}
-                  onMouseDown={(e) => { e.preventDefault(); setActive(i); }}
-                >
-                  {b.trim()
-                    ? <Markdown text={b} onCite={(id, page, quote) => onCite?.(id, page, quote)} />
-                    : <span className="note-block-hint">点击开始写…</span>}
-                </div>
-              )
-            ))}
-            <button type="button" className="note-add-block" onClick={addBlock} title="在末尾继续写一段">
-              <Icon name="plus" small /> 继续写
-            </button>
-          </>
-        )}
+      <div className="note-format-bar" role="toolbar" aria-label="格式">
+        {TOOLS.map((t) => (
+          <button key={t.label} type="button" className="note-format-btn" title={t.title} onClick={() => run(t.run)}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div className={"note-edit-area" + (preview ? " has-preview" : "")}>
+        <textarea
+          ref={areaRef}
+          className="note-source"
+          value={text}
+          spellCheck={false}
+          placeholder={"在这里写笔记，支持 Markdown：\n## 标题\n**粗体**、*斜体*、`代码`、- 列表、> 引用\n行内公式 $a^2+b^2$，块级公式用 $$ 包起来"}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") { e.preventDefault(); run(TOOLS[0].run); }
+            else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "i") { e.preventDefault(); run(TOOLS[1].run); }
+            else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+            else if (e.key === "Tab") {
+              e.preventDefault();
+              const el = e.currentTarget;
+              const start = el.selectionStart;
+              setText(text.slice(0, start) + "  " + text.slice(el.selectionEnd));
+              requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = start + 2; });
+            }
+          }}
+        />
+        {preview ? (
+          <div className="note-preview">
+            {text.trim()
+              ? <Markdown text={text} onCite={(id, page, quote) => onCite?.(id, page, quote)} />
+              : <div className="note-preview-empty">预览区 · 输入内容后在这里看到渲染效果</div>}
+          </div>
+        ) : null}
       </div>
 
       <footer className="note-focus-foot">
-        <span className="note-hint">点击任意段落即可编辑 · 支持 Markdown、$公式$ 与引用胶囊</span>
+        <span className="note-hint">Ctrl/⌘ + B 粗体 · Ctrl/⌘ + I 斜体 · Tab 缩进</span>
         <span className="od-fill" />
         <span className="note-hint">Ctrl / ⌘ + Enter 保存</span>
       </footer>

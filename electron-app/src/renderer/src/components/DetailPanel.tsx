@@ -240,7 +240,7 @@ function NotesPanel({ lib, doc, onCite }: {
       {notes.length === 0 ? (
         <div className="note-empty">
           <Icon name="note" small />
-          <p>笔记支持 Markdown 与公式：点「新建笔记」后可以按段落撰写，点任意段落即可继续编辑。</p>
+          <p>笔记支持 Markdown 与公式。编辑时左边写、右边（窄面板时在下方）实时预览；顶部工具条可以一键加粗、列表、公式等。</p>
         </div>
       ) : (
         <div className="note-list">
