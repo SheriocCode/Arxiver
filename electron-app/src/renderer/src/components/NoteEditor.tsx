@@ -37,7 +37,7 @@ interface MathSpan { from: number; to: number; tex: string; display: boolean }
 class MathWidget extends WidgetType {
   constructor(readonly tex: string, readonly display: boolean) { super(); }
   eq(other: MathWidget): boolean { return other.tex === this.tex && other.display === this.display; }
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const el = document.createElement(this.display ? "div" : "span");
     el.className = this.display ? "cm-math-block" : "cm-math-inline";
     try {
@@ -45,6 +45,9 @@ class MathWidget extends WidgetType {
     } catch {
       el.textContent = this.tex;
     }
+    // KaTeX 的字体是异步加载的：刚渲染完的高度可能不准，字体到位后让编辑器重新测量，
+    // 否则它内部的"行高缓存"会和实际显示对不上，点击就会落到别的行。
+    requestAnimationFrame(() => view.requestMeasure());
     return el;
   }
   ignoreEvent(): boolean { return false; }
@@ -239,6 +242,9 @@ export default function NoteEditor({ initial, isNew, onSave, onCancel }: {
       });
       viewRef.current = view;
       view.focus();
+      // 首屏字体 / 公式测量完成后统一再对齐一次
+      requestAnimationFrame(() => view.requestMeasure());
+      void (document as any).fonts?.ready?.then?.(() => view.requestMeasure());
     } catch (err) {
       console.error("note editor init failed", err);
       setFailed(true);
