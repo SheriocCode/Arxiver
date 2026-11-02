@@ -277,7 +277,7 @@ function NotesPanel({ lib, doc, onCite }: {
                 </header>
 
                 <div className={"note-body" + (opened ? "" : " is-clamped")}>
-                  <Markdown text={n.text} onCite={(id, page, quote) => onCite?.(id, page, quote)} />
+                  <Markdown text={n.text} onCite={(id, page, quote) => onCite?.(id, page, quote)} breaks />
                 </div>
                 {long ? (
                   <button type="button" className="note-more" onClick={() => setOpenNotes((s) => ({ ...s, [n.id]: !opened }))}>

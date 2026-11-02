@@ -2,6 +2,7 @@ import { memo, useMemo, useRef, type JSX, type MutableRefObject } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import remarkBreaks from "remark-breaks";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { zoomImage } from "./lightbox";
@@ -52,10 +53,11 @@ const quoteSig = (q?: QuoteMark[]): string => (q && q.length ? JSON.stringify(q.
 // 已预处理的 Markdown 源码 + 回调（回调走 ref，避免每次渲染产生新的 props 让 memo 失效）。
 // 这一层是性能关键：流式输出时每个 token 都会重渲染整段对话，如果每条消息都重新解析
 // Markdown / 跑一遍 KaTeX，长对话下会明显卡顿（滚动、拖宽都会「粘住」）。
-const MdBody = memo(function MdBody({ source, quotes, hasAnchors, api }: {
+const MdBody = memo(function MdBody({ source, quotes, hasAnchors, breaks, api }: {
   source: string;
   quotes?: QuoteMark[];
   hasAnchors: boolean;
+  breaks: boolean;
   api: MutableRefObject<MdApi>;
 }): JSX.Element {
   const components = useMemo<Components>(() => ({
@@ -118,7 +120,7 @@ const MdBody = memo(function MdBody({ source, quotes, hasAnchors, api }: {
       }}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
+        remarkPlugins={breaks ? [remarkGfm, remarkMath, remarkBreaks] : [remarkGfm, remarkMath]}
         rehypePlugins={hasAnchors && quotes ? [rehypeKatex, [rehypeBtwMarks, quotes]] : [rehypeKatex]}
         components={components}
         urlTransform={(url) => (url.startsWith("cite:") || url.startsWith("card:") ? url : defaultUrlTransform(url))}
@@ -127,14 +129,16 @@ const MdBody = memo(function MdBody({ source, quotes, hasAnchors, api }: {
       </ReactMarkdown>
     </div>
   );
-}, (a, b) => a.source === b.source && a.hasAnchors === b.hasAnchors && quoteSig(a.quotes) === quoteSig(b.quotes));
+}, (a, b) => a.source === b.source && a.hasAnchors === b.hasAnchors && a.breaks === b.breaks && quoteSig(a.quotes) === quoteSig(b.quotes));
 
-export function Markdown({ text, onCite, onCard, quotes, onQuote }: {
+export function Markdown({ text, onCite, onCard, quotes, onQuote, breaks }: {
   text: string;
   onCite: (docId: string, page: number, quote?: string) => void;
   onCard?: (n: number) => void;
   quotes?: QuoteMark[];
   onQuote?: (id: string) => void;
+  // 单个换行也渲染成换行（Obsidian 的默认行为）；笔记里用得着，对话仍按标准 Markdown
+  breaks?: boolean;
 }): JSX.Element {
   const api = useRef<MdApi>({ onCite, onCard, onQuote });
   api.current = { onCite, onCard, onQuote };
@@ -151,6 +155,7 @@ export function Markdown({ text, onCite, onCard, quotes, onQuote }: {
       source={source}
       quotes={quotes}
       hasAnchors={!!(quotes && quotes.length && onQuote)}
+      breaks={!!breaks}
       api={api}
     />
   );
