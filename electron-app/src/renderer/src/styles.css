@@ -2143,9 +2143,9 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 .ai-md a { color: var(--accent); text-decoration: none; }
 .ai-md a:hover { text-decoration: underline; }
 .ai-md code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-.ai-md pre { margin: 8px 0; padding: 9px 11px; background: var(--surface-2); border-radius: var(--radius-sm); overflow: auto; }
+.ai-md pre { margin: 8px 0; padding: 9px 11px; background: var(--surface-2); border-radius: var(--radius-sm); overflow: auto; overscroll-behavior: contain; }
 .ai-md pre code { background: none; padding: 0; }
-.ai-md table { border-collapse: collapse; display: block; overflow: auto; margin: 8px 0; font-size: 12.5px; }
+.ai-md table { border-collapse: collapse; display: block; overflow: auto; overscroll-behavior: contain; margin: 8px 0; font-size: 12.5px; }
 .ai-md th, .ai-md td { border: 1px solid var(--border-strong); padding: 4px 8px; text-align: left; }
 .ai-md th { background: var(--surface-2); font-weight: 600; }
 .ai-md hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
@@ -2207,7 +2207,8 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 }
 .cite-chip.card-chip { background: rgba(160,160,160,.16); color: var(--text-2); }
 .cite-chip.card-chip:hover { background: rgba(160,160,160,.3); color: var(--text); }
-.paper-list { display: grid; gap: 8px; margin: 8px 0; max-height: min(52vh, 460px); overflow: auto; }
+/* overscroll-behavior: contain —— 滚到列表尽头时别把滚轮传给下面的对话区（否则整条消息跟着动） */
+.paper-list { display: grid; gap: 8px; margin: 8px 0; max-height: min(52vh, 460px); overflow: auto; overscroll-behavior: contain; }
 /* 「已读正文」一行：让用户看到 agent 自己去读了哪些页面 */
 .read-block { display: grid; gap: 2px; margin: 6px 0; }
 .read-line {
@@ -2450,7 +2451,7 @@ textarea.ai-confirm-args { width: 100%; min-height: 96px; border: 0; outline: no
 .ai-reasoning > summary::-webkit-details-marker { display: none; }
 .ai-reasoning > summary::before { content: "▸ "; }
 .ai-reasoning[open] > summary::before { content: "▾ "; }
-.ai-reasoning-body { margin-top: 4px; font-size: 12px; color: var(--muted); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; }
+.ai-reasoning-body { margin-top: 4px; font-size: 12px; color: var(--muted); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; overscroll-behavior: contain; }
 
 /* ---- About / update ---- */
 .about-update { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
