@@ -431,6 +431,17 @@ const btwPreview = (s: string, max = 18): string => {
   return t.length > max ? t.slice(0, max) + "…" : t;
 };
 const btwQuestionOf = (x: BtwThread): string => x.messages.find((m) => m.role === "user")?.text || "（未提问）";
+// 去掉 Markdown 标记，只留渲染后能看到的文字（用来判断锚点能不能在正文里定位）
+const plainText = (md: string): string => String(md || "")
+  .replace(/\$\$[\s\S]*?\$\$/g, " ")
+  .replace(/\$[^$\n]*?\$/g, " ")
+  .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+  .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+  .replace(/`[^`]*`/g, " ")
+  .replace(/[*_~#>`|]/g, "")
+  .replace(/^\s*[-+]\s+/gm, "")
+  .replace(/\s+/g, " ")
+  .trim();
 
 // 旧会话（没有 blocks）按"推理 → 工具 → 卡片 → 文本"补一个块序列
 function blocksOf(m: { text?: string; reasoning?: string; tools?: AiToolTrace[]; papers?: PaperHit[]; blocks?: ConvBlock[] }): AiBlock[] {
