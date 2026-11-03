@@ -2281,47 +2281,39 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 .ai-brand { font-size: 13px; font-weight: 600; color: var(--text); }
 
 /* ---- AI skills（可复用的提示词 / 工作流程） ---- */
-.ai-skills-wrap { position: relative; }
-.ai-skills-pop {
-  position: absolute; right: 0; top: calc(100% + 6px); z-index: 45;
-  width: 300px; max-width: calc(100vw - 32px); max-height: min(540px, 72vh); overflow: auto; overscroll-behavior: contain;
-  background: var(--surface); border: 1px solid var(--border-strong);
-  border-radius: var(--radius); box-shadow: var(--shadow); padding: 8px;
-}
-.ai-skills-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 6px; }
-.ai-skills-head h4 { flex: 1; margin: 0; font-size: 12.5px; font-weight: 600; color: var(--text); }
-.ai-skill-new { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-2); font-size: 11.5px; }
-.ai-skill-new:hover { background: var(--surface-3); color: var(--text); }
-.ai-skills-hint { padding: 0 4px 8px; font-size: 11px; line-height: 1.5; color: var(--faint); }
-.ai-skills-empty { padding: 10px 8px 14px; font-size: 12px; line-height: 1.6; color: var(--faint); text-align: center; }
-.ai-skills-list { display: flex; flex-direction: column; gap: 2px; }
-.ai-skill-item { display: flex; align-items: center; gap: 1px; border-radius: var(--radius-sm); }
-.ai-skill-item:hover { background: var(--hover); }
-.ai-skill-item.is-on { background: var(--accent-soft); }
-.ai-skill-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 7px 8px; background: transparent; color: var(--text-2); text-align: left; white-space: normal; }
-.ai-skill-name { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text); }
-.ai-skill-check { display: inline-flex; color: var(--accent); }
+/* 技能列表复用斜杠命令的弹层与行样式；名称列更宽，右侧多编辑 / 删除 */
+.ai-skill-pick { align-items: center; }
+.ai-skill-pick .ai-slash-name { width: auto; min-width: 88px; max-width: 46%; display: inline-flex; align-items: center; gap: 4px; overflow: hidden; }
+.ai-skill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-skill-pick .ai-slash-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ai-skill-pick.is-on { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.ai-skill-pick.is-on .ai-slash-name { color: var(--accent); }
+.ai-skill-check { display: inline-flex; flex: none; color: var(--accent); }
 .ai-skill-check .icon { width: 13px; height: 13px; }
-.ai-skill-desc { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
-.ai-skill-item .icon-btn { flex: none; width: 26px; height: 26px; opacity: .55; }
-.ai-skill-item:hover .icon-btn { opacity: 1; }
-.ai-skills-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
-.ai-skills-foot .btn { height: 26px; padding: 0 9px; font-size: 11.5px; }
+.ai-skill-actions { flex: none; display: inline-flex; align-items: center; gap: 2px; opacity: .35; }
+.ai-skill-pick:hover .ai-skill-actions { opacity: .9; }
+.ai-skill-actions button { display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--radius-sm); color: var(--muted); }
+.ai-skill-actions button:hover { background: var(--hover-strong); color: var(--text); }
 
-/* 新建 / 编辑技能：独立的大弹窗，不再挤在 300px 宽的下拉层里 */
-.skill-modal { width: min(680px, 100%); }
-.skill-modal .modal-body { gap: 16px; }
-.skill-modal textarea {
-  width: 100%; box-sizing: border-box; min-height: 240px; max-height: 46vh; resize: vertical;
-  padding: 10px 12px;
-  background: var(--surface); color: var(--text);
+/* 新建 / 编辑技能：占满 AI 面板的全栏编辑（和笔记编辑器同一套体验） */
+.skill-focus { position: absolute; inset: 0; z-index: 9; display: flex; flex-direction: column; background: var(--bg-panel); }
+.skill-focus-form { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.skill-focus-head { display: flex; align-items: center; gap: 6px; flex: none; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.skill-focus-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.skill-focus-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 14px; overflow-y: auto; }
+.skill-focus .field.is-grow { flex: 1; min-height: 0; }
+.skill-focus textarea {
+  flex: 1; min-height: 140px; width: 100%; box-sizing: border-box; resize: none;
+  padding: 10px 12px; background: var(--surface); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: var(--radius);
   font: inherit; font-size: 12.5px; line-height: 1.7; outline: none;
 }
-.skill-modal textarea:focus { border-color: var(--accent); }
-.skill-modal input::placeholder, .skill-modal textarea::placeholder { color: var(--faint); }
-.skill-modal .hint.is-warn { color: var(--star); }
-.skill-modal .hint.is-bad { color: #f0857b; }
+.skill-focus textarea:focus { border-color: var(--accent); }
+.skill-focus input::placeholder, .skill-focus textarea::placeholder { color: var(--faint); }
+.skill-focus .hint.is-warn { color: var(--star); }
+.skill-focus .hint.is-bad { color: #f0857b; }
+.skill-focus-foot { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-top: 1px solid var(--border); }
+.skill-focus-foot .hint { font-size: 11.5px; color: var(--faint); }
 .ai-skill-error { font-size: 11.5px; color: #f0857b; }
 
 /* 用户消息 / 输入框里的已启用技能 */
@@ -2377,6 +2369,7 @@ textarea.ai-confirm-args { width: 100%; min-height: 96px; border: 0; outline: no
 .ai-img-label { white-space: nowrap; }
 .composer-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: var(--radius-sm); background: transparent; color: var(--muted); border: 0; cursor: pointer; }
 .composer-icon-btn:hover { background: var(--hover); color: var(--text); }
+.composer-icon-btn.is-on { color: var(--accent); }
 .msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .msg-imgs img { max-width: 220px; max-height: 160px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); cursor: zoom-in; }
 /* 模型不支持图片时的即时提示（不要等发出去才发现） */

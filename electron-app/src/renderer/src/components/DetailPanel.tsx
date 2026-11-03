@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type JSX, type MutableRefObject } from "react";
-import { createPortal } from "react-dom";
 import type { LibraryDoc, Conversation, ConversationSummary, PaperHit, ConvBlock, AppConfig, Skill, BtwThread, ItemNote } from "../../../shared/types";
 import { chatTarget } from "../../../shared/ai";
 import { Icon } from "./Icons";
@@ -697,35 +696,26 @@ function PaperCards({ papers, jumped, state, progress, inLibrary, onImport, onCa
   );
 }
 
-function SkillsMenu({ skills, attached, onToggle, onSave, onDelete, onAskAi }: {
+// 技能编辑器（新建 / 编辑）：独立弹窗；技能列表本身在输入框上方的斜杠菜单里
+function SkillEditor({ skills, skill, onClose, onSave }: {
   skills: Skill[];
-  attached: string[];
-  onToggle: (id: string) => void;
+  skill: Skill | "new";
+  onClose: () => void;
   onSave: (input: { id?: string; name: string; description: string; instructions: string }) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
-  onAskAi: () => void;
 }): JSX.Element {
-  const [editing, setEditing] = useState<Skill | "new" | null>(null);
-  const [form, setForm] = useState({ name: "", description: "", instructions: "" });
+  const [form, setForm] = useState(() => skill === "new"
+    ? { name: "", description: "", instructions: "" }
+    : { name: skill.name, description: skill.description, instructions: skill.instructions });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   // 同名检测：新建时同名会覆盖已有技能（主进程按名称 upsert），编辑时则不允许改成别人的名字
-  const editingSkill = editing && editing !== "new" ? editing : null;
+  const editingSkill = skill === "new" ? null : skill;
   const typedName = form.name.trim().toLowerCase();
   const dup = typedName ? skills.find((s) => s.name.trim().toLowerCase() === typedName && s.id !== editingSkill?.id) : undefined;
   const overwrite = !!dup && !editingSkill;
 
-  const startEdit = (skill?: Skill): void => {
-    setForm(skill
-      ? { name: skill.name, description: skill.description, instructions: skill.instructions }
-      : { name: "", description: "", instructions: "" });
-    setError("");
-    setEditing(skill || "new");
-  };
-
-  const submit = async (e: React.FormEvent): Promise<void> => {
-    e.preventDefault();
+  const save = async (): Promise<void> => {
     if (busy) { return; }
     const name = form.name.trim();
     const instructions = form.instructions.trim();
@@ -737,8 +727,7 @@ function SkillsMenu({ skills, attached, onToggle, onSave, onDelete, onAskAi }: {
     try {
       // 新建遇到同名时，明确沿用已有那条的 id（覆盖保存）
       await onSave({ id: editingSkill?.id ?? dup?.id, name, description: form.description.trim(), instructions });
-      setEditing(null);
-      setError("");
+      onClose();
     } catch (err) {
       setError((err as Error)?.message || "保存失败");
     } finally {
@@ -746,93 +735,59 @@ function SkillsMenu({ skills, attached, onToggle, onSave, onDelete, onAskAi }: {
     }
   };
 
-  if (editing) {
-    const isNew = editing === "new";
-    const closeEdit = (): void => { setEditing(null); setError(""); };
-    return createPortal(
-      <div
-        className="modal-root"
-        onMouseDown={(e) => { if (e.target === e.currentTarget) { closeEdit(); } }}
-        onKeyDown={(e) => { if (e.key === "Escape") { closeEdit(); } }}
-      >
-        <form className="modal skill-modal" role="dialog" aria-label={isNew ? "新建技能" : "编辑技能"} onSubmit={(e) => void submit(e)}>
-          <div className="modal-head">
-            <h2>{isNew ? "新建技能" : "编辑技能"}</h2>
-            <button type="button" className="icon-btn" title="关闭" onClick={closeEdit}><Icon name="x" small /></button>
-          </div>
-          <div className="modal-body">
-            <div className="field">
-              <label>名称</label>
-              <input value={form.name} autoFocus maxLength={80} placeholder="如：论文速读" onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
-              {dup && (
-                <span className={"hint " + (editingSkill ? "is-bad" : "is-warn")}>
-                  {editingSkill
-                    ? `已有同名技能「${dup.name}」，请换个名称`
-                    : `已有同名技能「${dup.name}」，保存会覆盖它的内容`}
-                </span>
-              )}
-            </div>
-            <div className="field">
-              <label>什么时候用（一句话）</label>
-              <input value={form.description} maxLength={400} placeholder="如：快速判断一篇论文值不值得精读" onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
-            </div>
-            <div className="field">
-              <label>提示词 / 步骤</label>
-              <textarea
-                value={form.instructions}
-                rows={10}
-                maxLength={12000}
-                placeholder={"写清楚希望 AI 怎么做，例如：\n1. 先用三句话概括问题与贡献\n2. 列出方法与关键实验\n3. 指出局限，并给出值得追的参考文献"}
-                onChange={(e) => setForm((f) => ({ ...f, instructions: e.target.value }))}
-              />
-              <span className="hint">支持多行；保存后可在技能列表里点选启用，本轮对话会把这段提示词附加在消息后面。</span>
-            </div>
-            {error ? <div className="ai-skill-error">{error}</div> : null}
-          </div>
-          <div className="modal-foot">
-            <button type="button" className="btn btn-ghost" onClick={closeEdit}>取消</button>
-            <button type="submit" className="btn btn-primary" disabled={busy || (!!dup && !!editingSkill)}>
-              {busy ? "保存中…" : overwrite ? "覆盖保存" : "保存技能"}
-            </button>
-          </div>
-        </form>
-      </div>,
-      document.body
-    );
-  }
-
+  const isNew = skill === "new";
   return (
-    <div className="ai-skills-pop">
-      <div className="ai-skills-head">
-        <h4>技能</h4>
-        <button type="button" className="ai-skill-new" onClick={() => startEdit()}><Icon name="plus" small />新建</button>
-      </div>
-      <div className="ai-skills-hint">把重复使用的提示词 / 工作流程存成技能；点一下即可启用，也可以让 AI 帮你写。</div>
-      {skills.length === 0 ? (
-        <div className="ai-skills-empty">还没有技能。新建一个，或对 AI 说「把刚才的做法存成技能」。</div>
-      ) : (
-        <div className="ai-skills-list">
-          {skills.map((s) => {
-            const on = attached.includes(s.id);
-            return (
-              <div key={s.id} className={"ai-skill-item" + (on ? " is-on" : "")}>
-                <button type="button" className="ai-skill-main" title={on ? "取消启用" : "启用这个技能"} onClick={() => onToggle(s.id)}>
-                  <span className="ai-skill-name">
-                    <span className="ai-skill-check">{on ? <Icon name="check" small /> : <Icon name="sparkle" small />}</span>
-                    {s.name}
-                  </span>
-                  <span className="ai-skill-desc">{s.description || "未填写说明"}</span>
-                </button>
-                <button type="button" className="icon-btn" title="编辑" onClick={() => startEdit(s)}><Icon name="note" small /></button>
-                <button type="button" className="icon-btn" title="删除" onClick={() => { if (window.confirm(`删除技能「${s.name}」？`)) { void onDelete(s.id); } }}><Icon name="trash" small /></button>
-              </div>
-            );
-          })}
+    <div className="skill-focus" role="dialog" aria-label={isNew ? "新建技能" : "编辑技能"}>
+      <form
+        className="skill-focus-form"
+        onSubmit={(e) => { e.preventDefault(); void save(); }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+          if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); void save(); }
+        }}
+      >
+        <header className="skill-focus-head">
+          <Icon name="sparkle" small />
+          <span className="skill-focus-title">{isNew ? "新建技能" : "编辑技能"}</span>
+          <span className="od-fill" />
+          <button type="button" className="btn btn-ghost" onClick={onClose}>取消</button>
+          <button type="submit" className="btn btn-primary" disabled={busy || (!!dup && !!editingSkill)}>
+            {busy ? "保存中…" : overwrite ? "覆盖保存" : "保存"}
+          </button>
+        </header>
+        <div className="skill-focus-body">
+          <div className="field">
+            <label>名称</label>
+            <input value={form.name} autoFocus maxLength={80} placeholder="如：论文速读" onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+            {dup && (
+              <span className={"hint " + (editingSkill ? "is-bad" : "is-warn")}>
+                {editingSkill
+                  ? `已有同名技能「${dup.name}」，请换个名称`
+                  : `已有同名技能「${dup.name}」，保存会覆盖它的内容`}
+              </span>
+            )}
+          </div>
+          <div className="field">
+            <label>什么时候用（一句话）</label>
+            <input value={form.description} maxLength={400} placeholder="如：快速判断一篇论文值不值得精读" onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+          </div>
+          <div className="field is-grow">
+            <label>提示词 / 步骤</label>
+            <textarea
+              value={form.instructions}
+              maxLength={12000}
+              placeholder="写清楚希望 AI 怎么做：先用三句话概括问题与贡献，再列出方法与关键实验，最后指出局限。"
+              onChange={(e) => setForm((f) => ({ ...f, instructions: e.target.value }))}
+            />
+          </div>
         </div>
-      )}
-      <div className="ai-skills-foot">
-        <button type="button" className="btn btn-ghost" onClick={onAskAi}><Icon name="sparkle" small />让 AI 帮我写</button>
-      </div>
+        <footer className="skill-focus-foot">
+          <span className="hint">保存后可在 /skills 里启用，本轮对话会把这段提示词附在消息后面</span>
+          <span className="od-fill" />
+          {error ? <span className="ai-skill-error">{error}</span> : null}
+          <span className="hint">Ctrl / ⌘ + Enter 保存</span>
+        </footer>
+      </form>
     </div>
   );
 }
@@ -861,7 +816,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   // 技能：技能库、本轮启用的技能、技能面板开关
   const [skills, setSkills] = useState<Skill[]>([]);
   const [attached, setAttached] = useState<string[]>([]);
-  const [showSkills, setShowSkills] = useState(false);
+  // 正在新建 / 编辑的技能（null = 没打开编辑器）
+  const [skillEditing, setSkillEditing] = useState<Skill | "new" | null>(null);
   const skillsReady = useRef(false);
   const skillsRef = useRef<Skill[]>([]);
   skillsRef.current = skills;
@@ -872,6 +828,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     } catch { /* 读失败就保持旧列表 */ }
   }, []);
   useEffect(() => { void reloadSkills(); }, [reloadSkills]);
+
   // 技能被删除后，别让它的 id 还挂在"已启用"里（否则空输入也能发送）
   useEffect(() => {
     if (!skillsReady.current) { return; }
@@ -901,6 +858,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   // 斜杠命令弹层：输入框里正在打命令名时展开
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashIdx, setSlashIdx] = useState(0);
+  // 技能列表（/skills）里的当前项
+  const [skillIdx, setSkillIdx] = useState(0);
   // 「顺便问一下」小窗：btwSeed 变化即换一个新窗口（key 随之重挂载）
   const [btwSeed, setBtwSeed] = useState<BtwSeed | null>(null);
   // 这条主对话里所有的「顺便问」子对话（挂在某条回答的某段文字上），随会话一起存
@@ -1267,7 +1226,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     // 平滑滚动 / 触控板惯性互相打架，滚动时表现为一卡一卡、闪帧）
     if (insideScroll) { return; }
     // 输入框、历史记录 / 技能 / @ 这些弹层自己有滚动条，别把滚轮转给对话区
-    if (t?.closest(".ai-composer, .ai-hist-wrap, .ai-skills-wrap, .ai-at-pop")) { return; }
+    if (t?.closest(".ai-composer, .ai-hist-wrap, .ai-at-pop")) { return; }
     el.scrollTop += e.deltaY;
   };
   const jumpToBottom = (): void => {
@@ -1451,7 +1410,6 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     const cardBase = turnsRef.current.reduce((n, t) => n + papersOf(t.blocks || []).length, 0);
     setRefs([]);
     setAtOpen(false);
-    setShowSkills(false);
     // turnId 自己先生成、先记下，再发起请求：主进程可能在我们拿到返回值之前就发事件
     const turnId = "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     turnRef.current = turnId;
@@ -1535,12 +1493,46 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     void window.api.agentConfirm(confirmId, { approved, args });
   };
 
-  const newConv = (): void => { setTurns([]); setBtwThreads([]); setBtwSeed(null); setConvId(""); convIdRef.current = ""; setShowHistory(false); setImages([]); setAttached([]); setShowSkills(false); };
+  const newConv = (): void => { setTurns([]); setBtwThreads([]); setBtwSeed(null); setConvId(""); convIdRef.current = ""; setShowHistory(false); setImages([]); setAttached([]); };
 
   // 斜杠命令：只认「/ + 字母」这种还没输入参数的形态；打了空格就交回普通输入
   const slashQuery = /^\/[a-z]*$/i.test(input) ? input.toLowerCase() : "";
   const slashList = slashOpen && slashQuery ? SLASH_COMMANDS.filter((c) => c.name.startsWith(slashQuery)) : [];
   const slashActive = slashList.length ? Math.min(slashIdx, slashList.length - 1) : 0;
+
+  // /skills：在同一个斜杠弹层里把命令列表换成技能列表，输入框继续当搜索框用
+  const skillsMatch = /^\/skills(?:\s+([\s\S]*))?$/i.exec(input);
+  const skillsMode = !!skillsMatch;
+  const skillQuery = (skillsMatch?.[1] || "").trim().toLowerCase();
+  const skillRows = skillsMode
+    ? [
+      ...skills
+        .filter((x) => !skillQuery || `${x.name} ${x.description}`.toLowerCase().includes(skillQuery))
+        .map((x) => ({ kind: "skill" as const, id: x.id, name: x.name, hint: x.description || "未填写说明", on: attached.includes(x.id) })),
+      { kind: "new" as const, name: "新建技能", hint: "写提示词 / 步骤，存成可复用技能" },
+      { kind: "ai" as const, name: "让 AI 帮我写", hint: "先问清需求，再生成技能" }
+    ]
+    : [];
+  const skillActive = skillRows.length ? Math.min(skillIdx, skillRows.length - 1) : 0;
+  // 技能列表打开时，点面板别处也收起（输入框 / 列表 / 编辑器内部不算）
+  useEffect(() => {
+    if (!skillsMode) { return; }
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest(".ai-slash-pop, .composer-box, .skill-focus")) { return; }
+      setInput("");
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [skillsMode]);
+
+  const runSkillRow = (row: (typeof skillRows)[number]): void => {
+    if (row.kind === "skill") { toggleSkill(row.id); return; }
+    if (row.kind === "new") { setSkillEditing("new"); return; }
+    setInput("帮我创建一个技能。先问清这个技能要解决什么任务、希望按什么步骤执行、输出成什么格式，确认后把它保存成技能。");
+    inputRef.current?.focus();
+  };
+
   // 执行命令（Enter）：/btw 直接打开子对话，其余立即生效
   const runSlash = (name: string): void => {
     setSlashOpen(false);
@@ -1548,7 +1540,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     setAtOpen(false);
     if (name === "/btw") { openBtw("", selection?.text.trim() || ""); return; }
     if (name === "/new") { newConv(); return; }
-    if (name === "/skills") { setShowSkills(true); setShowHistory(false); return; }
+    // /skills：把输入框当成搜索框，列表换成技能（同一套弹层、同一套上下键）
+    if (name === "/skills") { setInput("/skills "); setSkillIdx(0); inputRef.current?.focus(); return; }
     if (name === "/settings") { openAiSettings(); }
   };
   // 补全命令（Tab / 点击）：带参数的命令补一个空格，光标留在后面等参数
@@ -1559,6 +1552,13 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     inputRef.current?.focus();
   };
   const onComposerKey = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (skillRows.length) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setSkillIdx((i) => (i + 1) % skillRows.length); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setSkillIdx((i) => (i - 1 + skillRows.length) % skillRows.length); return; }
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runSkillRow(skillRows[skillActive]); return; }
+      // Esc：清掉 /skills，关掉列表
+      if (e.key === "Escape") { e.preventDefault(); setInput(""); return; }
+    }
     if (slashList.length) {
       if (e.key === "ArrowDown") { e.preventDefault(); setSlashIdx((i) => (i + 1) % slashList.length); return; }
       if (e.key === "ArrowUp") { e.preventDefault(); setSlashIdx((i) => (i - 1 + slashList.length) % slashList.length); return; }
@@ -1611,33 +1611,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
         <span className="ai-brand">Arxiver</span>
         <span className="od-fill" />
         <button type="button" className="icon-btn" title="新对话" onClick={newConv}><Icon name="plus" small /></button>
-        <div className="ai-skills-wrap">
-          <button
-            type="button"
-            className="icon-btn"
-            title="技能：可复用的提示词 / 工作流程"
-            aria-pressed={showSkills || attached.length > 0}
-            onClick={() => { setShowSkills((v) => !v); setShowHistory(false); }}
-          >
-            <Icon name="sparkle" small />
-          </button>
-          {showSkills && (
-            <SkillsMenu
-              skills={skills}
-              attached={attached}
-              onToggle={toggleSkill}
-              onSave={saveSkill}
-              onDelete={deleteSkill}
-              onAskAi={() => {
-                setShowSkills(false);
-                setInput("帮我创建一个技能。先问清这个技能要解决什么任务、希望按什么步骤执行、输出成什么格式，确认后把它保存成技能。");
-                inputRef.current?.focus();
-              }}
-            />
-          )}
-        </div>
         <div className="ai-hist-wrap">
-          <button type="button" className="icon-btn" title="历史对话" onClick={() => { setShowHistory((v) => !v); setShowSkills(false); }}><Icon name="history" small /></button>
+          <button type="button" className="icon-btn" title="历史对话" onClick={() => { setShowHistory((v) => !v); }}><Icon name="history" small /></button>
           {showHistory && (
             <div className="ai-hist-pop">
               <input className="ai-hist-search" placeholder="搜索对话或论文…" value={histQuery} onChange={(e) => setHistQuery(e.target.value)} />
@@ -1717,7 +1692,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
             <div className="ai-skill-quick">
               <div className="ai-skill-quick-head">
                 <span><Icon name="sparkle" small />技能</span>
-                <button type="button" className="ai-skill-manage" onClick={() => { setShowSkills(true); setShowHistory(false); }}>管理</button>
+                <button type="button" className="ai-skill-manage" onClick={() => { setShowHistory(false); setInput("/skills "); setSkillIdx(0); inputRef.current?.focus(); }}>管理</button>
               </div>
               {skills.length ? (
                 <div className="ai-skill-quick-list">
@@ -1731,7 +1706,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
                   })}
                 </div>
               ) : (
-                <button type="button" className="ai-skill-quick-empty" onClick={() => { setShowSkills(true); setShowHistory(false); }}>
+                <button type="button" className="ai-skill-quick-empty" onClick={() => { setShowHistory(false); setSkillEditing("new"); }}>
                   把常用的提示词 / 流程存成技能，之后一键启用
                 </button>
               )}
@@ -1967,7 +1942,33 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
         <QuestionNav anchors={anchors} anchorsRef={anchorsRef} msgRefs={msgRefs} scrollRef={scrollRef} onGoto={gotoMsg} />
       )}
       <div className="ai-composer">
-        {slashList.length > 0 && (
+        {skillRows.length > 0 ? (
+          <div className="ai-slash-pop" role="listbox" aria-label="技能">
+            {skillRows.map((r, i) => (
+              <div
+                key={r.kind === "skill" ? r.id : r.kind}
+                role="option"
+                aria-selected={i === skillActive}
+                className={"ai-slash-item ai-skill-pick" + (i === skillActive ? " on" : "") + (r.kind === "skill" && r.on ? " is-on" : "")}
+                onMouseEnter={() => setSkillIdx(i)}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => runSkillRow(r)}
+              >
+                <span className="ai-slash-name">
+                  {r.kind === "skill" && r.on ? <span className="ai-skill-check"><Icon name="check" small /></span> : null}
+                  <span className="ai-skill-label">{r.name}</span>
+                </span>
+                <span className="ai-slash-hint">{r.hint}</span>
+                {r.kind === "skill" ? (
+                  <span className="ai-skill-actions">
+                    <button type="button" title="编辑" onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }} onClick={(e) => { e.stopPropagation(); setSkillEditing(skills.find((x) => x.id === r.id) || "new"); }}><Icon name="note" small /></button>
+                    <button type="button" title="删除" onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }} onClick={(e) => { e.stopPropagation(); if (window.confirm(`删除技能「${r.name}」？`)) { void deleteSkill(r.id); } }}><Icon name="trash" small /></button>
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : slashList.length > 0 ? (
           <div className="ai-slash-pop" role="listbox" aria-label="斜杠命令">
             {slashList.map((c, i) => (
               <button
@@ -1985,7 +1986,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
               </button>
             ))}
           </div>
-        )}
+        ) : null}
         {atOpen && (
           <div className="ai-at-pop">
             {atOptions.length === 0
@@ -2054,8 +2055,10 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
             onChange={(e) => {
               const v = e.target.value;
               // 正在输入命令名（/、/bt…）时展开命令菜单；打了空格就收起
-              setSlashOpen(/^\/[a-z]*$/i.test(v));
+              const slash = /^\/[a-z]*$/i.test(v);
+              setSlashOpen(slash);
               setSlashIdx(0);
+              setSkillIdx(0);
               if (v.endsWith("@")) { setInput(v.slice(0, -1)); setAtOpen(true); }
               else { setAtOpen(false); setInput(v); }
             }}
@@ -2094,6 +2097,22 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
             >
               <Icon name="message" small />
             </button>
+            <button
+              type="button"
+              className={"composer-icon-btn" + (skillsMode || attached.length > 0 ? " is-on" : "")}
+              title="技能：可复用的提示词 / 工作流程（/skills）"
+              aria-pressed={skillsMode || attached.length > 0}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                e.preventDefault();
+                setShowHistory(false);
+                setSlashOpen(false);
+                if (skillsMode) { setInput(""); }
+                else { setInput("/skills "); setSkillIdx(0); inputRef.current?.focus(); }
+              }}
+            >
+              <Icon name="sparkle" small />
+            </button>
             <span className="od-fill" />
             {sending
               ? <button type="button" className="send-btn" title="停止" onClick={(e) => { e.preventDefault(); stop(); }}><Icon name="x" small /></button>
@@ -2117,6 +2136,14 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
           />
         </div>
       ) : null}
+      {skillEditing !== null && (
+        <SkillEditor
+          skills={skills}
+          skill={skillEditing}
+          onClose={() => setSkillEditing(null)}
+          onSave={saveSkill}
+        />
+      )}
     </div>
   );
 }
