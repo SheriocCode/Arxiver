@@ -384,7 +384,13 @@ export default function App(): JSX.Element {
   useEffect(() => {
     const KEYS = new Set(["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (KEYS.has(e.key)) { document.documentElement.classList.add("kb-focus"); }
+      if (!KEYS.has(e.key)) { return; }
+      // 光标在输入框 / 笔记编辑器里时，方向键是在移动光标，不是键盘导航：
+      // 别把全局键盘焦点模式打开，否则正在写字的大输入框会被套上一圈强调色描边。
+      const t = e.target as HTMLElement | null;
+      const editing = !!t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable);
+      if (editing && e.key !== "Tab") { return; }
+      document.documentElement.classList.add("kb-focus");
     };
     const onPointerDown = (): void => { document.documentElement.classList.remove("kb-focus"); };
     document.addEventListener("keydown", onKeyDown, true);

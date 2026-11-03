@@ -149,6 +149,11 @@ select:disabled { opacity: .55; }
    留下难看的原生描边。这里由 App 里维护的 html.kb-focus（按 Tab/方向键置位、按下鼠标清除）来区分。 */
 :focus-visible { outline: none; }
 html.kb-focus :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+/* 大块书写区不套键盘焦点外框：光标和边框已经能表明焦点，
+   而且方向键只是移动光标，套一圈强调色描边看起来像出 bug。 */
+html.kb-focus .composer-box textarea:focus-visible,
+html.kb-focus .note-cm .cm-content:focus-visible,
+html.kb-focus .note-cm-fallback:focus-visible { outline: none; }
 
 .icon { width: 20px; height: 20px; display: block; flex: none; }
 .icon-sm { width: 16px; height: 16px; }
@@ -671,7 +676,7 @@ html.kb-focus .reader-stage:focus-visible { outline: 2px solid var(--accent); ou
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
   overflow: hidden; min-width: 0; max-width: 100%;
 }
-.note-cm:focus-within { border-color: var(--accent); }
+.note-cm:focus-within { border-color: var(--border-strong); }
 /* min-width:0 必须加：flex 子项默认 min-width:auto，会被最长的行撑开成几千像素，
    导致编辑器永远不换行（文本被右侧裁掉）。 */
 .note-cm .cm-editor { flex: 1 1 auto; min-width: 0; max-width: 100%; height: 100%; background: transparent; }
