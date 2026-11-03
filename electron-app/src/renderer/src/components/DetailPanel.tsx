@@ -696,10 +696,14 @@ function PaperCards({ papers, jumped, state, progress, inLibrary, onImport, onCa
   );
 }
 
-// 技能编辑器（新建 / 编辑）：独立弹窗；技能列表本身在输入框上方的斜杠菜单里
-function SkillEditor({ skills, skill, onClose, onSave }: {
+// 技能编辑器（新建 / 编辑）：占满 AI 面板；顶部带一个 AI 协作组件，
+// 描述需求后直接生成 / 改写下面的字段，而不是往主对话里塞一段提示词。
+function SkillEditor({ skills, skill, docId, aiReady, onOpenSettings, onClose, onSave }: {
   skills: Skill[];
   skill: Skill | "new";
+  docId: string;
+  aiReady: boolean;
+  onOpenSettings: () => void;
   onClose: () => void;
   onSave: (input: { id?: string; name: string; description: string; instructions: string }) => Promise<void>;
 }): JSX.Element {
@@ -708,6 +712,82 @@ function SkillEditor({ skills, skill, onClose, onSave }: {
     : { name: skill.name, description: skill.description, instructions: skill.instructions });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // AI 协作：一个输入框 + 生成，结果直接写回上面的字段
+  const [ask, setAsk] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState("");
+  const [aiNote, setAiNote] = useState("");
+  const aiTurn = useRef("");
+  const aiBuf = useRef("");
+
+  const applyAi = (raw: string): void => {
+    const text = String(raw || "").trim();
+    if (!text) { setAiError("AI 没有返回内容"); return; }
+    const body = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    const from = body.indexOf("{");
+    const to = body.lastIndexOf("}");
+    let obj: Record<string, unknown> | null = null;
+    if (from >= 0 && to > from) {
+      try { obj = JSON.parse(body.slice(from, to + 1)); } catch { obj = null; }
+    }
+    if (!obj || typeof obj !== "object") {
+      // 没按 JSON 返回时，至少把内容放进提示词框，别丢
+      setForm((f) => ({ ...f, instructions: text }));
+      setAiNote("AI 没按格式返回，已把内容放进「提示词 / 步骤」");
+      return;
+    }
+    const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+    setForm((f) => ({
+      name: str(obj!.name) || f.name,
+      description: str(obj!.description) || f.description,
+      instructions: str(obj!.instructions) || f.instructions
+    }));
+    setAiNote("已更新，可继续在下面微调，或再让 AI 改一版");
+  };
+
+  useEffect(() => {
+    const off = window.api.onAgentEvent((e) => {
+      if (e.turnId !== aiTurn.current) { return; }
+      if (e.type === "delta" && e.text) { aiBuf.current += e.text; return; }
+      if (e.type === "error") { setAiBusy(false); setAiError(e.error || "生成失败"); return; }
+      if (e.type === "done") { setAiBusy(false); applyAi(aiBuf.current); }
+    });
+    return () => {
+      off();
+      if (aiTurn.current) { void window.api.agentCancel(aiTurn.current); }
+    };
+    // 只订阅一次；applyAi 只依赖稳定的 setState
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const askAi = (): void => {
+    const request = ask.trim();
+    if (!request || aiBusy) { return; }
+    if (!aiReady) { setAiError("AI 服务还没配置：先去「设置 → AI 服务」选择模型"); return; }
+    const turnId = "skill" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    aiTurn.current = turnId;
+    aiBuf.current = "";
+    setAiBusy(true);
+    setAiError("");
+    setAiNote("");
+    const message = [
+      "你在帮我编写 / 修改一个「技能」（可复用的提示词 / 工作流程）。不要调用任何工具。",
+      `我的要求：${request}`,
+      "当前内容（在此基础上修改；我没有要求改的字段保持原样）：",
+      JSON.stringify({ name: form.name, description: form.description, instructions: form.instructions }, null, 2),
+      "只输出一个 JSON 对象，字段为 name、description、instructions；不要解释，不要代码围栏。",
+      "instructions 要写成可直接执行的步骤 / 提示词，分点、简洁。"
+    ].join("\n");
+    void window.api.agentChat({ turnId, scope: "library", docId, message, history: [], cardBase: 0 })
+      .catch((err) => { setAiBusy(false); setAiError(String((err as Error)?.message || err)); });
+  };
+
+  const stopAi = (): void => {
+    const id = aiTurn.current;
+    aiTurn.current = "";
+    if (id) { void window.api.agentCancel(id); }
+    setAiBusy(false);
+  };
 
   // 同名检测：新建时同名会覆盖已有技能（主进程按名称 upsert），编辑时则不允许改成别人的名字
   const editingSkill = skill === "new" ? null : skill;
@@ -756,6 +836,29 @@ function SkillEditor({ skills, skill, onClose, onSave }: {
           </button>
         </header>
         <div className="skill-focus-body">
+          <div className="skill-ai">
+            <div className="skill-ai-head"><Icon name="sparkle" small />AI 帮我写</div>
+            <div className="skill-ai-row">
+              <input
+                value={ask}
+                maxLength={2000}
+                placeholder="描述想要的技能，或让它改写…"
+                onChange={(e) => { setAsk(e.target.value); setAiError(""); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); askAi(); } }}
+              />
+              {aiBusy
+                ? <button type="button" className="btn btn-ghost" onClick={stopAi}>停止</button>
+                : <button type="button" className="btn" disabled={!ask.trim()} onClick={askAi}>生成</button>}
+            </div>
+            {aiBusy ? <div className="skill-ai-note">正在生成…</div> : null}
+            {aiError ? (
+              <div className="skill-ai-note is-bad">
+                {aiError}
+                {!aiReady ? <button type="button" className="skill-ai-link" onClick={onOpenSettings}>去设置</button> : null}
+              </div>
+            ) : null}
+            {!aiError && aiNote ? <div className="skill-ai-note">{aiNote}</div> : null}
+          </div>
           <div className="field">
             <label>名称</label>
             <input value={form.name} autoFocus maxLength={80} placeholder="如：论文速读" onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
@@ -782,7 +885,7 @@ function SkillEditor({ skills, skill, onClose, onSave }: {
           </div>
         </div>
         <footer className="skill-focus-foot">
-          <span className="hint">保存后可在 /skills 里启用，本轮对话会把这段提示词附在消息后面</span>
+          <span className="hint">保存后在 /skills 里启用</span>
           <span className="od-fill" />
           {error ? <span className="ai-skill-error">{error}</span> : null}
           <span className="hint">Ctrl / ⌘ + Enter 保存</span>
@@ -1509,8 +1612,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
       ...skills
         .filter((x) => !skillQuery || `${x.name} ${x.description}`.toLowerCase().includes(skillQuery))
         .map((x) => ({ kind: "skill" as const, id: x.id, name: x.name, hint: x.description || "未填写说明", on: attached.includes(x.id) })),
-      { kind: "new" as const, name: "新建技能", hint: "写提示词 / 步骤，存成可复用技能" },
-      { kind: "ai" as const, name: "让 AI 帮我写", hint: "先问清需求，再生成技能" }
+      { kind: "new" as const, name: "新建技能", hint: "写提示词 / 步骤，存成可复用技能" }
     ]
     : [];
   const skillActive = skillRows.length ? Math.min(skillIdx, skillRows.length - 1) : 0;
@@ -1528,9 +1630,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
 
   const runSkillRow = (row: (typeof skillRows)[number]): void => {
     if (row.kind === "skill") { toggleSkill(row.id); return; }
-    if (row.kind === "new") { setSkillEditing("new"); return; }
-    setInput("帮我创建一个技能。先问清这个技能要解决什么任务、希望按什么步骤执行、输出成什么格式，确认后把它保存成技能。");
-    inputRef.current?.focus();
+    setSkillEditing("new");
   };
 
   // 执行命令（Enter）：/btw 直接打开子对话，其余立即生效
@@ -1942,7 +2042,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
         <QuestionNav anchors={anchors} anchorsRef={anchorsRef} msgRefs={msgRefs} scrollRef={scrollRef} onGoto={gotoMsg} />
       )}
       <div className="ai-composer">
-        {skillRows.length > 0 ? (
+        {skillEditing === null && (skillRows.length > 0 ? (
           <div className="ai-slash-pop" role="listbox" aria-label="技能">
             {skillRows.map((r, i) => (
               <div
@@ -1986,8 +2086,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
               </button>
             ))}
           </div>
-        ) : null}
-        {atOpen && (
+        ) : null)}
+        {atOpen && skillEditing === null && (
           <div className="ai-at-pop">
             {atOptions.length === 0
               ? <div className="ai-hist-empty">没有其它已打开的文献</div>
@@ -2140,6 +2240,9 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
         <SkillEditor
           skills={skills}
           skill={skillEditing}
+          docId={doc.id}
+          aiReady={aiReady}
+          onOpenSettings={openAiSettings}
           onClose={() => setSkillEditing(null)}
           onSave={saveSkill}
         />
