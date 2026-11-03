@@ -719,6 +719,7 @@ function SkillEditor({ skills, skill, docId, aiReady, onOpenSettings, onClose, o
   const [aiNote, setAiNote] = useState("");
   const aiTurn = useRef("");
   const aiBuf = useRef("");
+  const instrRef = useRef<HTMLTextAreaElement>(null);
 
   const applyAi = (raw: string): void => {
     const text = String(raw || "").trim();
@@ -742,6 +743,8 @@ function SkillEditor({ skills, skill, docId, aiReady, onOpenSettings, onClose, o
       description: str(obj!.description) || f.description,
       instructions: str(obj!.instructions) || f.instructions
     }));
+    // 内容一次换掉时，textarea 可能还停在原来的滚动位置（甚至被光标带到末尾）：回到开头
+    requestAnimationFrame(() => { if (instrRef.current) { instrRef.current.scrollTop = 0; } });
     setAiNote("已更新，可继续在下面微调，或再让 AI 改一版");
   };
 
@@ -877,6 +880,7 @@ function SkillEditor({ skills, skill, docId, aiReady, onOpenSettings, onClose, o
           <div className="field is-grow">
             <label>提示词 / 步骤</label>
             <textarea
+              ref={instrRef}
               value={form.instructions}
               maxLength={12000}
               placeholder="写清楚希望 AI 怎么做：先用三句话概括问题与贡献，再列出方法与关键实验，最后指出局限。"
@@ -1656,6 +1660,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
       if (e.key === "ArrowDown") { e.preventDefault(); setSkillIdx((i) => (i + 1) % skillRows.length); return; }
       if (e.key === "ArrowUp") { e.preventDefault(); setSkillIdx((i) => (i - 1 + skillRows.length) % skillRows.length); return; }
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runSkillRow(skillRows[skillActive]); return; }
+      // 空格切换选中状态；已经开始输入搜索词时，空格正常输入
+      if (e.key === " " && !skillQuery) { e.preventDefault(); runSkillRow(skillRows[skillActive]); return; }
       // Esc：清掉 /skills，关掉列表
       if (e.key === "Escape") { e.preventDefault(); setInput(""); return; }
     }
@@ -2061,7 +2067,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
                 <span className="ai-slash-hint">{r.hint}</span>
                 {r.kind === "skill" ? (
                   <span className="ai-skill-actions">
-                    <button type="button" title="编辑" onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }} onClick={(e) => { e.stopPropagation(); setSkillEditing(skills.find((x) => x.id === r.id) || "new"); }}><Icon name="note" small /></button>
+                    <button type="button" title="编辑" onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }} onClick={(e) => { e.stopPropagation(); setSkillEditing(skills.find((x) => x.id === r.id) || "new"); }}><Icon name="pencil" small /></button>
                     <button type="button" title="删除" onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }} onClick={(e) => { e.stopPropagation(); if (window.confirm(`删除技能「${r.name}」？`)) { void deleteSkill(r.id); } }}><Icon name="trash" small /></button>
                   </span>
                 ) : null}

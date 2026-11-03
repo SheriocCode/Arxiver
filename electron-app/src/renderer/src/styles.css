@@ -2286,8 +2286,10 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 .ai-skill-pick .ai-slash-name { width: auto; min-width: 88px; max-width: 46%; display: inline-flex; align-items: center; gap: 4px; overflow: hidden; }
 .ai-skill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-skill-pick .ai-slash-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ai-skill-pick.is-on { background: color-mix(in srgb, var(--accent) 9%, transparent); }
-.ai-skill-pick.is-on .ai-slash-name { color: var(--accent); }
+.ai-skill-pick.is-on { background: var(--surface-2); }
+.ai-skill-pick.is-on .ai-slash-name { color: var(--text); }
+/* 键盘当前项在技能列表里用灰色（绿色留给"已启用"的勾），避免和选中状态混淆 */
+.ai-skill-pick.on { background: var(--hover-strong); }
 .ai-skill-check { display: inline-flex; flex: none; color: var(--accent); }
 .ai-skill-check .icon { width: 13px; height: 13px; }
 .ai-skill-actions { flex: none; display: inline-flex; align-items: center; gap: 2px; opacity: .35; }
@@ -2301,7 +2303,7 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 .skill-focus-head { display: flex; align-items: center; gap: 6px; flex: none; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .skill-focus-title { font-size: 13px; font-weight: 600; color: var(--text); }
 .skill-focus-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 14px; overflow-y: auto; }
-.skill-focus .field.is-grow { flex: 1; min-height: 0; }
+.skill-focus .field.is-grow { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .skill-focus textarea {
   flex: 1; min-height: 140px; width: 100%; box-sizing: border-box; resize: none;
   padding: 10px 12px; background: var(--surface); color: var(--text);
