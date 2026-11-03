@@ -431,6 +431,14 @@ const btwPreview = (s: string, max = 18): string => {
   return t.length > max ? t.slice(0, max) + "…" : t;
 };
 const btwQuestionOf = (x: BtwThread): string => x.messages.find((m) => m.role === "user")?.text || "（未提问）";
+
+// 斜杠命令：输入框里打 / 时列出来，方便确认命令名
+const SLASH_COMMANDS: { name: string; hint: string; arg?: boolean }[] = [
+  { name: "/btw", hint: "就选中原文追问，不写入主对话", arg: true },
+  { name: "/new", hint: "开始一个新对话" },
+  { name: "/skills", hint: "打开技能菜单" },
+  { name: "/settings", hint: "打开 AI 服务设置" }
+];
 // 去掉 Markdown 标记，只留渲染后能看到的文字（用来判断锚点能不能在正文里定位）
 const plainText = (md: string): string => String(md || "")
   .replace(/\$\$[\s\S]*?\$\$/g, " ")
@@ -890,6 +898,9 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   const [libProgress, setLibProgress] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const [atOpen, setAtOpen] = useState(false);
+  // 斜杠命令弹层：输入框里正在打命令名时展开
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [slashIdx, setSlashIdx] = useState(0);
   // 「顺便问一下」小窗：btwSeed 变化即换一个新窗口（key 随之重挂载）
   const [btwSeed, setBtwSeed] = useState<BtwSeed | null>(null);
   // 这条主对话里所有的「顺便问」子对话（挂在某条回答的某段文字上），随会话一起存
@@ -1368,11 +1379,15 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
 
   const send = (preset?: string): void => {
     const raw = (preset !== undefined ? preset : input).trim();
+    // 不带参数的命令：直接执行（菜单没展开时手输也能用）
+    const cmd = raw.toLowerCase();
+    if (cmd === "/new" || cmd === "/skills" || cmd === "/settings") { runSlash(cmd); return; }
     // /btw：另开小窗问，不打断正在生成的主回答，也不写进主对话
     const btw = /^\/btw(?:\s+([\s\S]*))?$/i.exec(raw);
     if (btw) {
       setInput("");
       setAtOpen(false);
+      setSlashOpen(false);
       openBtw((btw[1] || "").trim(), selection?.text.trim() || "");
       return;
     }
@@ -1521,6 +1536,39 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   };
 
   const newConv = (): void => { setTurns([]); setBtwThreads([]); setBtwSeed(null); setConvId(""); convIdRef.current = ""; setShowHistory(false); setImages([]); setAttached([]); setShowSkills(false); };
+
+  // 斜杠命令：只认「/ + 字母」这种还没输入参数的形态；打了空格就交回普通输入
+  const slashQuery = /^\/[a-z]*$/i.test(input) ? input.toLowerCase() : "";
+  const slashList = slashOpen && slashQuery ? SLASH_COMMANDS.filter((c) => c.name.startsWith(slashQuery)) : [];
+  const slashActive = slashList.length ? Math.min(slashIdx, slashList.length - 1) : 0;
+  // 执行命令（Enter）：/btw 直接打开子对话，其余立即生效
+  const runSlash = (name: string): void => {
+    setSlashOpen(false);
+    setInput("");
+    setAtOpen(false);
+    if (name === "/btw") { openBtw("", selection?.text.trim() || ""); return; }
+    if (name === "/new") { newConv(); return; }
+    if (name === "/skills") { setShowSkills(true); setShowHistory(false); return; }
+    if (name === "/settings") { openAiSettings(); }
+  };
+  // 补全命令（Tab / 点击）：带参数的命令补一个空格，光标留在后面等参数
+  const completeSlash = (cmd: { name: string; arg?: boolean }): void => {
+    if (!cmd.arg) { runSlash(cmd.name); return; }
+    setSlashOpen(false);
+    setInput(cmd.name + " ");
+    inputRef.current?.focus();
+  };
+  const onComposerKey = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (slashList.length) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setSlashIdx((i) => (i + 1) % slashList.length); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setSlashIdx((i) => (i - 1 + slashList.length) % slashList.length); return; }
+      if (e.key === "Tab") { e.preventDefault(); completeSlash(slashList[slashActive]); return; }
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runSlash(slashList[slashActive].name); return; }
+      if (e.key === "Escape") { e.preventDefault(); setSlashOpen(false); return; }
+    }
+    if (e.key === "Escape") { setAtOpen(false); setSlashOpen(false); }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  };
   const openConv = async (id: string): Promise<void> => {
     const conv = await window.api.agentConversation(id);
     // 切到别的会话时，没发出去的图片 / 打开着的顺便问都不该跟过去
@@ -1919,6 +1967,25 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
         <QuestionNav anchors={anchors} anchorsRef={anchorsRef} msgRefs={msgRefs} scrollRef={scrollRef} onGoto={gotoMsg} />
       )}
       <div className="ai-composer">
+        {slashList.length > 0 && (
+          <div className="ai-slash-pop" role="listbox" aria-label="斜杠命令">
+            {slashList.map((c, i) => (
+              <button
+                key={c.name}
+                type="button"
+                role="option"
+                aria-selected={i === slashActive}
+                className={"ai-slash-item" + (i === slashActive ? " on" : "")}
+                onMouseEnter={() => setSlashIdx(i)}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => completeSlash(c)}
+              >
+                <span className="ai-slash-name">{c.name}</span>
+                <span className="ai-slash-hint">{c.hint}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {atOpen && (
           <div className="ai-at-pop">
             {atOptions.length === 0
@@ -1981,15 +2048,18 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
         >
           <textarea
             ref={inputRef}
-            placeholder="随心输入，@ 引用已打开文献；/btw 另开小窗问；可粘贴 / 上传图片"
+            placeholder="随心输入；/ 查看命令，@ 引用文献；可粘贴图片"
             rows={1}
             value={input}
             onChange={(e) => {
               const v = e.target.value;
+              // 正在输入命令名（/、/bt…）时展开命令菜单；打了空格就收起
+              setSlashOpen(/^\/[a-z]*$/i.test(v));
+              setSlashIdx(0);
               if (v.endsWith("@")) { setInput(v.slice(0, -1)); setAtOpen(true); }
               else { setAtOpen(false); setInput(v); }
             }}
-            onKeyDown={(e) => { if (e.key === "Escape") { setAtOpen(false); } if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+            onKeyDown={onComposerKey}
           />
           <div className="composer-row">
             <input
@@ -2011,7 +2081,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
             <button
               type="button"
               className="composer-icon-btn"
-              title="顺便问一下（/btw）：另开小窗，不写入主对话"
+              title="顺便问（/btw）：就选中原文另开子对话，不写入主对话"
               onMouseDown={(e) => e.preventDefault()}
               onClick={(e) => {
                 e.preventDefault();
