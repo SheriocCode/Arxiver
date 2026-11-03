@@ -34,11 +34,9 @@ Arxiver 是一款面向科研阅读的 Windows 桌面应用，用于英文论文
 阅读器提供原文、对照、译文三种视图，翻译过程中即可逐页阅读；段落块框可回溯原文，译文与原文的版面位置一一对应。AI 助手基于当前论文或整个文献库作答，引用标注页码与原文片段，可直接定位至 PDF 对应位置。
 
 # 视频演示
-[![Arxiver 演示动画（点击播放完整视频）](assets/README/index-preview.webp)](https://github.com/SheriocCode/Arxiver/raw/main/assets/README/index.mp4)
+https://github.com/user-attachments/assets/631fa7a2-afa7-44dc-b984-6cc24b01212f
 
-点击画面播放完整演示（约 2 分 34 秒，含声音）。
-
-完整的使用说明、参考与更新日志见 **[文档 · sherioccode.github.io/arxiver](https://sherioccode.github.io/arxiver/)**。
+完整使用说明、参考与更新日志见 **[文档 · sherioccode.github.io/arxiver](https://sherioccode.github.io/arxiver/)**。
 
 ## 核心能力
 
