@@ -26,16 +26,14 @@
   <a href="https://sherioccode.github.io/arxiver/#changelog"><img src="https://img.shields.io/badge/更新日志-最新版本-6e7781?style=for-the-badge" alt="更新日志"></a>
 </p>
 
-<p align="center">
-  <a href="https://sherioccode.github.io/arxiver/#videos">视频演示</a> ·
-  <a href="https://github.com/SheriocCode/Arxiver/issues">问题反馈</a>
-</p>
 
 ![Arxiver 主界面](assets/README/home.webp)
 ![Arxiver 工作原理](assets/README/pipeline.webp)
 Arxiver 是一款面向科研阅读的 Windows 桌面应用，用于英文论文的中文翻译与辅助阅读。翻译在保留原 PDF 版面与图表的前提下进行，既可使用内置 HY-MT2 模型在本机完成，也可接入任意 OpenAI 兼容接口；支持本地 PDF 与 arXiv / DOI 导入。
 
 阅读器提供原文、对照、译文三种视图，翻译过程中即可逐页阅读；段落块框可回溯原文，译文与原文的版面位置一一对应。AI 助手基于当前论文或整个文献库作答，引用标注页码与原文片段，可直接定位至 PDF 对应位置。
+
+![Arxiver 演示](assets/README/index.mp4)
 
 完整的使用说明、参考与更新日志见 **[文档 · sherioccode.github.io/arxiver](https://sherioccode.github.io/arxiver/)**。
 
