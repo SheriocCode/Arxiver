@@ -2373,10 +2373,12 @@ textarea.ai-confirm-args { width: 100%; min-height: 96px; border: 0; outline: no
 .ai-jump:hover { background: var(--hover-strong); }
 
 /* ---------- 顺便问（/btw）：AI 面板内的子对话视图 ---------- */
+/* 子对话视图：用一圈淡强调色边框 + 略微不同的底色，和主对话区分开 */
 .btw-inline {
   position: absolute; inset: 0; z-index: 6;
   display: flex; flex-direction: column;
-  background: var(--bg-panel);
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg-panel));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 42%, transparent);
 }
 .btw-inline .btw-scroll { flex: 1; min-height: 0; }
 .btw-head-quote {
@@ -2385,17 +2387,16 @@ textarea.ai-confirm-args { width: 100%; min-height: 96px; border: 0; outline: no
 }
 .btw-head {
   display: flex; align-items: center; gap: 8px; flex: none;
-  padding: 8px 12px; border-bottom: 1px solid var(--border);
-  font-size: 13px; color: var(--text-2); min-width: 0;
+  padding: 8px 12px; min-width: 0; font-size: 13px; color: var(--text-2);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
 }
+.btw-head .btw-title { color: var(--accent); }
 .btw-title { font-weight: 600; color: var(--text); }
-.btw-badge { padding: 1px 7px; border-radius: var(--pill); background: var(--accent-soft); color: var(--accent); font-size: 11px; white-space: nowrap; }
 .btw-scroll { padding: 8px 14px 12px; }
 .btw-empty { padding: 22px 6px 8px; color: var(--muted); font-size: 12.5px; }
 .btw-empty p { margin: 0; }
 .btw-empty p + p { margin-top: 6px; color: var(--faint); font-size: 12px; }
 .btw-composer { padding: 10px 12px 12px; flex: none; }
-.btw-composer-hint { color: var(--faint); font-size: 11.5px; }
 .btw-quote {
   display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px;
   padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius);

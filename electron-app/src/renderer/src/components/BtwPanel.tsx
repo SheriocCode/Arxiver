@@ -235,14 +235,12 @@ export default function BtwPanel({
         <button type="button" className="icon-btn" title="返回主对话" onClick={close}><Icon name="chev-left" small /></button>
         <span className="btw-title">顺便问</span>
         {seed.quote ? <span className="btw-head-quote od-truncate" title={seed.quote}>“{seed.quote}”</span> : null}
-        <span className="btw-badge">自动保存</span>
         <span className="od-fill" />
       </div>
         <div className="ai-scroll btw-scroll" ref={scrollRef} onScroll={onScroll} onWheel={onWheel}>
           {turns.length === 0 ? (
             <div className="btw-empty">
-              <p>针对上面这段原文的追问，不会打断或改动主对话；回答以《{docTitle}》和提问处之前的对话为背景。</p>
-              <p>答完会自动保存在这条子对话里，点原文下的虚线下划线可以随时回来。</p>
+              <p>就这段原文继续追问，不会影响主对话。</p>
             </div>
           ) : null}
           {turns.map((t, i) => (
@@ -299,7 +297,6 @@ export default function BtwPanel({
               }}
             />
             <div className="composer-row">
-              <span className="btw-composer-hint" title="上下文只取提问位置及其之前的主对话，不会带上之后的对话">只在本地保存 · 上下文到提问处</span>
               <span className="od-fill" />
               {sending
                 ? <button type="button" className="send-btn" title="停止" onClick={(e) => { e.preventDefault(); stop(); }}><Icon name="x" small /></button>
