@@ -310,8 +310,13 @@ export class ViewerEngine {
         this.resizeTimer = window.setTimeout(() => {
           const w = this.computeFitWidth();
           if (Math.abs(w - this.basePageW) > 1) {
+            // 开 / 关目录、缩略图或侧边栏都会改变阅读区宽度：页面跟着缩放，
+            // 滚动像素不变但页面高度变了，视口就会"自己翻页"。
+            // 先记住当前页 + 页内比例，重排后按同一位置还原。
+            const anchor = this.scrollAnchor();
             this.basePageW = w;
             this.applyPageWidth();
+            this.restoreAnchor(anchor);
             this.scheduleRender(60);
           }
         }, 140);
@@ -1774,6 +1779,30 @@ export class ViewerEngine {
     clearTimeout(this.renderTimer);
     this.renderPending = true;
     this.renderTimer = window.setTimeout(() => { this.renderTimer = 0; void this.renderVisible(); }, d);
+  }
+
+  // 版面宽度变化时用来保位置：当前页下标 + 页内滚动比例
+  private scrollAnchor(): { index: number; frac: number } {
+    if (!this.rows.length) { return { index: 0, frac: 0 }; }
+    const top = this.root.scrollTop;
+    let idx = 0;
+    for (let i = 0; i < this.rows.length; i++) {
+      idx = i;
+      if (this.rows[i].offsetTop + this.rows[i].offsetHeight > top + 4) { break; }
+    }
+    const rowEl = this.rows[idx];
+    const frac = rowEl && rowEl.offsetHeight
+      ? Math.max(0, Math.min(1, (top - rowEl.offsetTop) / rowEl.offsetHeight))
+      : 0;
+    return { index: idx, frac };
+  }
+
+  private restoreAnchor(a: { index: number; frac: number }): void {
+    const rowEl = this.rows[a.index];
+    if (!rowEl) { return; }
+    this.root.scrollTop = Math.max(0, rowEl.offsetTop + rowEl.offsetHeight * a.frac);
+    this.expectedScrollTop = this.root.scrollTop;
+    this.currentPageIndex = a.index;
   }
 
   private updateCurrentPage(): void {
