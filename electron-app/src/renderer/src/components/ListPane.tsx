@@ -346,7 +346,15 @@ function Row({ doc, lib, isTrash, showUnread, maxDots, onOpen, onContext }: {
     >
       <span className="item-type"><Icon name={/preprint|预印/i.test(doc.type) ? "globe" : "file"} /></span>
       <span className="item-main">
-        <span className="item-title">{doc.title}</span>
+        <span className="item-title-row">
+          <span className="item-title">{doc.title}</span>
+          {doc.notes && doc.notes.length > 0 && (
+            <span className="item-note" title={`${doc.notes.length} 条笔记`}>
+              <Icon name="note" small />
+              {doc.notes.length > 1 && <span className="item-note-count">{doc.notes.length}</span>}
+            </span>
+          )}
+        </span>
         {sub && <span className="item-sub">{sub}</span>}
       </span>
       <span className="item-tags" title={tags.length ? tags.join(", ") : undefined}>

@@ -388,8 +388,13 @@ html.kb-focus :focus-visible { outline: 2px solid var(--accent); outline-offset:
 .item-type { display: grid; place-items: center; color: var(--muted); }
 .item-row.is-selected .item-type { color: var(--text-2); }
 .item-main { min-width: 0; }
-.item-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13.5px; font-weight: 500; color: var(--text); }
+/* 标题行：标题过长时仍然省略，笔记标记紧跟在标题文字后面 */
+.item-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.item-title { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13.5px; font-weight: 500; color: var(--text); }
 .item-row.is-selected .item-title { color: var(--text); }
+/* 有笔记的条目：标题后跟一个笔记标记（多条时带数量） */
+.item-note { flex: none; display: inline-flex; align-items: center; gap: 2px; color: var(--accent); opacity: 0.9; }
+.item-note-count { font-size: 11px; line-height: 1; font-variant-numeric: tabular-nums; }
 .item-sub { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--muted); margin-top: 2px; }
 .item-tags { display: flex; align-items: center; gap: 5px; overflow: hidden; min-width: 0; }
 .tag-dot { flex: none; width: 9px; height: 9px; border-radius: var(--pill); background: var(--faint); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18); }
