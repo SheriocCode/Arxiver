@@ -893,6 +893,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   // 「顺便问一下」小窗：btwSeed 变化即换一个新窗口（key 随之重挂载）
   const [btwSeed, setBtwSeed] = useState<BtwSeed | null>(null);
   // 这条主对话里所有的「顺便问」子对话（挂在某条回答的某段文字上），随会话一起存
+  // 「顺便问」视图是否被收起（收起时组件仍挂载，生成继续，回来还能看到完整结果）
+  const [btwHidden, setBtwHidden] = useState(false);
   const [btwThreads, setBtwThreads] = useState<BtwThread[]>([]);
   const btwThreadsRef = useRef<BtwThread[]>([]);
   btwThreadsRef.current = btwThreads;
@@ -1031,6 +1033,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
       .slice(-12)
       .map((t) => ({ role: t.role, content: t.text.slice(0, 4000) }));
     setSelAsk(null);
+    setBtwHidden(false);
     setBtwSeed({
       id: existing?.id || "btw" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
       turn: anchorTurn,
@@ -1091,7 +1094,7 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   }, [selAsk]);
 
   // 切文献时关掉小窗，避免把上一篇的上下文带过去
-  useEffect(() => { setBtwSeed(null); setSelAsk(null); }, [doc.id]);
+  useEffect(() => { setBtwSeed(null); setBtwHidden(false); setSelAsk(null); }, [doc.id]);
 
   useEffect(() => {
     if (!pendingJump) { return; }
@@ -1243,8 +1246,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   // 右侧对话导航 / 回到底部按钮浮在滚动容器外面：指针停在它们上面滚滚轮时，事件到不了
   // .ai-scroll，浏览器就不会滚动面板（表现为「偶尔划不动」）。面板上统一把这类滚轮转发给正文。
   const paneWheel = (e: React.WheelEvent): void => {
-    // 子对话视图打开时，面板被它整块盖住：滚轮不要转发给下面的主对话
-    if (btwSeed) { return; }
+    // 子对话视图正在显示时，面板被它整块盖住：滚轮不要转发给下面的主对话
+    if (btwSeed && !btwHidden) { return; }
     const el = scrollRef.current;
     if (!el) { return; }
     const t = e.target as HTMLElement | null;
@@ -1909,10 +1912,10 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
         </button>
       )}
       {/* 子对话视图打开时，这些浮层属于主对话，别盖在它上面 */}
-      {!btwSeed && showJump && (
+      {(!btwSeed || btwHidden) && showJump && (
         <button type="button" className="ai-jump" title="回到底部" onClick={jumpToBottom}><Icon name="chev-down" small /></button>
       )}
-      {!btwSeed && anchors.length >= 2 && (
+      {(!btwSeed || btwHidden) && anchors.length >= 2 && (
         <QuestionNav anchors={anchors} anchorsRef={anchorsRef} msgRefs={msgRefs} scrollRef={scrollRef} onGoto={gotoMsg} />
       )}
       <div className="ai-composer">
@@ -2028,20 +2031,22 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
           </div>
         </form>
       </div>
-      {btwSeed && (
-        <BtwPanel
-          key={btwSeed.id}
-          seed={btwSeed}
-          docId={doc.id}
-          docTitle={doc.title}
-          aiReady={aiReady}
-          onClose={() => setBtwSeed(null)}
-          onSave={saveBtw}
-          onCite={onCite}
-          onCard={jumpToCard}
-          onOpenSettings={openAiSettings}
-        />
-      )}
+      {btwSeed ? (
+        <div className={"btw-host" + (btwHidden ? " is-hidden" : "")}>
+          <BtwPanel
+            key={btwSeed.id}
+            seed={btwSeed}
+            docId={doc.id}
+            docTitle={doc.title}
+            aiReady={aiReady}
+            onBack={() => setBtwHidden(true)}
+            onSave={saveBtw}
+            onCite={onCite}
+            onCard={jumpToCard}
+            onOpenSettings={openAiSettings}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -2374,8 +2374,11 @@ textarea.ai-confirm-args { width: 100%; min-height: 96px; border: 0; outline: no
 
 /* ---------- 顺便问（/btw）：AI 面板内的子对话视图 ---------- */
 /* 子对话视图：用一圈淡强调色边框 + 略微不同的底色，和主对话区分开 */
+/* 收起时仅隐藏，组件保持挂载：正在生成的回答不会被打断 */
+.btw-host { position: absolute; inset: 0; z-index: 6; }
+.btw-host.is-hidden { display: none; }
 .btw-inline {
-  position: absolute; inset: 0; z-index: 6;
+  position: absolute; inset: 0;
   display: flex; flex-direction: column;
   background: color-mix(in srgb, var(--accent) 5%, var(--bg-panel));
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 42%, transparent);

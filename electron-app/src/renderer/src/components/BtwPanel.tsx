@@ -31,7 +31,8 @@ interface Props {
   docId: string;
   docTitle: string;
   aiReady: boolean;
-  onClose: () => void;
+  // 返回主对话：只隐藏，不要取消正在生成的请求（回来时还能看到完整结果）
+  onBack: () => void;
   // 每轮答完就把这条子对话存回主对话，关掉窗口也不会丢
   onSave: (thread: { id: string; turn: number; quote: string; messages: { role: "user" | "assistant"; text: string }[] }) => void;
   onCite: (docId: string, page: number, quote?: string) => void;
@@ -42,7 +43,7 @@ interface Props {
 // 「顺便问一下」：挂在某段原文上的独立小对话。带主对话最近的内容作为只读背景，
 // 但不写入主对话；答完的内容会作为子对话存进主会话（正文里那段文字会画虚线下划线）。
 export default function BtwPanel({
-  seed, docId, docTitle, aiReady, onClose, onSave, onCite, onCard, onOpenSettings
+  seed, docId, docTitle, aiReady, onBack, onSave, onCite, onCard, onOpenSettings
 }: Props): JSX.Element {
   const [turns, setTurns] = useState<BtwTurn[]>(seed.turns || []);
   const [input, setInput] = useState(seed.question);
@@ -84,8 +85,7 @@ export default function BtwPanel({
   }
 
   function close(): void {
-    cancel();
-    onClose();
+    onBack();
   }
 
   useEffect(() => {
