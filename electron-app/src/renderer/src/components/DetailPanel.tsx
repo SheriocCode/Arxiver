@@ -501,19 +501,25 @@ function QuestionNav({ anchors, anchorsRef, msgRefs, scrollRef, onGoto }: {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) { return; }
-    const onScroll = (): void => {
+    // 每帧最多算一次：滚动事件很密，逐次读一堆 getBoundingClientRect 会强制同步布局，
+    // 长对话下就是明显的掉帧
+    let raf = 0;
+    const measure = (): void => {
+      raf = 0;
       const list = anchorsRef.current;
       const rectTop = el.getBoundingClientRect().top;
+      const limit = rectTop + el.clientHeight * 0.32;
       let act = 0;
       for (let k = 0; k < list.length; k++) {
         const me = msgRefs.current[list[k].first];
         if (!me) { continue; }
-        if (me.getBoundingClientRect().top - rectTop <= el.clientHeight * 0.32) { act = k; } else { break; }
+        if (me.getBoundingClientRect().top <= limit) { act = k; } else { break; }
       }
       if (act !== activeRef.current) { activeRef.current = act; setActive(act); }
     };
+    const onScroll = (): void => { if (!raf) { raf = requestAnimationFrame(measure); } };
     el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
+    return () => { el.removeEventListener("scroll", onScroll); if (raf) { cancelAnimationFrame(raf); } };
   }, [anchorsRef, msgRefs, scrollRef]);
 
   const onNavMove = (e: { clientY: number }): void => {
@@ -1227,22 +1233,12 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
     if (!el) { return; }
     const t = e.target as HTMLElement | null;
     const insideScroll = !!t?.closest(".ai-scroll");
-    if (!insideScroll) {
-      // 输入框、历史记录 / 技能 / @ 这些弹层自己有滚动条，别把滚轮转给对话区
-      if (t?.closest(".ai-composer, .ai-hist-wrap, .ai-skills-wrap, .ai-at-pop")) { return; }
-      el.scrollTop += e.deltaY;
-      return;
-    }
-    // 指针在正文里：正常由浏览器自己滚。万一内容高度刚变过、滚动范围还没刷新（表现为
-    // 「滚动条卡住，怎么滚都不动」），下一帧发现真的没动就手动补一次。
-    const before = el.scrollTop;
-    const dy = e.deltaY;
-    requestAnimationFrame(() => {
-      if (!dy || el.scrollTop !== before) { return; }
-      const max = el.scrollHeight - el.clientHeight;
-      if (max <= 0) { return; }
-      el.scrollTop = Math.min(max, Math.max(0, before + dy));
-    });
+    // 指针在正文里：交给浏览器原生滚动（任何"补一次 scrollTop"的做法都会和
+    // 平滑滚动 / 触控板惯性互相打架，滚动时表现为一卡一卡、闪帧）
+    if (insideScroll) { return; }
+    // 输入框、历史记录 / 技能 / @ 这些弹层自己有滚动条，别把滚轮转给对话区
+    if (t?.closest(".ai-composer, .ai-hist-wrap, .ai-skills-wrap, .ai-at-pop")) { return; }
+    el.scrollTop += e.deltaY;
   };
   const jumpToBottom = (): void => {
     const el = scrollRef.current;
