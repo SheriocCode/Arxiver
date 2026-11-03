@@ -1232,6 +1232,8 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   // 右侧对话导航 / 回到底部按钮浮在滚动容器外面：指针停在它们上面滚滚轮时，事件到不了
   // .ai-scroll，浏览器就不会滚动面板（表现为「偶尔划不动」）。面板上统一把这类滚轮转发给正文。
   const paneWheel = (e: React.WheelEvent): void => {
+    // 子对话视图打开时，面板被它整块盖住：滚轮不要转发给下面的主对话
+    if (btwSeed) { return; }
     const el = scrollRef.current;
     if (!el) { return; }
     const t = e.target as HTMLElement | null;
@@ -1895,10 +1897,11 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
           <Icon name="message" small /> 顺便问
         </button>
       )}
-      {showJump && (
+      {/* 子对话视图打开时，这些浮层属于主对话，别盖在它上面 */}
+      {!btwSeed && showJump && (
         <button type="button" className="ai-jump" title="回到底部" onClick={jumpToBottom}><Icon name="chev-down" small /></button>
       )}
-      {anchors.length >= 2 && (
+      {!btwSeed && anchors.length >= 2 && (
         <QuestionNav anchors={anchors} anchorsRef={anchorsRef} msgRefs={msgRefs} scrollRef={scrollRef} onGoto={gotoMsg} />
       )}
       <div className="ai-composer">
