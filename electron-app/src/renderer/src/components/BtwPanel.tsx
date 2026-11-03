@@ -45,9 +45,6 @@ export default function BtwPanel({
   seed, docId, docTitle, aiReady, onClose, onSave, onCite, onCard, onOpenSettings
 }: Props): JSX.Element {
   const [turns, setTurns] = useState<BtwTurn[]>(seed.turns || []);
-  // 非模态小窗：可以拖到别处，边看正文边问
-  const panelRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const [input, setInput] = useState(seed.question);
   const [quote, setQuote] = useState(seed.quote);
   const [sending, setSending] = useState(false);
@@ -96,6 +93,9 @@ export default function BtwPanel({
       if (e.key !== "Escape") { return; }
       // 设置等模态框 / 图片灯箱在上层时，Esc 先关它
       if (document.querySelector(".modal-root") || document.querySelector(".img-lightbox")) { return; }
+      // 光标在输入框里：只退出输入，不要关掉整条子对话（免得把没发出去的内容丢了）
+      const el = document.activeElement as HTMLElement | null;
+      if (el && el.tagName === "TEXTAREA") { el.blur(); return; }
       e.stopPropagation();
       close();
     };
@@ -229,49 +229,20 @@ export default function BtwPanel({
     });
   }, [turns]);
 
-  // 拖标题栏移动窗口（非模态，常驻在界面上；位置不持久化，重新打开回到右下角）
-  const startDrag = (e: React.PointerEvent): void => {
-    const el = panelRef.current;
-    if (!el || (e.target as HTMLElement).closest("button")) { return; }
-    e.preventDefault();
-    const r = el.getBoundingClientRect();
-    const dx = e.clientX - r.left;
-    const dy = e.clientY - r.top;
-    const move = (ev: PointerEvent): void => {
-      setPos({
-        left: Math.min(Math.max(8, ev.clientX - dx), window.innerWidth - r.width - 8),
-        top: Math.min(Math.max(8, ev.clientY - dy), window.innerHeight - r.height - 8)
-      });
-    };
-    const up = (): void => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
-
   return (
-    <div className="btw-layer">
-      <div
-        className="btw-panel"
-        ref={panelRef}
-        style={pos ? { left: pos.left, top: pos.top, right: "auto", bottom: "auto" } : undefined}
-        role="dialog"
-        aria-label="顺便问一下"
-      >
-        <div className="btw-head" onPointerDown={startDrag} title="拖动可移动窗口">
-          <Icon name="message" small />
-          <span className="btw-title">顺便问一下</span>
-          <span className="btw-badge">独立小窗 · 自动保存</span>
-          <span className="od-fill" />
-          <button type="button" className="icon-btn" title="关闭" onClick={close}><Icon name="x" small /></button>
-        </div>
+    <div className="btw-inline" role="region" aria-label="顺便问">
+      <div className="btw-head">
+        <button type="button" className="icon-btn" title="返回主对话" onClick={close}><Icon name="chev-left" small /></button>
+        <span className="btw-title">顺便问</span>
+        {seed.quote ? <span className="btw-head-quote od-truncate" title={seed.quote}>“{seed.quote}”</span> : null}
+        <span className="btw-badge">自动保存</span>
+        <span className="od-fill" />
+      </div>
         <div className="ai-scroll btw-scroll" ref={scrollRef} onScroll={onScroll} onWheel={onWheel}>
           {turns.length === 0 ? (
             <div className="btw-empty">
-              <p>问一个小问题，不会打断或改动主对话。回答仍以《{docTitle}》为默认上下文。</p>
-              <p>也可以选中主对话里的回答，再点「顺便问」。</p>
+              <p>针对上面这段原文的追问，不会打断或改动主对话；回答以《{docTitle}》和提问处之前的对话为背景。</p>
+              <p>答完会自动保存在这条子对话里，点原文下的虚线下划线可以随时回来。</p>
             </div>
           ) : null}
           {turns.map((t, i) => (
@@ -320,7 +291,7 @@ export default function BtwPanel({
             <textarea
               ref={inputRef}
               rows={1}
-              placeholder="顺便问问…（Enter 发送，Esc 关闭）"
+              placeholder="就这段原文问点什么…（Enter 发送）"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -328,7 +299,7 @@ export default function BtwPanel({
               }}
             />
             <div className="composer-row">
-              <span className="btw-composer-hint" title="每次发问都会把主对话最近的内容作为只读背景，包括打开小窗之后新生成的部分">不写入主对话 · 带最新上下文</span>
+              <span className="btw-composer-hint" title="上下文只取提问位置及其之前的主对话，不会带上之后的对话">只在本地保存 · 上下文到提问处</span>
               <span className="od-fill" />
               {sending
                 ? <button type="button" className="send-btn" title="停止" onClick={(e) => { e.preventDefault(); stop(); }}><Icon name="x" small /></button>
@@ -336,7 +307,6 @@ export default function BtwPanel({
             </div>
           </form>
         </div>
-      </div>
     </div>
   );
 }
