@@ -997,11 +997,6 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
   // 打开「顺便问一下」：带主对话最近的内容作为只读背景，不写入主对话。
   // threadId 给了就打开已有的子对话（恢复历史）；否则新建一条挂在 turn 上。
   const openBtw = (question: string, quote: string, turn?: number, threadId?: string): void => {
-    // 每次发问时现取（不是打开小窗时定死的快照）：这样后面新产生的回答也能作为背景
-    const history = (): { role: "user" | "assistant"; content: string }[] => turnsRef.current
-      .filter((t) => t.text.trim())
-      .slice(-12)
-      .map((t) => ({ role: t.role, content: t.text.slice(0, 4000) }));
     const cardBase = turnsRef.current.reduce((n, t) => n + papersOf(t.blocks || []).length, 0);
     let anchor = turn;
     if (anchor === undefined) {
@@ -1016,10 +1011,18 @@ function AiPanel({ lib, doc, settings, config, onOpenSettings, selection, image,
       : (quote.trim()
         ? btwThreadsRef.current.find((x) => x.turn === Math.max(0, anchor!) && normText(x.quote) === normText(quote))
         : undefined);
+    // 背景只取"提问处及其之前"的对话：用户在某个位置追问，就是针对读到那里的理解，
+    // 后面的对话不该混进来。每次发问时现取，所以这些轮次里新生成的内容也会带上。
+    const anchorTurn = existing ? existing.turn : Math.max(0, anchor);
+    const history = (): { role: "user" | "assistant"; content: string }[] => turnsRef.current
+      .slice(0, anchorTurn + 1)
+      .filter((t) => t.text.trim())
+      .slice(-12)
+      .map((t) => ({ role: t.role, content: t.text.slice(0, 4000) }));
     setSelAsk(null);
     setBtwSeed({
       id: existing?.id || "btw" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-      turn: existing ? existing.turn : Math.max(0, anchor),
+      turn: anchorTurn,
       // 已有子对话也把这次输入带进去（追问同一条），没有就直接开新对话
       question,
       quote: existing ? existing.quote : quote,
