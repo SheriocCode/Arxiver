@@ -2143,9 +2143,9 @@ html.has-bg .tb-tab.active { background: color-mix(in srgb, var(--bg) 72%, trans
 .ai-md a { color: var(--accent); text-decoration: none; }
 .ai-md a:hover { text-decoration: underline; }
 .ai-md code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-.ai-md pre { margin: 8px 0; padding: 9px 11px; background: var(--surface-2); border-radius: var(--radius-sm); overflow: auto; overscroll-behavior: contain; }
+.ai-md pre { margin: 8px 0; padding: 9px 11px; background: var(--surface-2); border-radius: var(--radius-sm); overflow: auto; }
 .ai-md pre code { background: none; padding: 0; }
-.ai-md table { border-collapse: collapse; display: block; overflow: auto; overscroll-behavior: contain; margin: 8px 0; font-size: 12.5px; }
+.ai-md table { border-collapse: collapse; display: block; overflow: auto; margin: 8px 0; font-size: 12.5px; }
 .ai-md th, .ai-md td { border: 1px solid var(--border-strong); padding: 4px 8px; text-align: left; }
 .ai-md th { background: var(--surface-2); font-weight: 600; }
 .ai-md hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
